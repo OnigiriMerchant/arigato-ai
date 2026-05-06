@@ -1,0 +1,75 @@
+# ============================================================
+# .gitignore for Arigato AI — iOS / Swift / Xcode
+# ============================================================
+
+# --- macOS noise ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# --- Xcode build artifacts (HUGE — never commit) ---
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+*.moved-aside
+
+# --- Swift Package Manager ---
+.swiftpm/
+Package.resolved
+.build/
+
+# --- CocoaPods (we don't use these but future-proofing) ---
+Pods/
+*.xcworkspace
+
+# --- Carthage ---
+Carthage/Build/
+Carthage/Checkouts/
+
+# --- Fastlane ---
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# --- Provisioning, signing, secrets ---
+*.mobileprovision
+*.p12
+*.cer
+*.certSigningRequest
+.env
+.env.local
+secrets.json
+GoogleService-Info.plist
+
+# --- LEAP API key, Anthropic API key, anything sensitive ---
+*.apikey
+.api-keys/
+
+# --- Model files (we'll bundle them differently or download on demand) ---
+# Whisper models can be 600MB+, LFM2 ~250MB+ — these don't belong in Git
+*.gguf
+*.bundle
+*.mlmodelc
+Models/*.gguf
+Models/*.bundle
+
+# --- IDE noise ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Claude Code session artifacts (keep config, exclude session data) ---
+.claude/sessions/
+.claude/cache/
+.claude/logs/
+
+# --- Logs ---
+*.log
