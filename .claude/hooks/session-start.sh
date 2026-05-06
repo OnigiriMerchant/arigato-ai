@@ -14,18 +14,14 @@ else
     STATUS_LINE="✅ working tree clean"
 fi
 
-{
-    echo "📱 $PROJECT_NAME | branch: $BRANCH"
-    echo "🔧 $XCODE_VERSION | $SWIFT_VERSION"
-    echo "📝 last commit: $LAST_COMMIT"
-    echo "$STATUS_LINE"
-} >&2
+BANNER="📱 $PROJECT_NAME | $BRANCH | $STATUS_LINE"
 
 cat << JSON
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "Project: $PROJECT_NAME | Branch: $BRANCH | Last commit: $LAST_COMMIT | $STATUS_LINE"
-  }
+    "additionalContext": "Project: $PROJECT_NAME | Branch: $BRANCH | $XCODE_VERSION | $SWIFT_VERSION | Last commit: $LAST_COMMIT | $STATUS_LINE"
+  },
+  "statusMessage": "$BANNER"
 }
 JSON
