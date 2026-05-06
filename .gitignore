@@ -73,3 +73,6 @@ Models/*.bundle
 
 # --- Logs ---
 *.log
+
+# Personal local Claude Code settings (hooks, overrides) — never commit
+.claude/settings.local.json
