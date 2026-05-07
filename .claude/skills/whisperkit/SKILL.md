@@ -3,16 +3,17 @@ name: whisperkit
 description: Streaming audio capture and language-aware transcription with WhisperKit. Use whenever working on the audio pipeline, language detection, sentence chunking, or pause/resume logic.
 ---
 
-> ⚠️ PACKAGE RENAME — ALPHA INFO
+> ⚠️ PACKAGE RENAME — Phase 4 alert
 >
-> As of May 1 2026, Argmax shipped argmax-oss-swift v1.0.0, which renamed the package from `WhisperKit` to `ArgmaxOSS`.
+> As of May 1 2026, Argmax shipped argmax-oss-swift v1.0.0, which renamed the package from `WhisperKit` to `ArgmaxOSS`. Full Swift 6 Sendable support out of the box.
 >
-> When we integrate this in Phase 4, use:
-> - Package URL: github.com/argmaxinc/argmax-oss-swift (unchanged)
+> When integrating this in Phase 4, use:
+> - Package URL: https://github.com/argmaxinc/argmax-oss-swift (unchanged)
 > - Product name: ArgmaxOSS (was: WhisperKit)
 > - Import statement: `import ArgmaxOSS` (was: `import WhisperKit`)
 >
-> The actual API surface is similar but verify against the v1.0.0 release notes.
+> The general API surface is similar but verify against the v1.0.0 release notes when implementing.
+> Detected by weekly upgrade survey routine — see issue #2 and issue #4.
 
 # WhisperKit streaming integration
 
