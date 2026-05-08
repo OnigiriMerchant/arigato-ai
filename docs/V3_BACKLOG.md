@@ -72,3 +72,22 @@ Each item includes: what, why deferred, trigger condition for revisiting.
 ---
 
 Updated: May 7 2026
+
+---
+
+## Competitive observations (May 2026)
+
+### User-tunable latency/accuracy slider
+- **What:** Per-meeting adjustment of how aggressively the app waits for sentence completion before translating. Inspired by OpenAI's GPT-Realtime-Whisper "delay selector" demo.
+- **Why deferred:** Adds settings complexity to MVP 1. Best added once we have real meeting feedback on what default latency feels like.
+- **Trigger to revisit:** After 5 real meeting tests, if you find yourself wishing for either faster (less accurate) or slower (more accurate) captions in different contexts.
+
+### Streaming UX while LFM2 translates ("preamble" pattern)
+- **What:** Display Japanese live as Whisper streams it, show "translating..." indicator below, fill in English when LFM2 completes. Avoids 1-2s dead-air feeling between source and translation.
+- **Why deferred:** Phase 7 UI polish concern, not architecture.
+- **Trigger to revisit:** During Phase 7 (UI polish).
+
+### JP-WER head-to-head benchmark (LFM2+Whisper vs GPT-Realtime-Translate)
+- **What:** Same Japanese business meeting audio sample run through both pipelines. Measure word error rate, latency, keigo register preservation.
+- **Why deferred:** Not blocking MVP 1. Our Apollo vibe-check is sufficient evidence for our use case.
+- **Trigger to revisit:** If MVP 1 translation quality disappoints in real meetings, OR if you're considering Roche app store distribution and need a defensible accuracy claim.
