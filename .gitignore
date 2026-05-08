@@ -76,3 +76,6 @@ Models/*.bundle
 
 # Personal local Claude Code settings (hooks, overrides) — never commit
 .claude/settings.local.json
+
+# XcodeBuildMCP local cache
+.xcodebuildmcp/
