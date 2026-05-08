@@ -5,6 +5,13 @@ description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Us
 
 # LEAP iOS SDK — LFM2-350M-ENJP-MT integration
 
+## Recent SDK changes (May 2026)
+- **Minimum target version: v0.10.4.3** (released 2026-05-07).
+- **New cache control API**: prefer the native Swift surface — `LiquidCacheOptions.enabled(path:)` factory plus `with(cacheOptions:)` builders on `LiquidInferenceEngineOptions` and `LiquidInferenceEngineManifestOptions`.
+- **Avoid the older `KotlinUInt` wrapping pattern** seen in pre-v0.10.4.3 tutorials — the new API takes native Swift types directly.
+- **LFM2-350M-ENJP-MT compatibility unchanged**: bundle format, runner API, and model loading signatures are stable.
+- Detected by doc-researcher investigation triggered by daily briefing issue #5.
+
 ## Critical system prompt requirement
 LFM2-350M-ENJP-MT requires ONE of these EXACT system prompts. No variation, no rephrasing:
 - `"Translate to English."` — for Japanese → English
