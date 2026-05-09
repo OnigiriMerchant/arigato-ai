@@ -3,7 +3,7 @@
 Last updated: 2026-05-10 by end-of-session update.
 
 ## Most recent commit
-- `ace97b5` revert: build-doctor tools list; expand XcodeBuildMCP backlog entry with deeper finding
+- `eb37b00` docs: refresh current state for chat migration continuity
 - Code commit: `4fdc0fd` feat(transcription): add domain types and Transcribing protocol
 
 ## Phase status
@@ -30,4 +30,4 @@ Last updated: 2026-05-10 by end-of-session update.
 ## Working tree
 - Clean
 - Branch: main
-- Origin/main: 2 commits ahead (push pending — leave to user's session-end flow)
+- Origin/main: 3 commits ahead (push pending — leave to user's session-end flow)
