@@ -18,7 +18,7 @@ Personal use first, App Store later if it earns its way there.
 - Each pipeline stage is its own actor or class. No god objects.
 - Whisper language fallback uses consecutive-window disagreement gating (N=2). See LanguageRouter spec in PHASE_4_HANDOFF.md.
 - Pre-warm both models at app launch to avoid cold-start glitches.
-- Default simulator: iPhone 17 Pro Max (iOS 26.4). The physical target device is iPhone 17 Pro Max — different screen size, safe-area insets, Dynamic Island. Never test against iPhone 17 Pro.
+- Default simulator: iPhone 17 Pro Max (iOS 26.4 / 26.4.1 — XcodeBuildMCP picks latest patch automatically via useLatestOS: true). The physical target device is iPhone 17 Pro Max — different screen size, safe-area insets, Dynamic Island. Never test against iPhone 17 Pro.
 
 ## Coding standards
 - SwiftUI for all views. UIKit only when wrapping a system API that requires it.

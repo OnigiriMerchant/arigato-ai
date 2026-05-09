@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		9248F09250F14F2A8C6806EA /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0CD61E73BC21433BAFBE87F8 /* WhisperKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		F7E6602E2FAB83BB007B6076 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9248F09250F14F2A8C6806EA /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = ArigatoAI;
 			packageProductDependencies = (
+				0CD61E73BC21433BAFBE87F8 /* WhisperKit */,
 			);
 			productName = ArigatoAI;
 			productReference = F7E6601E2FAB83BA007B6076 /* ArigatoAI.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = F7E660152FAB83BA007B6076;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F7E6601F2FAB83BA007B6076 /* Products */;
 			projectDirPath = "";
@@ -580,6 +589,26 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
+			requirement = {
+				kind = versionRange;
+				minimumVersion = 1.0.0;
+				maximumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0CD61E73BC21433BAFBE87F8 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = F7E660162FAB83BA007B6076 /* Project object */;
 }

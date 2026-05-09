@@ -20,12 +20,13 @@ DerivedData/
 
 # --- Swift Package Manager ---
 .swiftpm/
-Package.resolved
 .build/
 
 # --- CocoaPods (we don't use these but future-proofing) ---
 Pods/
-*.xcworkspace
+# Allow Package.resolved for reproducible builds (SPM lock file) —
+# anchor to repo root so embedded project.xcworkspace stays tracked
+/*.xcworkspace
 
 # --- Carthage ---
 Carthage/Build/
