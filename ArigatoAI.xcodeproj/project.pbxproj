@@ -596,8 +596,8 @@
 			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
 			requirement = {
 				kind = versionRange;
-				minimumVersion = 1.0.0;
 				maximumVersion = 2.0.0;
+				minimumVersion = 1.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
