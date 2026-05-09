@@ -129,6 +129,12 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 - **Trigger to revisit:** First time this test flakes in CI, or before MVP 1 ships if CI is added by then.
 - **Cost estimate:** ~30 min including handshake design + replacement.
 
+### Quarterly platform sanity review
+- **What:** Every ~3 months, run a deeper review of the agentic stack: are the MCP servers I depend on still the right choice? Are there new ones that would replace what I have? Has the official subagent docs changed in ways that affect my setup? Are there community-reported best-practice shifts I missed? This is strategic review work, runs in Claude.ai with the live state file as input.
+- **Why deferred:** Phase 4 mid-flight. Not urgent.
+- **Trigger to revisit:** Calendar reminder set for Aug 2026, or any time a daily brief surfaces multiple platform changes in the same week (signal that drift is accelerating).
+- **Cost estimate:** ~30 min Claude.ai session. No code, no commits — outputs are V3 backlog updates and possibly CLAUDE.md updates.
+
 ---
 
 Updated: May 10 2026
