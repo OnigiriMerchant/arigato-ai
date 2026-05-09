@@ -55,6 +55,13 @@ Personal use first, App Store later if it earns its way there.
 - Don't commit until the three-reviewer gate has run (@code-reviewer + @ui-reviewer + @git-historian) AND I have explicitly approved.
 - Don't use deprecated APIs. If unsure, invoke @doc-researcher.
 
+## External dependency configuration
+- When picking configuration values for external dependencies (model identifiers, API endpoints, recommended defaults, tokenizer names, etc.), verify against BOTH the pinned version's source tree AND the maintainer's current README/docs.
+- Source tree confirms what works in your pinned version. README confirms what the maintainer recommends. Locked architectural decisions in phase handoffs encode use-case-specific reasoning.
+- When recommendations conflict with locked decisions, surface the collision before acting. The locked decision wins by default — it was made with full context. A recommendation overriding it requires explicit re-examination of the original reasoning.
+- Pin specific values explicitly. Do not rely on dynamic-recommendation APIs (e.g., recommendedRemoteModels()) for MVP — explicit pinning is more predictable and easier to debug.
+- Maintainer recommendations are general-purpose. Your use case may legitimately be in a niche the maintainer doesn't recommend on their front page. Phase 4 Decision 2 (large-v3-turbo) is an example — Argmax's README recommends 626MB non-turbo for accuracy, but our use case (live meeting captions) prioritizes latency, so turbo is the correct niche choice.
+
 ## Project rhythm
 - Plan first via @feature-planner. Implement second via @swift-implementer.
 - Review every diff via @code-reviewer before commit.
