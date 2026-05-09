@@ -117,11 +117,17 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 **ROI estimate:** ~$5 in one-time build + negligible runtime tokens, saves ~20-30 minutes per phase across remaining 5 phases of MVP 1 (~2-3 hours total focus time clawed back). Trade is clearly net-positive.
 
 ### XcodeBuildMCP not in subagent default tool surface
-- **What:** During Phase 4 Group A, @swift-implementer fell back to raw xcodebuild because XcodeBuildMCP wasn't in its default tool surface. Build-doctor caught this, loaded the MCP tools, and ran an authoritative build successfully — confirming the MCP works fine when subagents load it explicitly. The fix is to add XcodeBuildMCP to the default tool list for any subagent that builds, tests, or deploys (currently @swift-implementer, build-doctor, and any future @device-test-runner). CLAUDE.md mandates XcodeBuildMCP for all build/test/run/deploy; default tool surfaces should reflect that.
-- **Why deferred:** Mid-Phase 4. Group A worked around it with build-doctor's fallback.
-- **Trigger to revisit:** Before Group B starts. Group B adds the WhisperKit SPM dependency and edits project.pbxproj — XcodeBuildMCP wrapping is more important there than for pure type files.
-- **Cost estimate:** ~10 minutes per subagent definition (.claude/agents/*.md edits to add MCP tools to the YAML frontmatter tools list). 3 subagents = ~30 min total.
-- **Bonus side benefit:** Once subagents have XcodeBuildMCP in their default surface, the 16 raw xcodebuild approval prompts that fired today disappear entirely — they were CLAUDE.md violations that became visible because the rule was honoured.
+- **What:** During Phase 4 Group A, @swift-implementer fell back to raw xcodebuild because XcodeBuildMCP wasn't in its default tool surface. Build-doctor was able to load the MCP tools at the time and ran an authoritative build — which led to the original (incorrect) diagnosis below.
+- **Original framing (refuted May 10 2026):** "Case mismatch in YAML frontmatter — subagent files reference `mcp__xcodebuildmcp__*` (lowercase) but the server registers as `mcp__XcodeBuildMCP__*` (mixed case). Edit the 7 affected subagent YAMLs to match the actual case-sensitive prefix. ~30 min total."
+- **Revised framing (May 10 2026):** Subagent MCP tool resolution appears to be broken in the current Claude Code version. Neither wildcards (`mcp__XcodeBuildMCP__*`) nor fully-qualified names (`mcp__XcodeBuildMCP__list_sims`) expose MCP tools to spawned subagents. Two consecutive verification probes against build-doctor confirmed: in both runs the subagent's tool registry contained only `Read`, `Edit`, `Bash` — no MCP tools at all, despite being listed in the YAML frontmatter `tools:` field. The case mismatch is real but not the root cause; fixing it changes nothing.
+- **Hypotheses still to test (real diagnosis required):**
+    1. MCP-deferred-tool friction — parent session loads MCP schemas via `ToolSearch` before calling them; subagents may lack the loader, so deferred MCP tools never materialize even when allowlisted.
+    2. MCP scope mismatch — XcodeBuildMCP and Apple xcode MCP may be configured at user/session scope (likely `~/.claude.json` or via a plugin marketplace) and that scope may not propagate to subagent processes.
+    3. Claude Code version regression — subagent MCP support may simply be broken or undocumented in this release.
+- **Path forward when revisited:** spawn @claude-code-guide research agent against this specific failure (registry returns only `Read, Edit, Bash` despite frontmatter listing MCP tools), inspect `~/.claude.json` and plugin marketplace configs for MCP server scope, or wait for a Claude Code update that documents subagent MCP behaviour explicitly. None of these is in scope mid-Phase 4.
+- **Workaround in effect:** Subagents that need build/test/run/deploy capability fall back to raw `xcodebuild` / `xcrun` via `Bash`. Cost: each invocation triggers a permission-approval prompt (16 such prompts fired during Phase 4 Group A). Functional, just noisier than the MCP-wrapped path.
+- **Trigger to revisit:** When MCP tool resolution becomes blocking — i.e., a subagent failure that XcodeBuildMCP would have prevented (e.g., a build configuration the raw `xcodebuild` invocation can't reproduce) — OR after Phase 4 ships entirely and tooling restructuring is no longer mid-feature risk — OR when Claude Code releases a version that documents subagent MCP behaviour explicitly.
+- **Group B impact (May 10 2026):** Accepting raw xcodebuild fallback for Group B with manual approval cost. The WhisperKit SPM dependency and project.pbxproj edits proceed via Bash + xcodebuild rather than MCP tools.
 
 ### TranscribingProtocolTests cancel-test timing race
 - **What:** `transcribe_cancelFinishesStreamWithoutError` uses a 20ms `Task.sleep` to give the stream a chance to start before `cancel()` is called. This is a soft timing race that could flake on slow CI runners. Replace with a deterministic handshake (e.g., `MinimalTranscriber` exposes a "stream started" continuation the test awaits before calling `cancel()`).
@@ -131,7 +137,7 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 ---
 
-Updated: May 7 2026
+Updated: May 10 2026
 
 ---
 
