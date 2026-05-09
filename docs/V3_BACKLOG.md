@@ -135,6 +135,12 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 - **Trigger to revisit:** Calendar reminder set for Aug 2026, or any time a daily brief surfaces multiple platform changes in the same week (signal that drift is accelerating).
 - **Cost estimate:** ~30 min Claude.ai session. No code, no commits — outputs are V3 backlog updates and possibly CLAUDE.md updates.
 
+### /update-state self-referential commit noise
+- **What:** Running /update-state produces a commit whose primary change is updating CURRENT_STATE.md's reference to the previous CURRENT_STATE.md commit. Four of the eight commits pushed in range afa6142..4cd76c4 are these self-referential refreshes. Two cleaner options: (a) amend the previous /update-state commit when its content would only differ in the "Most recent commit" line, (b) skip the refresh when no field other than "Most recent commit" would change. Option (a) is preferable — preserves a single state-refresh commit per phase boundary rather than per session interrupt.
+- **Why deferred:** Phase 4 mid-flight. Slash command edit, not urgent.
+- **Trigger to revisit:** Build alongside the @dispatch-implementer slash command in the post-Phase-4 workflow automation bundle.
+- **Cost estimate:** ~10 min edit to .claude/commands/update-state.md.
+
 ---
 
 Updated: May 10 2026
