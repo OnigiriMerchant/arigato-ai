@@ -79,3 +79,4 @@ Models/*.bundle
 
 # XcodeBuildMCP local cache
 .xcodebuildmcp/
+.xcodebuildmcp/
