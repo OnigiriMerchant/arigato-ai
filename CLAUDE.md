@@ -6,7 +6,7 @@ Personal use first, App Store later if it earns its way there.
 
 ## Stack
 - iOS 26.4+, Swift 6, SwiftUI, SwiftData, Swift Testing
-- WhisperKit (Apache-2.0) — Japanese + English ASR with auto language detection
+- WhisperKit via argmax-oss-swift v1.0.0+ (Apache-2.0) — Japanese + English ASR with auto language detection
 - LFM2-350M-ENJP-MT via LEAP iOS SDK — bidirectional JA↔EN translation
 - Apple Foundation Models (free, on-device) — Tier 1 post-meeting cleanup
 - Anthropic API (Claude Opus 4.7) — Tier 2 post-meeting cleanup
@@ -16,7 +16,7 @@ Personal use first, App Store later if it earns its way there.
 - All real-time inference is on-device. No network calls during meetings.
 - Audio capture → Whisper streaming with language tag → router → LFM2 translate (JA→EN or EN→JA) → SwiftData persist → SwiftUI render.
 - Each pipeline stage is its own actor or class. No god objects.
-- Whisper language confidence below 0.7 → fall back to previous chunk's language.
+- Whisper language fallback uses consecutive-window disagreement gating (N=2). See LanguageRouter spec in PHASE_4_HANDOFF.md.
 - Pre-warm both models at app launch to avoid cold-start glitches.
 - Default simulator: iPhone 17 Pro Max (iOS 26.4). The physical target device is iPhone 17 Pro Max — different screen size, safe-area insets, Dynamic Island. Never test against iPhone 17 Pro.
 

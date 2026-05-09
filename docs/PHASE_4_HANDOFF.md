@@ -9,13 +9,13 @@ A transcription layer that:
 - Runs Whisper inference fully on-device with auto JA/EN language detection
 - Emits `TranscriptSegment` values: text, language, confidence, host-time + seconds timestamps
 - Pre-warms Whisper at app launch (CLAUDE.md rule)
-- Falls back to the previous chunk's language when detection confidence < 0.7
+- Falls back via consecutive-window disagreement gating (N=2) when WhisperKit reports a different language than `lastConfidentLanguage`
 
 ## Architectural call (locked in)
 
 **Split `TranscriptionActor` (raw Whisper inference) from `LanguageRouter` (fallback policy + de-dup).**
 
-The router owns the `<0.7` fallback rule and overlapping-window de-duplication. Phase 5's LFM2 translation dispatcher attaches at the router's `AsyncStream<TranscriptSegment>` output without touching Whisper code. Reasoning: CLAUDE.md says "no god objects" and Phase 5 routes by language — having the router as its own type is the natural seam.
+The router owns the consecutive-disagreement language fallback and overlapping-window de-duplication. Phase 5's LFM2 translation dispatcher attaches at the router's `AsyncStream<TranscriptSegment>` output without touching Whisper code. Reasoning: CLAUDE.md says "no god objects" and Phase 5 routes by language — having the router as its own type is the natural seam.
 
 ## 15-step plan
 
@@ -28,7 +28,7 @@ The router owns the `<0.7` fallback rule and overlapping-window de-duplication. 
 
 ### Group B — Whisper model loader and pre-warm
 
-5. **Add ArgmaxOSS SwiftPM dependency** — edit `ArigatoAI.xcodeproj/project.pbxproj`. Link product to app target only (not test target — keeps unit tests Core ML-free).
+5. **Add argmax-oss-swift SwiftPM dependency** — edit `ArigatoAI.xcodeproj/project.pbxproj`. Package URL `https://github.com/argmaxinc/argmax-oss-swift`, pinned `1.0.0..<2.0.0`. SPM product name is `WhisperKit` (one of several products in the package); source files use `import WhisperKit` unchanged from pre-rename. Link product to app target only (not test target — keeps unit tests Core ML-free).
 6. **`WhisperModelLoader`** — `ArigatoAI/Transcription/WhisperModelLoader.swift`. Actor owning the ArgmaxOSS client. `loadIfNeeded(variant:)`, `currentState()`, `unload()`. Coalesces concurrent loads. Runs 1s-of-silence dummy pre-warm. `WhisperModelVariant` enum.
 7. **`AppBootstrapper`** — new `ArigatoAI/AppBootstrapper.swift`, edit `ArigatoAI/ArigatoAIApp.swift`. `@MainActor @Observable` class holding shared loader. Fires `Task.detached` from `App.init()` to warm in parallel with mic-permission prompt. Also: replace existing `fatalError` in model-container builder with recoverable error path (CLAUDE.md ban).
 
@@ -36,8 +36,8 @@ The router owns the `<0.7` fallback rule and overlapping-window de-duplication. 
 
 8. **`RollingAudioBuffer`** — `ArigatoAI/Transcription/RollingAudioBuffer.swift`. Value type, owned by transcription actor. Capacity in seconds, append-frame, slice-trailing-window, drop-oldest. Tracks host time of sample 0 for downstream timestamp conversion. Use ring buffer to avoid O(n²) appends.
 9. **`TranscriptionActor`** — `ArigatoAI/Transcription/TranscriptionActor.swift`. `actor` conforming to `Transcribing`. Drains `AsyncStream<AudioFrame>`, fills buffer, slices windows on hop boundary, calls Whisper with `language: nil, detectLanguage: true`. Emits `WhisperRawSegment` (not `TranscriptSegment` — language fallback happens in router).
-10. **`WhisperClient` protocol + `WhisperRawSegment`** — `ArigatoAI/Transcription/WhisperClient.swift`. Internal seam isolating ArgmaxOSS field-name uncertainty. Concrete `ArgmaxOSSWhisperClient` adapter. `WhisperRawSegment`: `text`, `languageCode`, `languageConfidence`, `startSeconds`, `endSeconds`, `avgLogprob`, `windowAnchorHostTime`.
-11. **`LanguageRouter`** — `ArigatoAI/Transcription/LanguageRouter.swift`. Actor consuming raw segments, applying `<0.7` fallback using `lastConfidentLanguage` state, de-duplicating across overlapping windows, emitting `AsyncStream<TranscriptSegment>`. First-segment-with-low-confidence-and-no-prior is dropped.
+10. **`WhisperClient` protocol + `WhisperRawSegment`** — `ArigatoAI/Transcription/WhisperClient.swift`. Internal seam isolating WhisperKit field-name and concurrency uncertainty. Concrete `ArgmaxOSSWhisperClient` adapter. `WhisperRawSegment`: `text`, `languageCode`, `startSeconds`, `endSeconds`, `avgLogprob`, `windowAnchorHostTime`. **API typo note**: WhisperKit v1.0.0 ships a real misspelling — the `[Float]` overload is named `detectLangauge(audioArray:)` ("auge", not "uage") at `WhisperKit.swift:528`, while the `audioPath:` overload uses the correct spelling at `WhisperKit.swift:519`. Confirmed by doc-researcher against the v1.0.0 tag; this is intentional in our implementation, not a typo to fix. The `WhisperClient` protocol method is named in correct English (e.g., `detectLanguage(audio: [Float])`); only the `ArgmaxOSSWhisperClient` adapter calls the typo'd selector. This isolates a future Argmax patch (which would be source-breaking) to a single adapter line.
+11. **`LanguageRouter`** — `ArigatoAI/Transcription/LanguageRouter.swift`. Actor consuming raw segments, de-duplicating across overlapping windows, emitting `AsyncStream<TranscriptSegment>`. **Language fallback policy: consecutive-window disagreement gating (N=2).** State: `lastConfidentLanguage: SpokenLanguage?`. On each window's `TranscriptionResult.language`: if it agrees with `lastConfidentLanguage`, emit normally and reset the disagreement counter. If it disagrees, emit the segment under `lastConfidentLanguage` with `wasLanguageFallback = true` and increment the counter; only switch `lastConfidentLanguage` to the new language after 2 consecutive windows agree on it. First window has no `lastConfidentLanguage` — accept whatever WhisperKit reports and seed state. **Why this replaces the per-segment `<0.7` confidence threshold**: v1.0.0 does not surface per-segment language probabilities. `TranscriptionSegment` has no language fields; `TranscriptionResult.language` is `String` only; `languageProbs: [String: Float]` lives on `DecodingResult` and is *not* returned from `transcribe(audioArray:)`. Pre-detection via the typo'd `detectLangauge(audioArray:)` call was rejected because it would double encoder cost per window. Consecutive-disagreement gating gives equivalent stickiness without the extra inference pass.
 
 ### Group D — Wiring and integration
 
@@ -50,9 +50,9 @@ The router owns the `<0.7` fallback rule and overlapping-window de-duplication. 
 
 These were the four blocking questions when the session was interrupted. None are answered yet.
 
-### 1. ArgmaxOSS package version pin
-- **Recommended**: v1.0.0+ (post-rename), `import ArgmaxOSS`, pinned `1.0.0..<2.0.0`. First-class Swift 6 `Sendable`, no `@preconcurrency` needed.
-- Alternative: pre-rename `WhisperKit` package — more battle-tested but requires `@preconcurrency` import.
+### 1. argmax-oss-swift package version pin
+- **Recommended**: v1.0.0+, package URL `https://github.com/argmaxinc/argmax-oss-swift`, SPM product `WhisperKit`, pinned `1.0.0..<2.0.0`. The package was renamed at the SPM level but the SPM product name and the `import WhisperKit` statement are unchanged from pre-rename. Note: `WhisperKit` does *not* declare `Sendable` conformance in v1.0.0 source — actor-ownership inside `TranscriptionActor` is the correct mitigation; do *not* fall back to `@preconcurrency import`.
+- Alternative: stay on pre-rename `argmaxinc/WhisperKit` — older, no v1.0.0 fixes, also non-Sendable. No reason to choose this.
 
 ### 2. Whisper model size
 - **Recommended**: `large-v3-turbo` (~600 MB, ~1 GB peak RAM, 1–1.5s end-of-utterance latency on iPhone 17 Pro Max, best JA accuracy).
@@ -74,10 +74,10 @@ These were the four blocking questions when the session was interrupted. None ar
 
 Invoke `@doc-researcher` against argmax-oss-swift v1.0.0 release notes and source for:
 
-1. **Module/product names post-rename.** Confirm `import ArgmaxOSS` and product name in `Package.swift`. Confirm whether `WhisperKit` symbol is renamed or aliased.
+1. **Module/product names post-rename.** Resolved — see Step 5 and Decision 1. SPM URL is `argmaxinc/argmax-oss-swift`, product name is `WhisperKit`, source uses `import WhisperKit` unchanged.
 2. **Streaming API surface in v1.0.0.** Repeated `transcribe(audioArray:)` over a rolling buffer vs. a dedicated streaming session object (`AudioStreamTranscriber` or similar)?
 3. **Per-segment timestamp field names.** Confirm exact names for `start`, `end`, `text`, `avgLogprob` in v1.0.0.
-4. **Language confidence field.** Per-segment (`languageProbability`) or only at result level? If only result-level, the `<0.7` fallback applies to the whole utterance, not per segment.
+4. **Language confidence field.** Resolved — see Step 11. v1.0.0 exposes language only at `TranscriptionResult.language` (String); `languageProbs: [String: Float]` lives on `DecodingResult` and is not returned from `transcribe(audioArray:)`. Drove the switch to consecutive-window disagreement gating.
 5. **Built-in VAD.** Does v1.0.0 ship a public VAD type? What's its API? (Affects decision 4.)
 6. **`Sendable` conformance.** Confirm the client class is `Sendable` so we can hold it inside `TranscriptionActor` without `@preconcurrency`.
 7. **Concurrent-decode behavior.** Is calling `transcribe` while a previous call is in flight safe? If not, we need a serial queue inside the actor.
