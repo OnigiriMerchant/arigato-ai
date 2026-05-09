@@ -29,6 +29,14 @@ Personal use first, App Store later if it earns its way there.
 - No force-unwraps in production code. Use guard/if-let.
 - No fatalError to silence errors. Find the real cause.
 
+## Swift 6 concurrency
+- New types default to `nonisolated` unless they touch main-actor UI state.
+- Use `Sendable` for value types passed across actor boundaries.
+- `@MainActor` only on view models bound to SwiftUI views, not on internal types.
+- Test fakes: use `OSAllocatedUnfairLock` or actor-based fakes. Never `NSLock` — Swift 6 forbids it from async contexts.
+- AVAudioPCMBuffer is non-Sendable. Copy to plain `[Float]` before crossing actor boundaries.
+- When in doubt about isolation, invoke @doc-researcher rather than guessing.
+
 ## Build workflow
 - Use XcodeBuildMCP for all build/test/run/deploy. Never raw xcodebuild.
 - Use Apple's xcode MCP for documentation search, SwiftUI preview screenshots, live diagnostics.
