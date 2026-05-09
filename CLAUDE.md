@@ -38,7 +38,7 @@ Personal use first, App Store later if it earns its way there.
 - When in doubt about isolation, invoke @doc-researcher rather than guessing.
 
 ## Build workflow
-- Use XcodeBuildMCP for all build/test/run/deploy. Never raw xcodebuild.
+- Use XcodeBuildMCP for all build/test/run/deploy from the main session. Subagents may fall back to raw xcodebuild via Bash due to a known MCP-inheritance bug in Claude Code (see https://github.com/anthropics/claude-code/issues/25200). When this happens, the main session is responsible for verifying subagent build output via XcodeBuildMCP after subagent completion. Do not blanket-permit raw xcodebuild from the main session.
 - Use Apple's xcode MCP for documentation search, SwiftUI preview screenshots, live diagnostics.
 - After every Swift edit, run mcp__xcodebuildmcp__build_sim_name_proj to verify.
 - Run tests with mcp__xcodebuildmcp__test_sim_name_proj before committing.
