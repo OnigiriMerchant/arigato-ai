@@ -153,6 +153,61 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 - **Trigger to revisit:** (1) Argmax adds a turbo variant they recommend over 632MB. (2) Real Roche meetings show accuracy issues attributable to turbo (vs non-turbo) decoding. (3) Phase 4 Decision 2's latency budget is renegotiated.
 - **Cost estimate to swap:** 5 minutes (string change + new bundle download).
 
+### Design language direction — Arigato AI visual identity (Phase 7)
+- **What:** Phase 7 (UI polish) should implement a coherent visual language combining several 2026 AI-native aesthetics. Codified below as the design intent and the explicit anti-patterns to avoid.
+
+**Aesthetic direction (target style):**
+- Neo Terminal Typography — monospace technical readouts (model names, language tags, latency, confidence values)
+- Cyber-Minimalism / Neo-Retrofuturistic Tech — clean and calm with purposeful retrofuturistic accents (dot matrices, soft neon/cyber accents, sci-fi-inspired typography), balanced so it never feels dated or over-the-top
+- Visual language of "intelligent" interfaces — UI feels alive and computational without being cluttered or gimmicky
+- AI-native signaling via particle/dot/constellation/starfield backgrounds — subtle pulsing or slow movement to convey intelligence and dynamism (reference: Liquid AI LFM2.5-350M model card orb)
+- Glassmorphism + subtle glows — frosted semi-transparent cards layered over dark/particle backgrounds
+- Neo-minimalism with tech details — clean foundation with purposeful generative elements
+- Ambient intelligence — backgrounds that react to AI states (more activity when "thinking," calmer when idle)
+- Monochromatic, premium, calm, sophisticated — color reserved for semantic meaning only (red = error, amber = fallback, green = confident)
+
+**Anti-patterns to actively avoid ("AI Slop"):**
+- Generic purple/blue gradient backgrounds (the SaaS-AI default of 2024-2025)
+- Inter font stacks as default — it's a fine font but its overuse has made it the visual equivalent of "we didn't pick a font"
+- Sterile minimalism without motion or texture
+- Distracting motion that calls attention to itself rather than supporting comprehension
+- Skeuomorphic gloss / chrome effects (signals "trying too hard")
+- Stock illustration of brains, circuits, or "AI" trope imagery
+
+**Tone calibration:**
+- Sophisticated without sterile
+- Dynamic without distracting
+- Premium without cold
+- Computational without cluttered
+
+**Specific design opportunities for Arigato AI:**
+- Particle density as live confidence indicator on translation segments (denser = more confident, sparser = less confident, very sparse = wasLanguageFallback active)
+- Dot-matrix orb as model warmup state visualization (cold/warming/ready/failed) — different particle behaviours per state
+- Monospace technical readouts for Whisper language tag, model variant, latency
+- Ambient background reacts to transcription pipeline state — calm when idle, subtle pulse during active capture, denser activity during inference
+- Glassmorphic transcript bubbles layered over dark particle background, with semantic color for JA vs EN
+
+**Hard technical requirements:**
+- Native light AND dark mode parity, flawless — the design language must work in both modes, not just dark mode where it photographs better. Light mode is harder; design from light-mode-first to force the discipline.
+- Current iOS frameworks only — SwiftUI, no UIKit unless wrapping a system API that requires it. Use iOS 26.4+ design system primitives (Liquid Glass, current animation APIs, latest typography APIs). No deprecated APIs.
+- Accessibility from day one — WCAG AA contrast in both modes, dynamic type support, reduced motion respect (the ambient-intelligence backgrounds must have a "calm" mode for users with motion sensitivity), VoiceOver labels on confidence indicators.
+- Performance budget — 60fps minimum on iPhone 17 Pro Max during active transcription. Particle systems must not steal frame time from the inference pipeline. Use Metal-backed rendering where particle counts justify it.
+
+**Why deferred:** Phase 4 is functional plumbing (audio capture → Whisper → translation router). Phase 7 is UI polish. Implementing the full design language during Phase 4 would slow architectural progress and require redoing once functionality is real.
+
+**Trigger to revisit:** Phase 7 kickoff. Before invoking @feature-planner for Phase 7, set up a design-system planning session in Claude.ai using this backlog entry as input. Output should be: (1) a design-tokens file (color, typography, spacing, motion), (2) a small library of reusable particle/glass/orb SwiftUI components, (3) updated CLAUDE.md design rules, (4) an updated @ui-reviewer mandate that enforces the design language.
+
+**Subagent question for Phase 7:** Decide whether to introduce a new @design-system subagent (handles design-token maintenance, component library updates, design-language drift detection) or extend @ui-reviewer's mandate. Lean toward the extension unless the workload justifies a new subagent.
+
+**Reference materials to gather before Phase 7:**
+- Screenshot of LFM2.5-350M model card (user's device IMG_1717)
+- Anthropic's model release card aesthetic (Claude Opus/Sonnet/Haiku lineup)
+- Mistral, Liquid AI, and similar lab visual languages
+- Framer template gallery filtered to AI/tech (particle backgrounds, glassmorphism examples)
+- Apple's iOS 26 design guidelines for compositing custom visual language with native Liquid Glass components
+
+**Cost estimate:** Phase 7 itself, no extra cost beyond what's already planned. ~2-3 weekend sessions to land design tokens + core components + first pass on screens.
+
 ---
 
 Updated: May 10 2026
