@@ -7,7 +7,7 @@ Status: planned, not implemented. Resume by answering the four decisions below, 
 A transcription layer that:
 - Consumes the `AsyncStream<AudioFrame>` from `ArigatoAI/Audio/AudioCaptureActor.swift` (Phase 3)
 - Runs Whisper inference fully on-device with auto JA/EN language detection
-- Emits `TranscriptSegment` values: text, language, confidence, host-time + seconds timestamps
+- Emits `TranscriptSegment` values: text, language, host-time + seconds timestamps, fallback flag
 - Pre-warms Whisper at app launch (CLAUDE.md rule)
 - Falls back via consecutive-window disagreement gating (N=2) when WhisperKit reports a different language than `lastConfidentLanguage`
 
@@ -21,7 +21,7 @@ The router owns the consecutive-disagreement language fallback and overlapping-w
 
 ### Group A — Domain types and protocols
 
-1. **`TranscriptSegment`** — `ArigatoAI/Transcription/TranscriptSegment.swift`. Sendable struct: `id`, `text`, `language`, `languageConfidence`, `startHostTime`, `endHostTime`, `startSeconds`, `endSeconds`, `isFinal`, `wasLanguageFallback`.
+1. **`TranscriptSegment`** — `ArigatoAI/Transcription/TranscriptSegment.swift`. Sendable struct: `id`, `text`, `language`, `startHostTime`, `endHostTime`, `startSeconds`, `endSeconds`, `isFinal`, `wasLanguageFallback`. No `languageConfidence` field — WhisperKit v1.0.0 does not surface per-segment confidence, and `wasLanguageFallback: Bool` (set by `LanguageRouter` on disagreement gating) is the only honest signal we have. A synthesized float would imply precision the underlying API doesn't provide.
 2. **`SpokenLanguage`** — `ArigatoAI/Transcription/SpokenLanguage.swift`. Enum `case ja, en` with failable `init?(whisperCode:)`.
 3. **`TranscriptionError`** — `ArigatoAI/Transcription/TranscriptionError.swift`. Cases: `modelLoadFailed`, `modelNotReady`, `decodeFailed`, `bufferUnderrun`, `audioStreamEnded`, `unsupportedSampleRate`. Mirrors `AudioCaptureError` pattern.
 4. **`Transcribing` protocol + `WarmupState`** — `ArigatoAI/Transcription/Transcribing.swift`. Methods: `warmup()`, `warmupState()`, `transcribe(frames:)`, `cancel()`. Mirrors `AudioCapturing` so a `FakeTranscriber` can be injected in tests.
