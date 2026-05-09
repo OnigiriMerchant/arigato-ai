@@ -80,6 +80,7 @@ Each item includes: what, why deferred, trigger condition for revisiting.
 - **Trigger to revisit:** When pasting more than 3 documents per phase between surfaces, OR when a phase walkthrough takes more than one Claude.ai session to complete.
 
 ### @plan-reviewer subagent
+- **Status:** Superseded — see "Workflow automation — narrow bundle for cross-surface courier work" below. Entry preserved for the reasoning trail on why a custom plan-reviewer subagent was rejected in favour of self-critique rules baked into @feature-planner plus @dispatch-implementer slash command.
 - **What:** Subagent that reviews @feature-planner output against CLAUDE.md rules, the active phase handoff doc, existing committed code, test coverage adequacy, and internal consistency. Outputs blockers/warnings/pass-throughs structured the same way the existing three-reviewer gate does. Closes the gap between plan generation and code generation, where currently no automated review exists.
 - **Why deferred:** Phase 4 mid-session. Tooling restructuring during active features is the costliest citizen-dev mistake. Current manual flow (Jose + Claude.ai cross-surface review) catches enough.
 - **Trigger to revisit:** Phase 5 kickoff. LFM2 integration will produce its own multi-step plan that benefits from automated first-pass review before @swift-implementer runs.
@@ -90,6 +91,37 @@ Each item includes: what, why deferred, trigger condition for revisiting.
     2. Iterative loop, not single-pass — Planner → Reviewer → Planner until clean. Single-pass review is wasted on multi-step plans.
     3. Explicit human gate stays after the loop closes, before @swift-implementer dispatch. Plan-reviewer is a filter, not a replacement for the citizen-dev review.
     4. Spike Claude Code's built-in Plan Mode per-subagent first. The structured plan-mode-per-group pattern may deliver 70% of the value without requiring a custom subagent. Build the custom @plan-reviewer only if the spike falls short.
+
+### Workflow automation — narrow bundle for cross-surface courier work
+Two coordinated upgrades that move mechanical translation work out of Claude.ai while preserving Claude.ai for strategic thinking, learning, and architectural decisions. Bundled because they're designed to compose; built together as one ~1-hour session after Phase 4 ships.
+
+**Item 1: @feature-planner self-critique rules**
+- **What:** Add classification + filtering rules to feature-planner's system prompt: drop signature-only tests, drop auto-synthesized conformance tests (Equatable, Hashable, Codable trivialities), require every doc-comment contract on a protocol method to have an enforcing test, AND require explicit nonisolated annotation on all value types that don't touch MainActor UI state. Today's Phase 4 Group A session would have caught the 4 dead tests, the missing D6 contract test, AND the missing nonisolated keywords on TranscriptionError and WarmupState without manual review.
+- **Cost:** ~30 minutes including testing the new prompt against a small spike plan.
+- **Token impact:** Negligible — adds maybe 200 tokens to feature-planner's system prompt; saves ~5-10k tokens of Claude.ai back-and-forth per group.
+
+**Item 2: @dispatch-implementer slash command**
+- **What:** Single slash command (e.g., /dispatch-implementer) that takes an approved plan reference and produces the standard swift-implementer dispatch prompt: per-file build verification, post-write test run, pause-before-reviewer-gate. Eliminates Jose hand-typing or copy-pasting a ~12-line dispatch prompt at every group boundary.
+- **Cost:** ~30 minutes including testing.
+- **Token impact:** Zero runtime tokens — slash commands are template expansion, not LLM calls.
+
+**Explicit non-goals (do NOT build):**
+- **@plan-reviewer subagent** (despite earlier backlog entry): once item 1 lands, the marginal value is small. Remaining plan issues are architectural/judgment calls Jose should keep doing in Claude.ai for upskill. Building @plan-reviewer would either duplicate item 1 or substitute for citizen-dev learning. Both bad. The earlier @plan-reviewer entry should be marked superseded.
+- **@phase-walker subagent**: strategic conversation stays in Claude.ai by design. Building this would replicate Claude.ai's role badly.
+- **Generalized "automate everything in the workflow"**: explicitly rejected. Some current friction is pedagogical (e.g., learning to spot dead tests). Automating away rules you haven't internalized yet means losing the upskill loop.
+
+**Why deferred:** Mid-Phase 4. Tooling restructuring during active features is the costliest citizen-dev mistake.
+
+**Trigger to revisit:** Phase 4 ships. Build both items in one ~1-hour session before Phase 5 kickoff.
+
+**ROI estimate:** ~$5 in one-time build + negligible runtime tokens, saves ~20-30 minutes per phase across remaining 5 phases of MVP 1 (~2-3 hours total focus time clawed back). Trade is clearly net-positive.
+
+### XcodeBuildMCP not in subagent default tool surface
+- **What:** During Phase 4 Group A, @swift-implementer fell back to raw xcodebuild because XcodeBuildMCP wasn't in its default tool surface. Build-doctor caught this, loaded the MCP tools, and ran an authoritative build successfully — confirming the MCP works fine when subagents load it explicitly. The fix is to add XcodeBuildMCP to the default tool list for any subagent that builds, tests, or deploys (currently @swift-implementer, build-doctor, and any future @device-test-runner). CLAUDE.md mandates XcodeBuildMCP for all build/test/run/deploy; default tool surfaces should reflect that.
+- **Why deferred:** Mid-Phase 4. Group A worked around it with build-doctor's fallback.
+- **Trigger to revisit:** Before Group B starts. Group B adds the WhisperKit SPM dependency and edits project.pbxproj — XcodeBuildMCP wrapping is more important there than for pure type files.
+- **Cost estimate:** ~10 minutes per subagent definition (.claude/agents/*.md edits to add MCP tools to the YAML frontmatter tools list). 3 subagents = ~30 min total.
+- **Bonus side benefit:** Once subagents have XcodeBuildMCP in their default surface, the 16 raw xcodebuild approval prompts that fired today disappear entirely — they were CLAUDE.md violations that became visible because the rule was honoured.
 
 ---
 
