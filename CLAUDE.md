@@ -52,7 +52,7 @@ Personal use first, App Store later if it earns its way there.
 ## Don't
 - Don't add cloud features without explicit instruction.
 - Don't add force-unwraps.
-- Don't commit until I approve via "ship it" or "/ship".
+- Don't commit until the three-reviewer gate has run (@code-reviewer + @ui-reviewer + @git-historian) AND I have explicitly approved.
 - Don't use deprecated APIs. If unsure, invoke @doc-researcher.
 
 ## Project rhythm
