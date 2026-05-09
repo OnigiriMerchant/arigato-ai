@@ -123,6 +123,12 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 - **Cost estimate:** ~10 minutes per subagent definition (.claude/agents/*.md edits to add MCP tools to the YAML frontmatter tools list). 3 subagents = ~30 min total.
 - **Bonus side benefit:** Once subagents have XcodeBuildMCP in their default surface, the 16 raw xcodebuild approval prompts that fired today disappear entirely — they were CLAUDE.md violations that became visible because the rule was honoured.
 
+### TranscribingProtocolTests cancel-test timing race
+- **What:** `transcribe_cancelFinishesStreamWithoutError` uses a 20ms `Task.sleep` to give the stream a chance to start before `cancel()` is called. This is a soft timing race that could flake on slow CI runners. Replace with a deterministic handshake (e.g., `MinimalTranscriber` exposes a "stream started" continuation the test awaits before calling `cancel()`).
+- **Why deferred:** Doesn't flake locally on M5 today; fix needs proper handshake design, not a one-line edit.
+- **Trigger to revisit:** First time this test flakes in CI, or before MVP 1 ships if CI is added by then.
+- **Cost estimate:** ~30 min including handshake design + replacement.
+
 ---
 
 Updated: May 7 2026
