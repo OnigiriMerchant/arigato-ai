@@ -61,6 +61,19 @@ struct TranscriptLiveView: View {
     /// pre-configured fake.
     @Environment(AppBootstrapper.self) private var bootstrapper
 
+    // MARK: - Empty-state copy (Concern 6 regression boundary)
+
+    /// Primary "we're waiting" copy. Owned by the middle-region empty
+    /// placeholder only. The chrome no longer renders this string —
+    /// duplicating it across both surfaces produced a "is the app stuck?"
+    /// reading on first launch (gate review Concern 6, 2026-05-10). The
+    /// chrome's "no language yet" signal is the em-dash badge alone.
+    /// Locked by D4-T-concern6 in `TranscriptLiveViewTests`.
+    static let emptyStateHintPrimary = "listening…"
+
+    /// Secondary detail line under the primary hint.
+    static let emptyStateHintDetail = "Spoken Japanese or English will appear here."
+
     var body: some View {
         VStack(spacing: 0) {
             indicatorChrome
@@ -104,12 +117,13 @@ struct TranscriptLiveView: View {
                     .background(Color.meterTrack, in: Capsule())
                     .accessibilityLabel(chrome.languageAccessibilityLabel)
 
-                if chrome.showsListeningHint {
-                    Text("listening…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Listening for first window")
-                }
+                // Concern 6 (gate review 2026-05-10): the "listening…" hint
+                // lives only in the middle-region empty placeholder. The
+                // chrome's `showsListeningHint` flag still carries the
+                // semantic ("router has not detected a language yet") for
+                // accessibility / future use, but the chrome view body no
+                // longer renders text for it — that produced a duplicated
+                // "listening…" on first launch. Locked by D4-T-concern6.
             }
 
             Spacer(minLength: 8)
@@ -167,10 +181,10 @@ struct TranscriptLiveView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Spacer()
-            Text("listening…")
+            Text(Self.emptyStateHintPrimary)
                 .font(.title3.weight(.medium))
                 .foregroundStyle(.secondary)
-            Text("Spoken Japanese or English will appear here.")
+            Text(Self.emptyStateHintDetail)
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

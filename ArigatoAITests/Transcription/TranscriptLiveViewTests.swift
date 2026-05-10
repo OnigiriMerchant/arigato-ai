@@ -216,6 +216,55 @@ struct TranscriptLiveViewTests {
         let display = TranscriptRowDisplay(routed: routed)
         #expect(display.text == text)
     }
+
+    // MARK: D4-T-concern6 — listening hint lives in middle region only
+
+    /// **D4-T-concern6**. End-of-group gate review (2026-05-10) surfaced
+    /// that "listening…" was rendered in BOTH the chrome and the
+    /// middle-region emptyState placeholder on first launch — visible
+    /// duplication that read as "is the app stuck?". This test locks the
+    /// fix: the "listening…" copy lives in exactly one place — the
+    /// middle-region empty placeholder, exposed as
+    /// ``TranscriptLiveView/emptyStateHintPrimary``. The chrome's
+    /// ``IndicatorChromeDisplay`` still carries the `showsListeningHint`
+    /// semantic flag (data-model honesty: the router has no language yet,
+    /// preserved for accessibility / future use) but the view body no
+    /// longer renders text for it.
+    ///
+    /// If a future refactor reintroduces a chrome property whose string
+    /// value equals the middle-region listening copy, this test fires.
+    @Test("D4-T-concern6: listening hint lives in middle region only, not duplicated in chrome")
+    func concern6_listeningHint_livesInMiddleRegionOnly() {
+        // The middle region's empty placeholder owns the listening copy.
+        #expect(TranscriptLiveView.emptyStateHintPrimary == "listening…")
+
+        // The chrome's data model still flags "no language yet" semantically.
+        let chrome = IndicatorChromeDisplay(currentLanguage: nil, loaderState: .idle)
+        #expect(chrome.showsListeningHint == true)
+        #expect(chrome.languageBadge == "—")
+
+        // Concern 6 contract: no chrome string property carries the
+        // middle-region listening hint copy. If a future refactor
+        // reintroduces a duplicating field (e.g. a chrome label that
+        // also reads "listening…"), the assertion fires by name.
+        let mirror = Mirror(reflecting: chrome)
+        for child in mirror.children {
+            if let stringValue = child.value as? String {
+                #expect(
+                    stringValue != TranscriptLiveView.emptyStateHintPrimary,
+                    "Chrome property '\(child.label ?? "?")' duplicates the middle-region listening hint copy — Concern 6 regression"
+                )
+            }
+            if let optionalString = child.value as? String?,
+               let value = optionalString
+            {
+                #expect(
+                    value != TranscriptLiveView.emptyStateHintPrimary,
+                    "Chrome optional property '\(child.label ?? "?")' duplicates the middle-region listening hint copy — Concern 6 regression"
+                )
+            }
+        }
+    }
 }
 
 // MARK: - Stub WhisperClient for chrome warmup-state tests
