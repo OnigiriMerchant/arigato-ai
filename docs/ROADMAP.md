@@ -144,6 +144,7 @@ After Phase 9 ships and all 12 MVP 1 features are functional in real meetings: M
 **Phase 7 kickoff:**
 - #22 Design language direction — @design-system subagent decision
 - #32 User-tunable latency/accuracy slider — after 5 real meetings if defaults wrong (may fire later)
+- #40 Group D UI deferred concerns — 7 visual concerns from end-of-group gate
 
 **Before MVP 1:**
 - #16 TranscribingProtocolTests cancel-test timing race

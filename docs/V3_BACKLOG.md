@@ -221,6 +221,8 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 - **Cost estimate to revisit:** ~10 minutes manual reproduction + ~5 minutes CLAUDE.md cleanup if cluster is fully closed. Up to ~30 minutes if cluster is partially closed and reproduction has nuance to capture.
 
+- **Group D end-of-group gate datapoint (2026-05-10):** Second real-work consequence of the bug. The `@ui-reviewer` agent declared `mcp__xcode__*` and `mcp__xcodebuildmcp__*` tools in its frontmatter but the dispatched agent session did not have them inherited — only `Read` and `Edit`. The agent correctly refused to fake a visual review and returned a tooling-gap report plus a static-code-only concern list (8 concerns flagged for visual verification). Mitigation that worked: main session used XcodeBuildMCP to build, run, and capture screenshots; verified Concern 6 (duplicate "listening…") visually and confirmed the fix. **New action item to evaluate when this entry is revisited:** add a Bash-based screenshot capture fallback to `@ui-reviewer` (the agent has `Bash` and `Read`; `xcrun simctl io <UDID> screenshot <path>` would let the agent capture screenshots without MCP), so the agent can deliver a complete review even when MCP inheritance fails. Don't change the agent now, just record the signal — the cluster fix is still the right long-term answer.
+
 ### Test isolation strategy — Swift Testing parallel execution masks crash root causes
 
 **Problem observed:** During Phase 4 Group C Step 9 verification, a single array-bounds crash in C15 (TranscriptionActorTests.windowStream_anchorHostTime_matchesAudioArrayStart) terminated four unrelated tests running in parallel within the same test process: AppBootstrapper.startPrewarm_calledTwice_doesNotDoubleLoad, RollingAudioBuffer.append_largeNumberOfFrames_completesUnderTimeBudget, and two other TranscriptionActor tests (C9, C14). Xcode's test runner attributed all four collateral failures to TranscriptionActorTests.swift:568 — the source location of the original crash, not where the dying tests actually were. Surface read: 5 unrelated test failures across 3 suites. Reality: 1 real failure, 4 phantom misattributions.
@@ -381,6 +383,32 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 **Effort:** ~30 minutes total — read Anthropic's reference language, adapt to project subagents, test against a representative dispatch.
 
 **Source:** https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices
+
+### Group D UI deferred concerns — Phase 7 polish
+
+**What:** Group D end-of-group gate ui-review surfaced 8 visual concerns. Concern 6 (duplicate "listening…" hint) was fixed pre-push (commit `3b7c311`, locked by D4-T-concern6). The remaining 7 concerns are deferred to Phase 7 polish:
+
+1. **`Color.green` warmup-loaded fallback** (`TranscriptLiveView.swift:349`) — no "ready" semantic token in `DesignTokens.swift` yet. Phase 7 should re-token. Verify hue does not clash with `recordingActive` red.
+
+2. **Failed-state error text + dot both render in `Color.recordingActive`** (`TranscriptLiveView.swift:141`) — two adjacent red elements may overload the chrome region and compete with captions for attention. Suggest error text uses `.secondary` foreground; let the dot alone carry the semantic-error color.
+
+3. **Footer placement under home indicator at large Dynamic Type** (`TranscriptLiveView.swift:80–82`) — at `.accessibility3` and above, "Audio never leaves your iPhone." footer may push under the home indicator on iPhone 17 Pro Max. Verify and adjust safe-area insets.
+
+4. **List rows edge-to-edge vs chrome 20pt inset → row badges misalign with chrome badge** (`TranscriptLiveView.swift:156–164`) — list does not apply horizontal padding while chrome and footer are inset 20pt. Right-edge JA/EN row badges do not line up with the chrome's JA/EN badge. Add matching horizontal padding to list rows.
+
+5. **`arrow.triangle.2.circlepath` SF symbol semantically wrong** (`TranscriptLiveView.swift:267`) — semantically a "refresh" glyph, not a "fallback/divergence" glyph. Users familiar with SF Symbols may misread as "tap to retry." Candidates that read more honestly: `arrow.left.arrow.right` (lateral motion = swap), `questionmark.diamond`, or a custom mark. Phase 7 should pick a semantically honest glyph.
+
+6. **`PopulatedPreviewWrapper` is hand-written copy of layout, not real `TranscriptLiveView`** (`TranscriptLiveView.swift:817–882`) — necessary today because `routedHistory` is `private(set)`. Practical consequence: any future layout change in `TranscriptLiveView.body` must also be made in `PopulatedPreviewWrapper.body` or the populated previews lie about the real layout. Phase 7 should rewrite to drive a real router via a `.task` modifier so previews track production layout automatically.
+
+7. **Chrome HStack truncation at extreme Dynamic Type** (`TranscriptLiveView.swift:115`) — at `.accessibility3` and above, the language hint + warmup label + failed-state error text could wrap or truncate. Chrome HStack does not switch to vertical layout. Verify behavior and add a vertical fallback if needed.
+
+**Why deferred:** Group D is functional plumbing; Phase 7 is the polish phase. These are visual / typography / SF symbol semantic concerns that fit the design-language pass naturally. Bundling them avoids piecemeal Phase 4 design churn that would be redone in Phase 7 anyway.
+
+**Trigger to revisit:** Phase 7 kickoff. Bundle with the existing Phase 7 design language direction (V3 #22) and the @design-system subagent decision.
+
+**Effort:** Each concern is small (~10–30 minutes). All seven together: ~3 hours, mostly bundled within the Phase 7 design-token + component-library work.
+
+**Note also:** ui-reviewer agent did not capture screenshots during the gate due to MCP-inheritance bug (V3 #23). Main session captured screenshots via XcodeBuildMCP. Concerns 1, 5, 6, 7 are static-code observations; Concerns 2, 3, 4, 8 require visual verification at non-default Dynamic Type sizes that the main-session capture did not exercise. Phase 7 should verify all eight at AX1, AX3, AX5 sizes plus default.
 
 ---
 
