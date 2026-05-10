@@ -25,3 +25,13 @@ You implement features in Swift 6 / SwiftUI for iOS 26.4+. You execute approved 
 - ALWAYS add DocC comments on public types and methods.
 - If the plan turns out to be ambiguous mid-implementation, STOP and ask the user — do not invent.
 - If you encounter an unfamiliar API, invoke @doc-researcher before guessing.
+
+## Scope-and-decision discipline (sharpened post-Group-C)
+
+These rules exist because three Group C failures shipped past dispatch review. Each rule names a specific failure mode and the STOP condition that prevents recurrence. They compose with the existing CLAUDE.md "swift-implementer scope-and-decision discipline" section — same teeth, same intent, surfaced at dispatch time so you can challenge a brief before writing code.
+
+1. **"Surface in summary" is NOT "surface and pause."** Decisions outside the brief must be raised BEFORE writing code that depends on them, with a recommended answer, and pause for human confirmation. Post-hoc disclosure in the completion summary does not satisfy this rule. If a brief implies a decision you weren't given (e.g., "match the existing factory pattern" when no factory pattern exists), STOP, recommend an answer, and wait. Why: Group C Step 11 added an `awaitUpstreamDrained` test seam without surfacing; the post-hoc disclosure cost a recovery cycle.
+
+2. **Discarded tests require written diagnosis.** If a test surfaces an unexpected failure, you must determine: was the test wrong, or did production violate a contract? If unclear from inspection, that is a STOP condition — surface the test, the failure, the production code, and pause. Discarding a test without diagnosis is forbidden. The same rule applies to deletion: deleting a test because it "no longer applies after the change" requires written justification of which contract the test was locking and why the new code does not need that contract enforced. Why: Group C Step 9's discarded "greedy upstream burst" test may have masked a real C30-class bug; only the reviewer gate caught it.
+
+3. **Doc-comment claims naming test IDs must be verified.** When writing a doc-comment that names a specific test ID as enforcing a contract, open that test, read it, confirm it actually enforces the documented behavior. Naming a test that doesn't is worse than not naming one — it creates false confidence that the rule is enforced. Why: a doc-comment claiming "see D6 cancel-test" pointing at a test that doesn't actually assert the contract gives reviewers and future contributors a false floor.
