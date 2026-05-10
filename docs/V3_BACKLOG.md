@@ -26,6 +26,7 @@ Each item includes: what, why deferred, trigger condition for revisiting.
 - **Cost estimate:** Reduces costs ~3–5x for affected agents.
 
 ### Auto mode for Claude Code
+- **Status (2026-05-10):** Resolved — auto mode is now available to Max users. Currently in active use.
 - **What:** Safer long-running permissions alternative to --dangerously-skip-permissions. Claude makes permission decisions with safeguards monitoring actions.
 - **Why deferred:** Research preview for Team users only as of May 6 2026. We're on Max; not eligible yet.
 - **Trigger to revisit:** When auto mode reaches general availability for Max users. Watch Anthropic release notes.
@@ -75,6 +76,7 @@ Each item includes: what, why deferred, trigger condition for revisiting.
 - **Trigger to revisit:** Phase 5 kickoff, before LFM2 integration begins. Phase 5 will surface a new uncertainties list against LEAP iOS SDK — natural moment to invest in the slash command before drafting the prompts manually a second time.
 
 ### Cross-surface friction between Claude.ai and Claude Code
+- **Status (2026-05-10):** Trigger met (>3 documents pasted per phase during Phase 4). Action superseded by the "Workflow automation — narrow bundle for cross-surface courier work" entry, which explicitly rejects @phase-walker as a design choice. Strategic conversation stays in Claude.ai by design. Entry preserved for reasoning trail.
 - **What:** Strategic phase walkthroughs (decision approvals, doc-researcher prompt drafting, recommendation framing) currently happen in Claude.ai web chat. Implementation happens in Claude Code. Result: copy-pasting prompts and project docs across surfaces. Explore moving strategic conversations into Claude Code via a @phase-walker subagent or a richer project-level CLAUDE.md context block so a single Claude Code session covers both planning and execution.
 - **Why deferred:** Phase 4 mid-session. Friction is real but bounded.
 - **Trigger to revisit:** When pasting more than 3 documents per phase between surfaces, OR when a phase walkthrough takes more than one Claude.ai session to complete.
@@ -115,13 +117,6 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 **Trigger to revisit:** Phase 4 ships. Build both items in one ~1-hour session before Phase 5 kickoff.
 
 **ROI estimate:** ~$5 in one-time build + negligible runtime tokens, saves ~20-30 minutes per phase across remaining 5 phases of MVP 1 (~2-3 hours total focus time clawed back). Trade is clearly net-positive.
-
-### Subagent MCP tool inheritance — known Claude Code limitation
-- **What:** Custom subagents in .claude/agents/ cannot reliably access MCP tools from frontmatter declarations or project-scope MCP servers. Affects XcodeBuildMCP and any other MCP server. Verified during Phase 4 Group A (case-mismatch and fully-qualified-name fixes both failed). Multiple GitHub issues open: #25200, #13898, #13605.
-- **Why deferred:** Claude Code platform bug, not a project-side fix. Subagents falling back to raw xcodebuild via Bash is the documented community workaround. CLAUDE.md updated to reflect this.
-- **Trigger to revisit:** When Anthropic ships a Claude Code release that fixes the MCP-inheritance bug. Watch the linked issues for resolution. Test subagent MCP access with `/agents` after each major Claude Code update.
-- **Optional spike:** Try moving XcodeBuildMCP from project scope to user scope (`-s user` flag) — some reports suggest user-scope MCPs propagate to subagents better. ~5 min test, low risk.
-- **No action required for current work.** Group B will proceed with subagents using Bash + raw xcodebuild for build verification; main session uses XcodeBuildMCP-wrapped tools.
 
 ### TranscribingProtocolTests cancel-test timing race
 - **What:** `transcribe_cancelFinishesStreamWithoutError` uses a 20ms `Task.sleep` to give the stream a chance to start before `cancel()` is called. This is a soft timing race that could flake on slow CI runners. Replace with a deterministic handshake (e.g., `MinimalTranscriber` exposes a "stream started" continuation the test awaits before calling `cancel()`).
@@ -329,6 +324,8 @@ The existing V3 entry "feature-planner system prompt update — concurrency sche
 **Trigger to revisit:** Post-Phase-4 workflow automation bundle.
 
 ### Process trim — Group C closure decisions
+
+**Status (2026-05-10):** Trigger fired (end of Group D). Pending review: did the trim deliver expected results? Re-evaluate during post-Phase-4 retrospective alongside this bundle.
 
 This entry documents the workflow trim applied at Group C closure on May 10 2026, so future-you knows what was decided and why.
 
