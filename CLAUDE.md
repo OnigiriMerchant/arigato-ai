@@ -37,11 +37,37 @@ Personal use first, App Store later if it earns its way there.
 - AVAudioPCMBuffer is non-Sendable. Copy to plain `[Float]` before crossing actor boundaries.
 - When in doubt about isolation, invoke @doc-researcher rather than guessing.
 
+## Concurrency design discipline
+For any plan or implementation involving Swift actors, AsyncStreams, async sequences, or Task spawning, the design must explicitly document its execution-order assumptions and the system must include at least one test that violates those assumptions.
+
+**Required in production code:**
+- Doc-comment on the type or method specifying what the scheduler assumes about external pacing (e.g., "this design assumes the producer yields between iterations" or "this actor assumes inflight tasks complete before the next is enqueued").
+- Doc-comment specifying what happens when those assumptions are violated (drops, queues, blocks, deadlocks, retries).
+
+**Required in test code:**
+- At least one test that drives the system in violation of its scheduling assumptions (greedy producer, stalled consumer, simultaneous spawn, etc.) and asserts correct behavior under that load.
+- Doc-comment claims naming a specific test ID must be verified against that test's actual behavior. A doc-comment that names a test which does not enforce the contract is worse than not naming one — it creates false confidence that the rule is enforced. If no real violation test exists yet, document the gap explicitly and log a V3 entry with a concrete trigger.
+
+**Rationale:** Swift actors prevent data races but not scheduling races. The Group C Step 9 hop-scheduler bug (single pending slot silently overwritten under greedy drain) shipped past plan review and implementation review because the scheduling assumption was implicit. C9 and C15 caught it only because their frame-feeding pattern happened to be unfriendly. Future concurrency code must make the assumption explicit so reviewers (human or agent) can challenge it.
+
+**Subagents:** @feature-planner must surface scheduling assumptions in plan output for any actor/async work. @swift-implementer must implement the doc-comments. @code-reviewer must verify both the assumption is documented and the violation test exists.
+
 ## Build workflow
 - Use XcodeBuildMCP for all build/test/run/deploy from the main session. Subagents may fall back to raw xcodebuild via Bash due to a known MCP-inheritance bug in Claude Code (see https://github.com/anthropics/claude-code/issues/25200). When this happens, the main session is responsible for verifying subagent build output via XcodeBuildMCP after subagent completion. Do not blanket-permit raw xcodebuild from the main session.
 - Use Apple's xcode MCP for documentation search, SwiftUI preview screenshots, live diagnostics.
 - After every Swift edit, run mcp__xcodebuildmcp__build_sim_name_proj to verify.
 - Run tests with mcp__xcodebuildmcp__test_sim_name_proj before committing.
+
+## Rollback safety
+Every step within a group that lands clean (production code compiles, tests pass) must be committed locally as a checkpoint before the next step is dispatched.
+
+Commit message format: `checkpoint(group-N-step-M): brief description`
+
+Checkpoint commits live on main alongside production commits. They are not pushed to origin until the three-reviewer gate approves the full group. The three-reviewer gate runs at end-of-group; checkpoint commits are rollback points, not production milestones.
+
+**Rationale:** the absence of intermediate checkpoints in Group C caused a two-hour recovery procedure when an in-flight scope violation corrupted Step 9. Checkpoint commits at every step boundary are the cheapest possible defense against working-tree corruption between gates.
+
+**Subagents:** @swift-implementer must commit as the final action of every step that builds clean and passes tests. @code-reviewer at the end-of-group gate may squash the chain into a single feature commit at its discretion if the chain reads cleaner that way, but the four-checkpoint chain itself must exist on main during the group's lifetime.
 
 ## Privacy and data rules
 - No analytics. No tracking. No telemetry.
@@ -67,3 +93,21 @@ Personal use first, App Store later if it earns its way there.
 - Review every diff via @code-reviewer before commit.
 - Use @swift-tutor whenever I ask "what does this do?" or "why this way?".
 - Use @doc-researcher anytime an API/SDK detail is uncertain.
+
+## feature-planner output discipline
+@feature-planner surfaces decisions for human approval where reasonable engineers might disagree — architectural choices, contract shapes, test seam patterns, scope boundaries, decisions that affect locked architectural constraints. Internal organization (file naming, helper function placement, private method names, formatter-driven choices) does not require human surface and may be resolved by the planner directly.
+
+Target: 5–8 surfaced decisions per group plan, not 15–20. The planner self-filters using this rule.
+
+**Rationale:** in Group C the planner surfaced 16 decisions of which 7 were load-bearing and 9 were trust-the-planner. The 9 created cognitive load without adding value.
+
+## swift-implementer scope-and-decision discipline
+@swift-implementer dispatch briefs declare an absolute file scope. Files outside that scope must not be touched, including via formatter side effects, including via "consistency" renames, including for ostensibly minor reasons. If integration with another file appears to require modification, @swift-implementer must STOP and surface the question before touching any file outside scope.
+
+"Surface in summary" is not "surface and pause." Post-hoc lists in the completion summary do not satisfy the rule. Architectural decisions outside the brief must be raised before code is written that depends on them, with a recommended answer, and pause for human confirmation.
+
+Discarded tests require written diagnosis. If a test surfaces an unexpected failure, @swift-implementer must determine: was the test wrong, or did production code violate a contract? If the answer is unclear from inspection, that is a STOP condition — surface the test, the failure, the production code, and pause. Discarding a test without diagnosis is forbidden.
+
+Doc-comment claims that name a specific test ID must be verified — open the named test, read it, confirm it actually enforces the documented contract. Naming a test that doesn't is worse than not naming one.
+
+**Rationale:** Group C produced three independent failures of these rules — a Step 11 scope violation that corrupted Step 9, an `awaitUpstreamDrained` test seam added without surfacing, a discarded "greedy upstream burst" test that may have masked a real C30-class bug. The reviewer gate caught the third; the first two cost real recovery time.

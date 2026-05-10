@@ -281,6 +281,69 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 **Recommendation when revisited:** option 2 or 3 likely simpler than option 1. Decide based on Group D's actual UI needs.
 
+### feature-planner system prompt update — concurrency scheduling-assumption rule
+
+**What:** Update feature-planner's system prompt to enforce the new CLAUDE.md "Concurrency design discipline" rule at plan time. Specifically: when a plan includes any actor, AsyncStream, async sequence, or Task spawn, the planner must (a) surface the design's execution-order assumptions in plain English in the plan output, (b) specify a doc-comment that documents those assumptions in the implementation, and (c) include at least one test in the test list that violates the assumption.
+
+**Why:** The CLAUDE.md rule alone is enforced at code-review time, which is late. Catching it at plan time is cheaper — the assumption either gets articulated (and possibly redesigned) before any code is written, or the planner notices the assumption is unstable and proposes a different design. Phase 4 Group C Step 9 would have surfaced the hop-scheduler race condition at plan review if this rule had been active.
+
+**Cost:** ~30 minutes including testing the new prompt against a representative concurrency-heavy plan. Adds maybe 300 tokens to feature-planner's system prompt.
+
+**Bundle with:** @feature-planner self-critique rules (already in V3 backlog) and @dispatch-implementer slash command (already in V3 backlog). All three are feature-planner / workflow improvements; ship together as one ~90-minute post-Phase-4 session.
+
+**Trigger to revisit:** Post-Phase-4 workflow automation bundle.
+
+### Test infrastructure as agent blind spot
+
+**Pattern observed in Group C:** Three independent test infrastructure issues hit during Group C, none caught by agent autonomy fallback because they manifest as runtime/environmental issues rather than code errors:
+1. Swift Testing parallel-execution misattribution (logged as separate V3 entry, addressed during Group C via deterministic handshake pattern)
+2. iOS Simulator microphone permission dialog blocking test runs (root cause: TEST_HOST setting on unit-test bundle launches host app)
+3. TEST_HOST architectural debt — removing it breaks auto-scheme generation, requires explicit shared scheme XML files (~50 lines)
+
+**Why it matters:** Test infrastructure issues live in agent blind spots — agents can read code and reason about static structure but cannot see GUI dialogs, simulator state, or scheme generation. Issues manifest as "tests are running for a long time" or "tests fail in confusing ways," not as code errors. Three separate test infra surprises in one group is a pattern worth fixing structurally.
+
+**Fix scope (one focused session, ~2-3 hours):**
+- Generate explicit shared scheme files at ArigatoAI.xcodeproj/xcshareddata/xcschemes/ArigatoAI.xcscheme listing both test bundles
+- Drop TEST_HOST and BUNDLE_LOADER from the unit-test bundle's Debug + Release configs once the explicit scheme is in place
+- Add a CLAUDE.md "test target hygiene" section documenting: unit tests must not require host app launch; integration/UI tests use TEST_TARGET_NAME pattern
+- Document in the same session: when an agent reports tests "taking longer than expected" with no failure output, suspect simulator dialog or scheme issue before suspecting code
+
+**Trigger to revisit:** Bundle with the post-Phase-4 workflow automation work (alongside @feature-planner self-critique rules, @dispatch-implementer slash command, feature-planner concurrency-rule update). All four are workflow-and-test-infrastructure improvements that compose well in one session.
+
+### swift-implementer scope-and-decision discipline (V3 entry sharpening)
+
+The existing V3 entry "feature-planner system prompt update — concurrency scheduling-assumption rule" addresses the planner side. This entry tracks the parallel work for swift-implementer's system prompt. Sharpening points from Group C reviewer feedback:
+
+1. "Surface in summary" is NOT "surface and pause." swift-implementer's system prompt must explicitly forbid post-hoc disclosure as a substitute for pre-decision pause. The agent must surface decisions BEFORE writing code that depends on them, not after.
+
+2. Discarded tests must produce written diagnosis. Add to swift-implementer's system prompt: "If a test surfaces an unexpected failure, you must determine whether the test was wrong or production violated a contract. If unclear from inspection, that is a STOP condition. Discarding a test without diagnosis is forbidden."
+
+3. Doc-comment claims that name test IDs must be verified. Add to swift-implementer's system prompt: "When writing a doc-comment that names a specific test ID as enforcing a contract, open that test, read it, confirm it actually enforces the documented behavior. Naming a test that doesn't is worse than not naming one."
+
+**Bundle with:** existing V3 entries on @feature-planner self-critique rules, @dispatch-implementer slash command, feature-planner concurrency-rule update, and Test infrastructure as agent blind spot. All five compose into one workflow-and-test-infrastructure cleanup session.
+
+**Trigger to revisit:** Post-Phase-4 workflow automation bundle.
+
+### Process trim — Group C closure decisions
+
+This entry documents the workflow trim applied at Group C closure on May 10 2026, so future-you knows what was decided and why.
+
+**Decisions applied (committed in the same commit as this entry):**
+- New CLAUDE.md "Rollback safety" section: checkpoint commits at every step boundary, mandatory
+- New CLAUDE.md "feature-planner output discipline" section: target 5-8 surfaced decisions per plan, planner self-filters trust-the-planner items
+- New CLAUDE.md "swift-implementer scope-and-decision discipline" section: scope is absolute, "surface in summary" is not "surface and pause," discarded tests need diagnosis, named test IDs must be verified
+- Existing "Concurrency design discipline" section restored from recovery tag with doc-comment-honesty amendment
+
+**Workflow changes (not encoded in CLAUDE.md, but applied to Group D and beyond):**
+- Doc-researcher pre-flight checks: situational, not default. Run only when (a) third-party library at v1.x with known quirks, (b) planner flags uncertainty, (c) brief depends on unfamiliar API
+- Screenshot cadence: only hard pauses, decision points, and surprises. Skip routine progress updates
+- Supervisory model: routine continuations go directly to Claude Code without round-trip; bring strategic-thinking-partner in for architectural decisions, plan reviews, recovery situations, surprises
+- V3 backlog hygiene: log entries as encountered, not deferred to end of session
+
+**Why this trim:** Group C took ~8 hours including a 2-hour recovery from working-tree corruption. Approximately 15-20% of that time was avoidable — over-supervision, over-formatting of plan output, screenshots of routine progress. The trim targets that overhead while preserving the gates that paid for themselves (three-reviewer gate, doc-researcher when warranted, plan review).
+
+**Trigger to revisit:** End of Group D. Re-evaluate whether the trim worked, whether further trimming is needed, or whether any dropped gates should be restored.
+
 ---
 
 Updated: May 10 2026
