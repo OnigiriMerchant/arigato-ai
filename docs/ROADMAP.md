@@ -41,7 +41,7 @@ Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond 
 | 2 | First simulator deployment | ✅ Shipped |
 | 2.5 | Physical iPhone deployment | ⏸️ Deferred (triggers when Phase 4 needs real mic hardware) |
 | 3 | Audio capture foundation | ✅ Shipped |
-| 4 | WhisperKit streaming transcription | 🚧 Group D pending (Groups A, B, C shipped) |
+| 4 | WhisperKit streaming transcription | ✅ Shipped |
 | 5 | LFM2 translation | ⏳ Pending |
 | 6 | SwiftData transcript storage | ⏳ Pending |
 | 7 | UI polish | ⏳ Pending |
@@ -74,22 +74,21 @@ Trigger condition: Phase 4 Group D ships and tests need physical microphone capt
 
 AVAudioEngine actor capturing 16kHz mono PCM from microphone. Permission flow (Info.plist + runtime alert + Settings deeplink). Live VU meter visualizing audio level. AsyncStream-based buffer delivery ready for Phase 4 to consume. Route-change handling for AirPods / charger plug-ins mid-meeting. No transcription yet — clean audio capture proven solid.
 
-### Phase 4 — WhisperKit streaming transcription (in progress)
+### Phase 4 — WhisperKit streaming transcription (shipped)
 
-Argmax's ArgmaxOSS package (post-rename of WhisperKit) integrated. Streaming JA + EN ASR with auto language detection per chunk. Confidence-based fallback to previous chunk's language. Model pre-warming at app launch to avoid cold-start glitch. Audio frames from Phase 3's AsyncStream become text segments here.
+Argmax's ArgmaxOSS package (post-rename of WhisperKit) integrated. Streaming JA + EN ASR with auto language detection per chunk. Consecutive-window disagreement gating (N=2) replaces per-segment confidence threshold. Model pre-warming at app launch. Audio frames from Phase 3's AsyncStream become text segments here, then route through LanguageRouter and surface in TranscriptLiveView.
 
-Groups A, B, C shipped. Group D is the active surface.
+All four groups shipped. Pipeline runs end-to-end on simulator audio. 125/125 tests passing.
 
 **Shipped:**
 - Group A: domain types and Transcribing protocol
 - Group B: WhisperKit SPM dependency, WhisperModelLoader actor, WhisperEngine seam, WhisperModelVariant enum, AppBootstrapper, StartupErrorView
 - Group C: RollingAudioBuffer, WhisperClient cascade, TranscriptionActor (bounded FIFO queue cap 4, oldest-drop overflow, deterministic awaitUpstreamDrained test seam, end-of-stream drain), LanguageRouter (N=2 disagreement gate, @MainActor @Observable currentLanguage, Transcribing protocol conformance with lossy mapping)
-
-**Group D scope:** TranscriptLiveView consuming AppBootstrapper.loaderState and the transcription stream. Language indicator chrome bound to LanguageRouter.currentLanguage (authoritative — stability over accuracy). Transcript lines bound to RoutedTranscript.detectedLanguage (honesty — one-window mismatch is information).
-
-**First decision in Group D plan review:** evaluate the routedTranscripts() multiplex V3 entry. Three options on the table — refactor multiplex, drop the surface and use @Observable, restructure UI bindings.
+- Group D: routedTranscripts() multiplex resolved (Option 2 — dead-stream method removed, replaced with @Observable routedHistory + resetSession). AppBootstrapper owns shared TranscriptionActor + LanguageRouter. AudioCaptureViewModel drains pipeline through router when injected (D3-T3 violation test for greedy upstream burst). TranscriptLiveView with three-region layout (chrome / list / record control). Per-row binding contract locked: chrome reads currentLanguage (authoritative), rows read detectedLanguage (per-window honest signal). End-of-group gate Concern 6 (duplicate "listening…") fixed pre-push; remaining 7 visual concerns deferred to Phase 7 (V3 #40).
 
 **Eight locked architectural decisions** (see PHASE_4_HANDOFF.md): ArgmaxOSS package source, Whisper model large-v3-turbo, AppBootstrapper pre-warm pattern, 5s window with 1s hop streaming, consecutive-disagreement language gating with N=2, detectLangauge typo handling, openai_whisper-large-v3-v20240930_turbo_632MB variant, subagent MCP-inheritance fallback rule.
+
+**Pre-Phase-5 workflow automation bundle** (V3 #14, #28, #29, #30, #31, #37, #39): recommended before Phase 5 kickoff. ~90 minutes total.
 
 ### Phase 5 — LFM2 translation (planned)
 
