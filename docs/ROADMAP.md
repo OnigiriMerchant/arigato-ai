@@ -150,6 +150,7 @@ After Phase 9 ships and all 12 MVP 1 features are functional in real meetings: M
 - #25 TranscriptionActor.awaitUpstreamDrained → DEBUG-only extension
 - #26 LanguageRouter scheduling-assumption violation test
 - #34 JP-WER head-to-head benchmark — only if MVP 1 quality disappoints
+- #38 TranscriptionActorTests withLock unused-result warning
 
 **MVP 1 acceptance gate:**
 - #10 App Store submission — 30 days personal use + 3 colleagues independently asking

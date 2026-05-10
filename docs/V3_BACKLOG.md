@@ -356,6 +356,16 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 
 **Effort:** ~10 minutes. Make param required, update construction sites (should be just AppBootstrapper), confirm tests pass.
 
+### TranscriptionActorTests withLock unused-result warning
+
+**What:** TranscriptionActorTests.swift:51 emits a "result of call to 'withLock' is unused" compiler warning. Pre-existing; surfaced during Group D Step 1 verification. Not Step 1's responsibility — predates the change.
+
+**Why deferred:** Group D scope discipline. Mid-group warning cleanup violates the swift-implementer scope rule. Carrying forward as a known-clean fix.
+
+**Trigger to revisit:** Pre-MVP-1 hardening bundle, alongside the cancel-test timing race fix and awaitUpstreamDrained → DEBUG-only extension cleanup.
+
+**Effort:** ~5 minutes. Either use the result, prefix with `_ =`, or wrap in a discardable-result helper.
+
 ---
 
 Updated: May 10 2026
