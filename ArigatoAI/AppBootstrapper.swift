@@ -26,6 +26,27 @@ import SwiftUI
 /// bootstrapper cannot be `public` without first promoting both. The
 /// SwiftUI views and the test target (via `@testable import ArigatoAI`)
 /// live inside the `ArigatoAI` module, so internal access is sufficient.
+///
+/// ## Construction-order assumption (Concurrency design discipline)
+/// Three pieces of shared infrastructure are built in a fixed order during
+/// `init`:
+///
+/// 1. ``loader`` — the ``WhisperModelLoader`` is constructed (or
+///    injected) first.
+/// 2. ``transcriber`` — the ``TranscriptionActor`` is constructed
+///    second, depending on ``loader``.
+/// 3. ``router`` — the ``LanguageRouter`` is constructed third,
+///    depending on ``transcriber``.
+///
+/// The bootstrapper's `init` runs synchronously on the MainActor.
+/// ``TranscriptionActor/init(loader:windowSeconds:hopSeconds:clock:)`` is
+/// `nonisolated` and synchronous;
+/// ``LanguageRouter/init(transcriber:confirmationsRequired:)`` is
+/// `@MainActor`-isolated and synchronous; both are callable from this
+/// `init` without `await`. Re-ordering the three steps above would break
+/// the dependency chain at compile time (each step's input is the
+/// previous step's output), so no runtime violation test is required —
+/// the type system enforces the order.
 @MainActor
 @Observable
 final class AppBootstrapper {
@@ -47,6 +68,33 @@ final class AppBootstrapper {
     /// app's lifetime can inject it without rebuilding the actor.
     let loader: WhisperModelLoader
 
+    /// Shared ``TranscriptionActor`` for the app's lifetime.
+    ///
+    /// Constructed once in ``init(loader:containerError:transcriberFactory:routerFactory:)``
+    /// from the same ``loader`` field above so the actor and any other
+    /// loader caller (e.g. ``startPrewarm(variant:)``) coalesce against a
+    /// single in-flight model load. The actor survives across recording
+    /// sessions; one ``TranscriptionActor/windowStream(frames:)`` call
+    /// per session is initiated through ``router``.
+    ///
+    /// **Warmup goes through ``loader`` (and ``startPrewarm(variant:)``),
+    /// not through this property.** Calling
+    /// ``TranscriptionActor/warmup()`` directly would still work but
+    /// duplicates the bootstrapper's lifecycle responsibility; production
+    /// code should drive warmup via ``startPrewarm(variant:)``.
+    let transcriber: TranscriptionActor
+
+    /// Shared ``LanguageRouter`` for the app's lifetime — the
+    /// `@MainActor @Observable` source of truth for
+    /// ``LanguageRouter/routedHistory`` and
+    /// ``LanguageRouter/currentLanguage``. UI binds directly here.
+    ///
+    /// View models that need to drain pipeline output call
+    /// ``LanguageRouter/transcribe(frames:)`` on this property; the
+    /// router internally uses ``transcriber`` so a single shared actor
+    /// owns one window-stream session at a time.
+    let router: LanguageRouter
+
     /// Designated initializer.
     ///
     /// - Parameters:
@@ -56,12 +104,37 @@ final class AppBootstrapper {
     ///     to `nil`. Production code uses ``recordContainerFailure(_:)``
     ///     instead; the parameter exists for tests that want to assert
     ///     the error-rendering branch in isolation.
+    ///   - transcriberFactory: Test-only override for the
+    ///     ``TranscriptionActor`` construction step. Defaults to `nil`,
+    ///     in which case production wiring
+    ///     `TranscriptionActor(loader: loader)` is used. When supplied,
+    ///     the closure is invoked synchronously inside `init` with the
+    ///     resolved ``loader``.
+    ///   - routerFactory: Test-only override for the ``LanguageRouter``
+    ///     construction step. Defaults to `nil`, in which case
+    ///     production wiring `LanguageRouter(transcriber: transcriber)`
+    ///     is used. When supplied, the closure is invoked synchronously
+    ///     inside `init` with the resolved ``transcriber``.
     init(
         loader: WhisperModelLoader = WhisperModelLoader(),
-        containerError: Error? = nil
+        containerError: Error? = nil,
+        transcriberFactory: ((WhisperModelLoader) -> TranscriptionActor)? = nil,
+        routerFactory: (@MainActor (TranscriptionActor) -> LanguageRouter)? = nil
     ) {
         self.loader = loader
         self.containerError = containerError
+        let resolvedTranscriber: TranscriptionActor
+        if let transcriberFactory {
+            resolvedTranscriber = transcriberFactory(loader)
+        } else {
+            resolvedTranscriber = TranscriptionActor(loader: loader)
+        }
+        transcriber = resolvedTranscriber
+        if let routerFactory {
+            router = routerFactory(resolvedTranscriber)
+        } else {
+            router = LanguageRouter(transcriber: resolvedTranscriber)
+        }
     }
 
     /// Records a SwiftData container failure after the bootstrapper exists.

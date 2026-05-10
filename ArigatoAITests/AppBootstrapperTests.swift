@@ -167,4 +167,53 @@ struct AppBootstrapperTests {
 
         #expect(counter.value == 1, "Expected factory to be invoked exactly once; got \(counter.value)")
     }
+
+    /// **D2-T1.** Locks the contract that ``AppBootstrapper`` constructs
+    /// the shared ``TranscriptionActor`` and ``LanguageRouter`` during
+    /// `init`, before the first ``startPrewarm(variant:)`` call. The
+    /// transcriber's warmup state is `.cold` initially because the loader
+    /// has not been driven; the router's transcriber reference is the same
+    /// actor instance held by the bootstrapper.
+    @Test("init constructs the shared transcriber and router")
+    func init_constructsTranscriberAndRouter() async {
+        let engine = FakeWhisperClient()
+        let loader = WhisperModelLoader(factory: { _ in engine })
+        let bootstrapper = AppBootstrapper(loader: loader)
+
+        // Transcriber is freshly constructed — its loader-derived warmup
+        // state is `.idle`-mirrored-as-`.cold` until startPrewarm runs.
+        let warmupState = await bootstrapper.transcriber.warmupState()
+        #expect(
+            isCold(warmupState),
+            "Expected freshly-constructed transcriber to report warmupState == .cold; got \(warmupState)"
+        )
+
+        // Router was wired to the same transcriber. We verify presence
+        // indirectly via the router's observable surface — see D2-T2 for
+        // the initial-state contract.
+        #expect(bootstrapper.router.routedHistory.isEmpty)
+    }
+
+    /// **D2-T2.** Locks the contract that a freshly-constructed router
+    /// exposes a clean initial state — ``LanguageRouter/currentLanguage``
+    /// is `nil` and ``LanguageRouter/routedHistory`` is empty. UI bindings
+    /// rely on this so the transcript log renders empty before any audio
+    /// arrives.
+    @Test("router.currentLanguage and routedHistory are nil/empty initially")
+    func router_currentLanguage_initiallyNil() {
+        let engine = FakeWhisperClient()
+        let loader = WhisperModelLoader(factory: { _ in engine })
+        let bootstrapper = AppBootstrapper(loader: loader)
+
+        #expect(bootstrapper.router.currentLanguage == nil)
+        #expect(bootstrapper.router.routedHistory.isEmpty)
+    }
+}
+
+/// Helper to assert ``WarmupState/cold`` without leaking pattern-match
+/// noise into the test bodies. Mirrors the `isIdle/isLoaded/...`
+/// helpers above.
+private func isCold(_ state: WarmupState) -> Bool {
+    if case .cold = state { return true }
+    return false
 }
