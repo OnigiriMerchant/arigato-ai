@@ -23,10 +23,13 @@ import SwiftUI
 ///    window) the row shows a small fallback marker — that one-window
 ///    mismatch is information, not noise.
 /// 3. **Bottom — record control.** A private ``RecordControl`` subview
-///    holds its own ``AudioCaptureViewModel``. For Step 4 the view model
-///    is constructed with `router: nil`, exercising the Phase-3 fallback
-///    drain. Step 5 will pass ``AppBootstrapper/router`` into
-///    ``RecordControl`` so frames flow through the language router.
+///    holds its own ``AudioCaptureViewModel`` constructed with
+///    `router: bootstrapper.router`, so audio frames captured by the
+///    engine flow through ``LanguageRouter/transcribe(frames:)`` and
+///    routed transcripts populate the bootstrapper-owned router's
+///    ``LanguageRouter/routedHistory`` — which the middle region renders
+///    above. Activated in Step 5; superseded the Phase-3 `router: nil`
+///    fallback that Step 4 shipped.
 ///
 /// ## Binding contract (locked)
 ///
@@ -67,9 +70,12 @@ struct TranscriptLiveView: View {
 
             transcriptList
 
-            RecordControl(loaderState: bootstrapper.loaderState)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
+            RecordControl(
+                loaderState: bootstrapper.loaderState,
+                router: bootstrapper.router
+            )
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
 
             footer
                 .padding(.horizontal, 20)
@@ -356,18 +362,47 @@ struct IndicatorChromeDisplay: Equatable {
 
 // MARK: - Record control
 
-/// Bottom region: VU meter + record button. Holds its own
-/// ``AudioCaptureViewModel`` via `@State`. For Step 4 the view model is
-/// constructed with `router: nil`, exercising the Phase-3 fallback
-/// drain. Step 5 will pass the bootstrapper's shared
-/// ``LanguageRouter`` here so frames flow through transcription.
+/// Bottom region: VU meter + record button. Owns an
+/// ``AudioCaptureViewModel`` via `@State` constructed with
+/// `router: bootstrapper.router` so audio frames flow through
+/// ``LanguageRouter/transcribe(frames:)`` and populate
+/// ``LanguageRouter/routedHistory`` — which the parent
+/// ``TranscriptLiveView`` renders. The view model's lifecycle is tied
+/// to this view's lifetime via `@State`; the bootstrapper-owned router
+/// survives across view re-creations, so routed history persists even
+/// when this subview rebuilds.
+///
+/// The router is forwarded in via init rather than read from the
+/// SwiftUI environment because `@State` initial values run before
+/// `@Environment` is available, so the parent ``TranscriptLiveView``
+/// (which has the bootstrapper in scope) is responsible for passing
+/// `bootstrapper.router` down.
+///
+/// The router-injected drain path itself is locked by
+/// ``AudioCaptureViewModelTests`` test **D3-T1**
+/// (`startRecording_withRouter_drainsSegmentStream`), which constructs
+/// a router-backed view model, drives one window of frames, and
+/// asserts the router's ``LanguageRouter/routedHistory`` accumulates
+/// the routed transcript with the expected detected and authoritative
+/// languages.
 private struct RecordControl: View {
     /// Read at view-build time so the record button can disable itself
     /// when the Whisper loader has failed.
     let loaderState: LoaderState
 
-    @State private var viewModel = AudioCaptureViewModel()
+    /// Shared ``LanguageRouter`` from ``AppBootstrapper``. Captured by
+    /// the `@State` initializer below so the view model drains through
+    /// the production router rather than the Phase-3 fallback.
+    let router: LanguageRouter
+
+    @State private var viewModel: AudioCaptureViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(loaderState: LoaderState, router: LanguageRouter) {
+        self.loaderState = loaderState
+        self.router = router
+        _viewModel = State(wrappedValue: AudioCaptureViewModel(router: router))
+    }
 
     var body: some View {
         VStack(spacing: 16) {
