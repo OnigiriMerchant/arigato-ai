@@ -12,6 +12,9 @@ Personal use first, App Store later if it earns its way there.
 - Anthropic API (Claude Opus 4.7) — Tier 2 post-meeting cleanup
 - Bundle ID: com.jose.ArigatoAI
 
+## Documentation map
+- docs/ROADMAP.md — end-to-end project arc, phase status, V3 trigger map. Read alongside CURRENT_STATE.md to orient at session start.
+
 ## Architecture rules
 - All real-time inference is on-device. No network calls during meetings.
 - Audio capture → Whisper streaming with language tag → router → LFM2 translate (JA→EN or EN→JA) → SwiftData persist → SwiftUI render.
