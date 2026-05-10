@@ -344,6 +344,16 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 
 **Trigger to revisit:** End of Group D. Re-evaluate whether the trim worked, whether further trimming is needed, or whether any dropped gates should be restored.
 
+### AudioCaptureViewModel router param: optional → required
+
+**What:** Group D Step 3 makes the router parameter optional on AudioCaptureViewModel so Step 3 can land before Step 5 wires it up. Once Step 5 ships and the bootstrapper is the only construction path in production, the optional should become required.
+
+**Why it shipped this way:** Incremental step landing — Step 3 had no router to pass yet, optional unblocked the checkpoint commit.
+
+**Trigger to revisit:** After Group D ships, before Phase 5 kickoff. Bundles naturally with the post-Phase-4 workflow automation cleanup.
+
+**Effort:** ~10 minutes. Make param required, update construction sites (should be just AppBootstrapper), confirm tests pass.
+
 ---
 
 Updated: May 10 2026

@@ -132,6 +132,7 @@ After Phase 9 ships and all 12 MVP 1 features are functional in real meetings: M
 - #29 Test infrastructure as agent blind spot
 - #30 swift-implementer scope-and-decision discipline (sharpening)
 - #31 Process trim re-evaluate
+- #37 AudioCaptureViewModel router param: optional → required
 
 **Phase 2.5 trigger:**
 - Physical iPhone deployment: when Group D needs real mic hardware
