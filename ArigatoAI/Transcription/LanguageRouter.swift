@@ -9,22 +9,23 @@ import Foundation
 
 /// Consumes ``TranscriptionWindow`` values from a ``TranscriptionActor``
 /// and applies consecutive-window disagreement gating (Phase 4 Decision 5,
-/// N=2) before re-emitting them as ``RoutedTranscript`` values for the
-/// transcript-log surface and as ``TranscriptSegment`` values for the
+/// N=2) before re-emitting them as ``RoutedTranscript`` values appended to
+/// ``routedHistory`` and as ``TranscriptSegment`` values for the
 /// ``Transcribing`` protocol surface.
 ///
 /// ## Surfaces
 ///
-/// **SEAM-1.** Two output surfaces:
-/// - ``routedTranscripts()`` returns an
-///   `AsyncThrowingStream<RoutedTranscript, any Error>` for the transcript
-///   log. Each element carries both the honest signal
-///   (``RoutedTranscript/detectedLanguage``) and the stable signal
-///   (``RoutedTranscript/authoritativeLanguage``).
-/// - ``currentLanguage`` is an `@Observable` property bound directly by UI
-///   chrome (language indicator). Updates atomically with each emitted
-///   ``RoutedTranscript`` whose ``RoutedTranscript/didFlip`` is `true` (or
-///   on the first supported-code window when the gate is uninitialised).
+/// **SEAM-1.** ``routedHistory`` is the per-window history of
+/// ``RoutedTranscript`` values that survived the gate. It is a
+/// `@MainActor`-isolated `@Observable` snapshot array suitable for direct
+/// SwiftUI binding by the transcript-log view. Each element carries both
+/// the honest signal (``RoutedTranscript/detectedLanguage``) and the
+/// stable signal (``RoutedTranscript/authoritativeLanguage``).
+/// ``currentLanguage`` is the parallel `@Observable` property bound by UI
+/// chrome (language indicator). Updates to ``routedHistory`` and
+/// ``currentLanguage`` happen atomically under MainActor isolation:
+/// SwiftUI consumers (also MainActor-isolated) observe both updates
+/// within the same render tick.
 ///
 /// **SEAM-4.** Conformance to ``Transcribing`` lives here, NOT on
 /// ``TranscriptionActor``. The lossy mapping
@@ -40,23 +41,24 @@ import Foundation
 /// 1. If ``TranscriptionWindow/detectedLanguage`` is `nil` (Whisper
 ///    returned a code outside `{ja, en}`, including the empty string —
 ///    SEAM-5 / Decision 14): **drop the window silently**. No
-///    ``RoutedTranscript`` is emitted; the gate counter and authoritative
-///    language are unchanged; ``currentLanguage`` is unchanged.
+///    ``RoutedTranscript`` is emitted, no entry is appended to
+///    ``routedHistory``, the gate counter and authoritative language are
+///    unchanged, and ``currentLanguage`` is unchanged.
 ///
 /// 2. Else, if no authoritative language has been established yet (first
 ///    supported-code window): set authoritative = detected, set
-///    ``currentLanguage`` = detected, reset counter to 0, emit a
+///    ``currentLanguage`` = detected, reset counter to 0, append a
 ///    ``RoutedTranscript`` with ``RoutedTranscript/didFlip`` = `false`.
 ///
-/// 3. Else, if detected == authoritative: reset counter to 0; emit a
+/// 3. Else, if detected == authoritative: reset counter to 0; append a
 ///    ``RoutedTranscript`` with detected = authoritative and
 ///    ``RoutedTranscript/didFlip`` = `false`.
 ///
 /// 4. Else (detected != authoritative): increment counter. If counter
 ///    >= ``confirmationsRequired`` (= 2), flip — set authoritative =
 ///    detected, set ``currentLanguage`` = detected, reset counter to 0,
-///    emit a ``RoutedTranscript`` with detected = authoritative and
-///    ``RoutedTranscript/didFlip`` = `true`. Otherwise emit a
+///    append a ``RoutedTranscript`` with detected = authoritative and
+///    ``RoutedTranscript/didFlip`` = `true`. Otherwise append a
 ///    ``RoutedTranscript`` with detected != authoritative (the SEAM-2
 ///    divergence) and ``RoutedTranscript/didFlip`` = `false`.
 ///
@@ -65,26 +67,36 @@ import Foundation
 /// The router's drain task consumes upstream ``TranscriptionWindow``
 /// values on the MainActor, one at a time. Gate state mutations
 /// (``currentLanguage``, the disagreement counter, the authoritative
-/// language) and the corresponding ``RoutedTranscript`` emission happen
-/// atomically with respect to one window: the drain awaits one window,
-/// applies the state transition, yields the resulting transcript (if
-/// any), then awaits the next.
+/// language) and the corresponding ``routedHistory`` append happen
+/// atomically with respect to one window because both are MainActor
+/// isolated: the drain awaits one window, applies the state transition,
+/// appends to ``routedHistory`` (if any), then awaits the next.
 ///
-/// **Assumption.** The router does NOT internally queue windows. If the
-/// upstream ``TranscriptionActor/windowStream(frames:)`` produces faster
-/// than this router's MainActor hop can advance, AsyncStream's natural
-/// backpressure applies — the upstream's continuation buffers per its
-/// own configuration, and the router catches up window by window.
+/// **Assumption.** Routed-transcript history mutation
+/// (``routedHistory`` append) is atomic with ``currentLanguage`` mutation
+/// under MainActor isolation. SwiftUI consumers (also MainActor-isolated)
+/// observe both updates within the same render tick. Cross-actor readers
+/// must hop to MainActor before reading either; mid-mutation observation
+/// is impossible from any other actor. The router does NOT internally
+/// queue windows — if the upstream
+/// ``TranscriptionActor/windowStream(frames:)`` produces faster than the
+/// MainActor hop can advance, AsyncStream's natural backpressure applies
+/// and the upstream's bounded queue (contract C30) may drop oldest hops.
 ///
-/// **Violation behaviour.** If the consumer of ``routedTranscripts()``
-/// stops iterating, the upstream eventually backs up; no windows are
-/// dropped here, but the upstream's bounded queue (contract C30) may
-/// drop oldest hops. That is the upstream's contract, not the router's.
+/// **Violation behaviour.** If a non-MainActor consumer attempts to read
+/// ``routedHistory`` or ``currentLanguage`` without hopping, the read is
+/// rejected at compile time by Swift 6 strict concurrency. A real
+/// violation test for upstream-bursts-vs-MainActor-hop-pacing is tracked
+/// in the V3 backlog ("LanguageRouter scheduling-assumption violation
+/// test").
 ///
-/// **Violation test.** None currently. C29 covers cancellation, not the
-/// scheduling assumption above. A real violation test for
-/// upstream-bursts-vs-MainActor-hop-pacing is tracked in V3 backlog
-/// ("LanguageRouter scheduling-assumption violation test").
+/// **Violation test.** ``LanguageRouterTests`` test **D1-T1**
+/// (`router_routedHistory_pairsDetectedAndAuthoritative_perWindow`) locks
+/// the per-window detected/authoritative pairing in ``routedHistory``,
+/// confirming that the per-window append is atomic with the per-window
+/// gate state transition. C29
+/// (`router_cancel_propagatesToTranscriber`) covers mid-flight
+/// cancellation as a separate scheduling-assumption violation.
 @MainActor
 @Observable
 final class LanguageRouter: Transcribing {
@@ -103,6 +115,17 @@ final class LanguageRouter: Transcribing {
     /// Windows with unsupported codes (SEAM-5) leave this value
     /// unchanged.
     private(set) var currentLanguage: SpokenLanguage?
+
+    /// Per-window history of ``RoutedTranscript`` values that survived
+    /// the gate, in upstream emission order. SEAM-1 surface — bound
+    /// directly by the SwiftUI transcript log.
+    ///
+    /// Mutated only on the MainActor by ``process(window:)``; appended
+    /// once per surviving window, atomically with the corresponding
+    /// ``currentLanguage`` mutation. Windows with unsupported codes
+    /// (SEAM-5) leave this array unchanged. Cleared by
+    /// ``resetSession()``.
+    private(set) var routedHistory: [RoutedTranscript] = []
 
     // MARK: - Stored state
 
@@ -138,61 +161,6 @@ final class LanguageRouter: Transcribing {
     ) {
         self.transcriber = transcriber
         self.confirmationsRequired = max(1, confirmationsRequired)
-    }
-
-    // MARK: - SEAM-1 surface (a): RoutedTranscript stream
-
-    /// **DEAD-STREAM SHIM.** This method returns a stream that finishes
-    /// immediately with zero values. It is not yet wired to a real upstream
-    /// frames source.
-    ///
-    /// Group D consumers that want the ``RoutedTranscript`` surface
-    /// (SEAM-1 surface a) must currently drive frames via
-    /// ``transcribe(frames:)`` (the SEAM-4 ``Transcribing`` surface) and
-    /// observe the gate via ``currentLanguage`` and the per-segment
-    /// ``TranscriptSegment/wasLanguageFallback`` flag. The router does NOT
-    /// currently multiplex one upstream session into both
-    /// ``RoutedTranscript`` and ``TranscriptSegment`` streams; calling
-    /// this method in production will yield nothing.
-    ///
-    /// Multiplexing one upstream session into both stream surfaces is
-    /// tracked as the V3 backlog item "LanguageRouter routedTranscripts()
-    /// multiplex" — defer the decision until Group D plan review.
-    ///
-    /// - Returns: An immediately-finishing throwing async stream. Treat
-    ///   this method as a sentinel that exists to satisfy SEAM-1's
-    ///   surface shape; do not bind UI to it yet.
-    func routedTranscripts() -> AsyncThrowingStream<RoutedTranscript, any Error> {
-        AsyncThrowingStream<RoutedTranscript, any Error> { continuation in
-            // The frames stream for this surface is empty; production
-            // callers who want the RoutedTranscript surface bring their
-            // own frames via transcribe(frames:). This convenience
-            // surface is for callers who already populated a session via
-            // a separate path. For Phase 4 MVP the primary entry point is
-            // transcribe(frames:); this method exists to satisfy SEAM-1's
-            // documented surface and is a thin shim.
-            let emptyFrames = AsyncStream<AudioFrame> { c in c.finish() }
-            let task = Task { [weak self] in
-                guard let self else {
-                    continuation.finish()
-                    return
-                }
-                let upstream = self.transcriber.windowStream(frames: emptyFrames)
-                do {
-                    for try await window in upstream {
-                        if let routed = self.process(window: window) {
-                            continuation.yield(routed)
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
-        }
     }
 
     // MARK: - Transcribing conformance
@@ -256,33 +224,104 @@ final class LanguageRouter: Transcribing {
     /// Cancels the current transcription session by propagating cancel to
     /// the underlying ``TranscriptionActor``.
     ///
-    /// After ``cancel()`` returns, any active ``transcribe(frames:)`` or
-    /// ``routedTranscripts()`` stream finishes cleanly without throwing.
+    /// After ``cancel()`` returns, any active ``transcribe(frames:)``
+    /// stream finishes cleanly without throwing. ``routedHistory`` is
+    /// preserved across cancellation; use ``resetSession()`` to clear
+    /// it explicitly when starting a fresh session.
     func cancel() async {
         await transcriber.cancel()
+    }
+
+    // MARK: - Session reset
+
+    /// Clears all router-owned session state — ``routedHistory``,
+    /// ``currentLanguage``, the authoritative language, and the
+    /// disagreement counter — returning the router to its
+    /// pre-first-window state.
+    ///
+    /// Caller is responsible for awaiting ``cancel()`` first if they
+    /// need draining-then-reset semantics; calling ``resetSession()``
+    /// while ``transcribe(frames:)`` is still draining causes in-flight
+    /// windows to reseed the gate from scratch and pre-reset history is
+    /// gone. The expected sequence to fully reset between meetings is:
+    ///
+    /// ```
+    /// await router.cancel()
+    /// router.resetSession()
+    /// ```
+    func resetSession() {
+        routedHistory.removeAll()
+        currentLanguage = nil
+        authoritativeLanguage = nil
+        disagreementCounter = 0
     }
 
     // MARK: - Gate
 
     /// Applies the N=2 consecutive-disagreement gate to one upstream
     /// window. Returns the corresponding ``RoutedTranscript`` to emit, or
-    /// `nil` if the window is silently dropped (SEAM-5).
+    /// `nil` if the window is silently dropped (SEAM-5). When non-nil,
+    /// the returned value is also appended to ``routedHistory`` before
+    /// this method returns.
     ///
-    /// Mutates ``currentLanguage``, ``authoritativeLanguage``, and
-    /// ``disagreementCounter`` atomically with respect to one window
-    /// because this method is `@MainActor`-isolated.
+    /// Mutates ``currentLanguage``, ``authoritativeLanguage``,
+    /// ``disagreementCounter``, and ``routedHistory`` atomically with
+    /// respect to one window because this method is
+    /// `@MainActor`-isolated. The ``routedHistory`` append is the
+    /// last mutation before return so any synchronous MainActor observer
+    /// of ``routedHistory.last`` sees a fully-consistent gate state.
     private func process(window: TranscriptionWindow) -> RoutedTranscript? {
         guard let detected = window.detectedLanguage else {
             // SEAM-5: unsupported language code. Drop silently.
+            // routedHistory is intentionally NOT mutated here.
             return nil
         }
 
-        guard let currentAuthoritative = authoritativeLanguage else {
+        let routed: RoutedTranscript
+
+        if let currentAuthoritative = authoritativeLanguage {
+            if detected == currentAuthoritative {
+                // Agreement. Reset counter, no flip.
+                disagreementCounter = 0
+                routed = makeRoutedTranscript(
+                    window: window,
+                    detected: detected,
+                    authoritative: currentAuthoritative,
+                    didFlip: false
+                )
+            } else {
+                // Disagreement. Bump counter and check threshold.
+                let nextCounter = disagreementCounter + 1
+                if nextCounter >= confirmationsRequired {
+                    // Flip.
+                    authoritativeLanguage = detected
+                    currentLanguage = detected
+                    disagreementCounter = 0
+                    routed = makeRoutedTranscript(
+                        window: window,
+                        detected: detected,
+                        authoritative: detected,
+                        didFlip: true
+                    )
+                } else {
+                    // Disagreement under threshold. SEAM-2 divergence:
+                    // detected != authoritative on this window's
+                    // RoutedTranscript.
+                    disagreementCounter = nextCounter
+                    routed = makeRoutedTranscript(
+                        window: window,
+                        detected: detected,
+                        authoritative: currentAuthoritative,
+                        didFlip: false
+                    )
+                }
+            }
+        } else {
             // First supported-code window. Establish authoritative.
             authoritativeLanguage = detected
             currentLanguage = detected
             disagreementCounter = 0
-            return makeRoutedTranscript(
+            routed = makeRoutedTranscript(
                 window: window,
                 detected: detected,
                 authoritative: detected,
@@ -290,41 +329,8 @@ final class LanguageRouter: Transcribing {
             )
         }
 
-        if detected == currentAuthoritative {
-            // Agreement. Reset counter, no flip.
-            disagreementCounter = 0
-            return makeRoutedTranscript(
-                window: window,
-                detected: detected,
-                authoritative: currentAuthoritative,
-                didFlip: false
-            )
-        }
-
-        // Disagreement. Bump counter and check threshold.
-        let nextCounter = disagreementCounter + 1
-        if nextCounter >= confirmationsRequired {
-            // Flip.
-            authoritativeLanguage = detected
-            currentLanguage = detected
-            disagreementCounter = 0
-            return makeRoutedTranscript(
-                window: window,
-                detected: detected,
-                authoritative: detected,
-                didFlip: true
-            )
-        }
-
-        // Disagreement under threshold. SEAM-2 divergence: detected !=
-        // authoritative on this window's RoutedTranscript.
-        disagreementCounter = nextCounter
-        return makeRoutedTranscript(
-            window: window,
-            detected: detected,
-            authoritative: currentAuthoritative,
-            didFlip: false
-        )
+        routedHistory.append(routed)
+        return routed
     }
 
     /// Builds a ``RoutedTranscript`` from an upstream window and the

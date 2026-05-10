@@ -281,6 +281,8 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 **Recommendation when revisited:** option 2 or 3 likely simpler than option 1. Decide based on Group D's actual UI needs.
 
+**Resolved 2026-05-10 by Group D Step 1:** Option 2 chosen — dead-stream method removed; routed transcripts surfaced via `@MainActor @Observable routedHistory` on `LanguageRouter`. Single UI consumer; no multiplex needed. See commit `checkpoint(group-d-step-1)`.
+
 ### feature-planner system prompt update — concurrency scheduling-assumption rule
 
 **What:** Update feature-planner's system prompt to enforce the new CLAUDE.md "Concurrency design discipline" rule at plan time. Specifically: when a plan includes any actor, AsyncStream, async sequence, or Task spawn, the planner must (a) surface the design's execution-order assumptions in plain English in the plan output, (b) specify a doc-comment that documents those assumptions in the implementation, and (c) include at least one test in the test list that violates the assumption.

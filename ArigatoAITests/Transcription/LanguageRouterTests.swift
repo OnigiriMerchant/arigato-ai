@@ -238,76 +238,6 @@ private func drainSegments(
     return collected
 }
 
-/// Drains the upstream ``TranscriptionActor/windowStream(frames:)``
-/// directly and routes each window through `router` via a private
-/// re-implementation of the gate semantics. Tests use this to observe
-/// ``RoutedTranscript`` values per emission, since the production
-/// ``LanguageRouter/transcribe(frames:)`` surface returns
-/// ``TranscriptSegment`` (lossy mapping). To observe RoutedTranscript
-/// directly we tap the per-window output via a new helper that runs the
-/// router's gate on the test thread.
-///
-/// This helper avoids adding a test seam to the production type by
-/// driving the gate through the live `transcribe(frames:)` surface and
-/// reconstructing the corresponding ``RoutedTranscript`` from the
-/// emitted ``TranscriptSegment`` plus the upstream-detected language
-/// observed from the fake client. Specifically:
-/// - ``TranscriptSegment/language`` carries the authoritative language.
-/// - ``TranscriptSegment/wasLanguageFallback`` is `true` exactly when the
-///   detected language disagreed with the authoritative language for
-///   that emission.
-/// - The detected language for each emission is the corresponding entry
-///   in the script (excluding entries that produced unsupported codes).
-@MainActor
-private func drainRoutedTranscripts(
-    router: LanguageRouter,
-    fakeScript: [String],
-    windowCount: Int
-) async throws -> [RoutedTranscript] {
-    let segments = try await drainSegments(router: router, windowCount: windowCount)
-    // The fake feeds languages 1:1 to the upstream's window emissions.
-    // Filter the script to only those entries that produced a supported
-    // SpokenLanguage; those are the entries that produced an emission.
-    let detectedSequence: [SpokenLanguage] = fakeScript
-        .prefix(windowCount)
-        .compactMap { code -> SpokenLanguage? in
-            if code.isEmpty { return nil }
-            return SpokenLanguage(whisperCode: code)
-        }
-
-    #expect(segments.count == detectedSequence.count)
-
-    var routed: [RoutedTranscript] = []
-    routed.reserveCapacity(segments.count)
-    for (segment, detected) in zip(segments, detectedSequence) {
-        // Reconstruct didFlip: it is `true` exactly when the
-        // authoritative language CHANGED relative to the previous
-        // emission's authoritative language. The first emission's
-        // authoritative-establishment is didFlip = false per the gate
-        // spec.
-        let didFlip: Bool
-        if let previous = routed.last {
-            didFlip = segment.language != previous.authoritativeLanguage
-        } else {
-            didFlip = false
-        }
-        routed.append(
-            RoutedTranscript(
-                id: segment.id,
-                text: segment.text,
-                detectedLanguage: detected,
-                authoritativeLanguage: segment.language,
-                didFlip: didFlip,
-                windowAnchorHostTime: segment.startHostTime,
-                windowStartSeconds: segment.startSeconds,
-                windowEndSeconds: segment.endSeconds,
-                isFinal: segment.isFinal
-            )
-        )
-    }
-    return routed
-}
-
 // MARK: - Tests
 
 @Suite("LanguageRouter")
@@ -367,31 +297,29 @@ struct LanguageRouterTests {
         #expect(router.currentLanguage == .ja)
     }
 
-    // MARK: C22 - sustained switch flips on second disagreement
+    // MARK: D1-T1 / C22 - routedHistory pairs detected and authoritative per window
 
-    @Test("sustained switch flips on second disagreement (C22)")
-    func router_sustainedSwitch_flipsOnSecondDisagreement() async throws {
+    /// **D1-T1.** Locks the per-window detected/authoritative pairing in
+    /// ``LanguageRouter/routedHistory`` for a sustained-switch script
+    /// (`[ja, en, en]`). This is the violation test named in
+    /// ``LanguageRouter``'s scheduling-assumption doc-comment: it
+    /// confirms that each `routedHistory` append is atomic with the
+    /// corresponding gate-state transition (so `detectedLanguage`,
+    /// `authoritativeLanguage`, and `didFlip` are all consistent for the
+    /// same window). Replaces the C22 sustained-switch contract that
+    /// previously read via the deleted `drainRoutedTranscripts` helper.
+    @Test("D1-T1: routedHistory pairs detected and authoritative per window (C22 sustained switch)")
+    func router_routedHistory_pairsDetectedAndAuthoritative_perWindow() async throws {
         let script = ["ja", "en", "en"]
         let (router, _, _) = makeRouter(languages: script)
 
-        let routed = try await drainRoutedTranscripts(
-            router: router,
-            fakeScript: script,
-            windowCount: script.count
-        )
-        #expect(routed.count == 3)
-        // Window 1: detected=ja, auth=ja, no flip (establishment).
-        #expect(routed[0].detectedLanguage == .ja)
-        #expect(routed[0].authoritativeLanguage == .ja)
-        #expect(routed[0].didFlip == false)
-        // Window 2: detected=en, auth=ja (counter=1, below N=2), no flip.
-        #expect(routed[1].detectedLanguage == .en)
-        #expect(routed[1].authoritativeLanguage == .ja)
-        #expect(routed[1].didFlip == false)
-        // Window 3: detected=en, auth=en (counter reaches 2), flip.
-        #expect(routed[2].detectedLanguage == .en)
-        #expect(routed[2].authoritativeLanguage == .en)
-        #expect(routed[2].didFlip == true)
+        _ = try await drainSegments(router: router, windowCount: script.count)
+
+        let history = router.routedHistory
+        #expect(history.count == 3)
+        #expect(history.map(\.detectedLanguage) == [.ja, .en, .en])
+        #expect(history.map(\.authoritativeLanguage) == [.ja, .ja, .en])
+        #expect(history.map(\.didFlip) == [false, false, true])
 
         #expect(router.currentLanguage == .en)
     }
@@ -403,13 +331,12 @@ struct LanguageRouterTests {
         let script = ["ja", "en", "ja", "en"]
         let (router, _, _) = makeRouter(languages: script)
 
-        let routed = try await drainRoutedTranscripts(
-            router: router,
-            fakeScript: script,
-            windowCount: script.count
-        )
+        _ = try await drainSegments(router: router, windowCount: script.count)
+
+        let routed = router.routedHistory
         #expect(routed.count == 4)
         // Window 1: establish ja, counter=0.
+        #expect(routed[0].detectedLanguage == .ja)
         #expect(routed[0].authoritativeLanguage == .ja)
         #expect(routed[0].didFlip == false)
         // Window 2: en disagrees, counter=1, no flip yet.
@@ -437,13 +364,12 @@ struct LanguageRouterTests {
         let script = ["ja", "en", "en", "en"]
         let (router, _, _) = makeRouter(languages: script)
 
-        let routed = try await drainRoutedTranscripts(
-            router: router,
-            fakeScript: script,
-            windowCount: script.count
-        )
+        _ = try await drainSegments(router: router, windowCount: script.count)
+
+        let routed = router.routedHistory
         #expect(routed.count == 4)
         // Window 1: establish ja.
+        #expect(routed[0].detectedLanguage == .ja)
         #expect(routed[0].authoritativeLanguage == .ja)
         #expect(routed[0].didFlip == false)
         // Window 2: detected=en, auth=ja, counter=1, no flip.
@@ -490,11 +416,9 @@ struct LanguageRouterTests {
         let script = ["ja", "en", "en"]
         let (router, _, _) = makeRouter(languages: script)
 
-        let routed = try await drainRoutedTranscripts(
-            router: router,
-            fakeScript: script,
-            windowCount: script.count
-        )
+        _ = try await drainSegments(router: router, windowCount: script.count)
+
+        let routed = router.routedHistory
         #expect(routed.count == 3)
 
         // Window 1 (establishment): detected = auth = ja, didFlip=false.
@@ -625,17 +549,95 @@ struct LanguageRouterTests {
         #expect(caughtError == nil)
     }
 
-    // MARK: Concurrency-discipline violation note
+    // MARK: D1-T2 - dropped windows do not pollute routedHistory
+
+    /// **D1-T2.** SEAM-5 silent-drop windows must not append to
+    /// ``LanguageRouter/routedHistory``. Drives a single window with the
+    /// unsupported language code `"fr"` (matching C20's pattern) and
+    /// asserts both `routedHistory` and `currentLanguage` remain at
+    /// their pre-emission state. Locks the contract that the
+    /// drop-silent path is invisible to the SEAM-1 history surface.
+    @Test("D1-T2: dropped windows do not append to routedHistory")
+    func router_routedHistory_droppedWindow_doesNotAppend() async throws {
+        // "fr" is not in {ja, en}; SpokenLanguage(whisperCode:) returns nil
+        // and the router drops silently per SEAM-5.
+        let (router, client, _) = makeRouter(languages: ["fr"])
+
+        _ = try await drainSegments(router: router, windowCount: 1)
+
+        // Upstream still made the inference call; the router's gate
+        // dropped the result and did NOT touch routedHistory.
+        #expect(client.callCount == 1)
+        #expect(router.routedHistory.isEmpty)
+        #expect(router.currentLanguage == nil)
+    }
+
+    // MARK: D1-T3 - resetSession clears history and gate
+
+    /// **D1-T3.** ``LanguageRouter/resetSession()`` returns the router to
+    /// pre-first-window state. Drives `[ja, en, en]` to flip the gate to
+    /// `.en`, calls `cancel()` then `resetSession()` (the documented
+    /// drain-then-reset sequence), then drives a fresh `[ja]` through a
+    /// new `transcribe(frames:)` session. Asserts post-reset history
+    /// reflects only the second session and `currentLanguage` tracks the
+    /// fresh establishment.
+    @Test("D1-T3: resetSession clears history and gate")
+    func router_resetSession_clearsHistoryAndGate() async throws {
+        let firstScript = ["ja", "en", "en"]
+        let (router, _, _) = makeRouter(languages: firstScript + ["ja"])
+
+        // First session: flip to .en.
+        _ = try await drainSegments(router: router, windowCount: firstScript.count)
+        #expect(router.currentLanguage == .en)
+        #expect(router.routedHistory.count == 3)
+
+        // Drain-then-reset per resetSession()'s documented sequence.
+        await router.cancel()
+        router.resetSession()
+
+        #expect(router.routedHistory.isEmpty)
+        #expect(router.currentLanguage == nil)
+
+        // Second session: fresh `[ja]` window. The fake client's queue
+        // already advanced past the first three calls; the fourth
+        // scripted entry ("ja") is what the next inference call returns.
+        _ = try await drainSegments(router: router, windowCount: 1)
+
+        let history = router.routedHistory
+        #expect(history.count == 1)
+        guard let only = history.first else {
+            Issue.record("Expected one entry in routedHistory after reset")
+            return
+        }
+        #expect(only.detectedLanguage == .ja)
+        #expect(only.authoritativeLanguage == .ja)
+        #expect(only.didFlip == false)
+        #expect(router.currentLanguage == .ja)
+    }
+
+    // MARK: Concurrency-discipline violation notes
 
     //
     // CLAUDE.md "Concurrency design discipline" requires at least one
     // test that drives the system in violation of its scheduling
-    // assumptions. The C29 cancel test
-    // (``router_cancel_propagatesToTranscriber``) above satisfies this
-    // requirement: it drives a parked upstream inference into mid-flight
-    // cancel, which violates the router's documented happy-path
-    // assumption that the upstream stream finishes naturally. The router
-    // must finish its own continuation cleanly (no thrown error) under
-    // that load. The router's doc-comment names C29 as its violation
-    // test for this rule.
+    // assumptions. Two tests in this suite cover the router's
+    // documented assumptions:
+    //
+    // 1. D1-T1
+    //    (``router_routedHistory_pairsDetectedAndAuthoritative_perWindow``)
+    //    locks the per-window atomicity contract: each `routedHistory`
+    //    append is consistent with the corresponding `currentLanguage`
+    //    mutation under MainActor isolation. The router's doc-comment
+    //    names D1-T1 as the test for this contract.
+    //
+    // 2. C29 (``router_cancel_propagatesToTranscriber``) covers
+    //    mid-flight cancellation: it drives a parked upstream inference
+    //    into cancel, which violates the happy-path assumption that the
+    //    upstream stream finishes naturally. The router must finish its
+    //    own continuation cleanly (no thrown error) under that load.
+    //
+    // The router's doc-comment also tracks an open V3 backlog item
+    // ("LanguageRouter scheduling-assumption violation test") for a
+    // dedicated upstream-bursts-vs-MainActor-hop pacing test; that is
+    // out of scope for Group D Step 1.
 }
