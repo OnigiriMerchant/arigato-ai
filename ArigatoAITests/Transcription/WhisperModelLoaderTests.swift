@@ -10,14 +10,33 @@ import Foundation
 import os
 import Testing
 
-/// Test-local fake conformer to ``WhisperEngine``. Stateless; every call
-/// to ``prewarmModels()`` returns immediately. Reference identity (`===`)
-/// is used by the loader tests to assert that coalesced callers receive
-/// the same instance.
-private final class FakeWhisperEngine: WhisperEngine, @unchecked Sendable {
+/// Test-local fake conformer to ``WhisperClient``. Stateless; every call
+/// to ``prewarmModels()`` returns immediately, and
+/// ``transcribe(audio:anchorHostTime:)`` returns a stub
+/// ``WhisperWindowResult``. Reference identity (`===`) is used by the
+/// loader tests to assert that coalesced callers receive the same
+/// instance.
+///
+/// The transcription stub is intentionally trivial: the loader tests
+/// exercise lifecycle (load coalescing, failure recovery, unload) and do
+/// not call ``transcribe(audio:anchorHostTime:)``. Round-tripping
+/// `anchorHostTime` is verified separately in
+/// ``WhisperClientTests``.
+private final nonisolated class FakeWhisperClient: WhisperClient, @unchecked Sendable {
     func prewarmModels() async throws {
         // Intentionally empty — the loader tests only care about lifecycle,
         // not pre-warm side effects.
+    }
+
+    func transcribe(
+        audio _: [Float],
+        anchorHostTime: UInt64
+    ) async throws -> WhisperWindowResult {
+        WhisperWindowResult(
+            language: "ja",
+            windowAnchorHostTime: anchorHostTime,
+            segments: []
+        )
     }
 }
 
@@ -74,7 +93,7 @@ struct WhisperModelLoaderTests {
     @Test("first call loads via the factory and transitions to .loaded")
     func loadIfNeeded_firstCall_loadsViaFactoryAndTransitionsToLoaded() async throws {
         let counter = CallCounter()
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in
             counter.increment()
             return engine
@@ -93,7 +112,7 @@ struct WhisperModelLoaderTests {
     @Test("second call after success returns the same engine without re-invoking the factory")
     func loadIfNeeded_secondCallAfterSuccess_returnsSameEngineWithoutCallingFactoryAgain() async throws {
         let counter = CallCounter()
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in
             counter.increment()
             return engine
@@ -103,8 +122,8 @@ struct WhisperModelLoaderTests {
         let second = try await loader.loadIfNeeded()
 
         #expect(counter.value == 1)
-        let firstFake = first as? FakeWhisperEngine
-        let secondFake = second as? FakeWhisperEngine
+        let firstFake = first as? FakeWhisperClient
+        let secondFake = second as? FakeWhisperClient
         #expect(firstFake === engine)
         #expect(secondFake === engine)
         #expect(firstFake === secondFake)
@@ -114,7 +133,7 @@ struct WhisperModelLoaderTests {
     func loadIfNeeded_concurrentCalls_coalesceToSingleLoad() async {
         let counter = CallCounter()
         let gate = ContinuationGate()
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in
             counter.increment()
             await gate.wait()
@@ -130,13 +149,13 @@ struct WhisperModelLoaderTests {
             gate.release()
         }()
 
-        let results = await withTaskGroup(of: (any WhisperEngine)?.self, returning: [any WhisperEngine].self) { group in
+        let results = await withTaskGroup(of: (any WhisperClient)?.self, returning: [any WhisperClient].self) { group in
             for _ in 0 ..< callerCount {
                 group.addTask {
                     try? await loader.loadIfNeeded()
                 }
             }
-            var collected: [any WhisperEngine] = []
+            var collected: [any WhisperClient] = []
             for await result in group {
                 if let result {
                     collected.append(result)
@@ -150,7 +169,7 @@ struct WhisperModelLoaderTests {
         #expect(counter.value == 1)
         #expect(results.count == callerCount)
         for result in results {
-            let fake = result as? FakeWhisperEngine
+            let fake = result as? FakeWhisperClient
             #expect(fake === engine)
         }
     }
@@ -180,7 +199,7 @@ struct WhisperModelLoaderTests {
     @Test("a load attempt after a failure retries via the factory")
     func loadIfNeeded_afterFailure_retries() async throws {
         let attempts = CallCounter()
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in
             attempts.increment()
             if attempts.value == 1 {
@@ -194,7 +213,7 @@ struct WhisperModelLoaderTests {
         }
 
         let result = try await loader.loadIfNeeded()
-        let fake = result as? FakeWhisperEngine
+        let fake = result as? FakeWhisperClient
         #expect(fake === engine)
 
         let state = await loader.currentState()
@@ -207,7 +226,7 @@ struct WhisperModelLoaderTests {
 
     @Test("unload after a successful load returns the loader to .idle")
     func unload_afterLoaded_returnsToIdle() async throws {
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in engine })
 
         _ = try await loader.loadIfNeeded()
@@ -230,7 +249,7 @@ struct WhisperModelLoaderTests {
     @Test("unload while a load is in flight does not interrupt the in-flight task")
     func unload_doesNotInterruptInFlightLoad() async throws {
         let gate = ContinuationGate()
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in
             await gate.wait()
             return engine
@@ -248,7 +267,7 @@ struct WhisperModelLoaderTests {
         gate.release()
 
         let result = try await loadTask.value
-        let fake = result as? FakeWhisperEngine
+        let fake = result as? FakeWhisperClient
         #expect(fake === engine)
     }
 }

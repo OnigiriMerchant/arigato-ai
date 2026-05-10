@@ -10,12 +10,26 @@ import Foundation
 import os
 import Testing
 
-/// Test-local fake conformer to ``WhisperEngine``. Stateless; the
+/// Test-local fake conformer to ``WhisperClient``. Stateless; the
 /// bootstrapper tests only care about lifecycle transitions, not engine
-/// behaviour.
-private final class FakeWhisperEngine: WhisperEngine, @unchecked Sendable {
+/// behaviour. The transcription stub is trivial because no bootstrapper
+/// test exercises ``WhisperClient/transcribe(audio:anchorHostTime:)``;
+/// it exists solely so the fake can satisfy the wider
+/// ``WhisperClient`` protocol the loader now requires.
+private final nonisolated class FakeWhisperClient: WhisperClient, @unchecked Sendable {
     func prewarmModels() async throws {
         // Intentionally empty.
+    }
+
+    func transcribe(
+        audio _: [Float],
+        anchorHostTime: UInt64
+    ) async throws -> WhisperWindowResult {
+        WhisperWindowResult(
+            language: "ja",
+            windowAnchorHostTime: anchorHostTime,
+            segments: []
+        )
     }
 }
 
@@ -98,7 +112,7 @@ struct AppBootstrapperTests {
 
     @Test("startPrewarm invokes the loader and advances state to .loaded")
     func startPrewarm_invokesLoaderAndAdvancesStateToLoaded() async {
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in engine })
         let bootstrapper = AppBootstrapper(loader: loader)
 
@@ -130,7 +144,7 @@ struct AppBootstrapperTests {
     @Test("startPrewarm called twice does not double-load — coalesced by the loader")
     func startPrewarm_calledTwice_doesNotDoubleLoad() async {
         let counter = CallCounter()
-        let engine = FakeWhisperEngine()
+        let engine = FakeWhisperClient()
         let loader = WhisperModelLoader(factory: { _ in
             counter.increment()
             return engine

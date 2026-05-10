@@ -22,7 +22,7 @@ import SwiftUI
 ///
 /// ## Access level
 /// `internal` because ``loaderState`` carries ``LoaderState`` (an internal
-/// enum whose payload is the internal ``WhisperEngine`` protocol). The
+/// enum whose payload is the internal ``WhisperClient`` protocol). The
 /// bootstrapper cannot be `public` without first promoting both. The
 /// SwiftUI views and the test target (via `@testable import ArigatoAI`)
 /// live inside the `ArigatoAI` module, so internal access is sufficient.
