@@ -7,16 +7,17 @@
 
 import SwiftUI
 
-/// Top-level app surface for Arigato AI. Phase 3 wires this to the
-/// microphone capture view; later phases will replace it with the live
-/// caption experience. The view model is constructed inside
-/// ``AudioCaptureView`` so callers do not need to know about it.
+/// Top-level app surface for Arigato AI. Phase 4 hosts the live
+/// transcription experience via ``TranscriptLiveView``; the bootstrapper
+/// flows in from ``ArigatoAIApp`` through the SwiftUI environment, so this
+/// view is a thin wrapper.
 struct ContentView: View {
     var body: some View {
-        AudioCaptureView()
+        TranscriptLiveView()
     }
 }
 
 #Preview {
     ContentView()
+        .environment(AppBootstrapper())
 }
