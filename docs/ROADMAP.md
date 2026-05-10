@@ -133,6 +133,7 @@ After Phase 9 ships and all 12 MVP 1 features are functional in real meetings: M
 - #30 swift-implementer scope-and-decision discipline (sharpening)
 - #31 Process trim re-evaluate
 - #37 AudioCaptureViewModel router param: optional → required
+- #39 Adopt Anthropic prompting best practices for Opus 4.7
 
 **Phase 2.5 trigger:**
 - Physical iPhone deployment: when Group D needs real mic hardware

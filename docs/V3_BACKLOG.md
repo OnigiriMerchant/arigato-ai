@@ -366,6 +366,22 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 
 **Effort:** ~5 minutes. Either use the result, prefix with `_ =`, or wrap in a discardable-result helper.
 
+### Adopt Anthropic prompting best practices for Opus 4.7
+
+**What:** Two updates to subagent prompts based on Anthropic's published Opus 4.7 prompting best practices (reviewed 2026-05-10).
+
+1. **code-reviewer report-all pattern**: Update code-reviewer's system prompt to report every finding with confidence and severity tags, with filtering deferred to downstream review. Opus 4.7 follows "only report important issues" too literally and silently drops low-severity findings. The fix: prompt for coverage at finding stage, filter at gate stage. Reference language from Anthropic's published guidance.
+
+2. **Destructive-action confirmation language**: Adopt Anthropic's recommended prompt language for actions that are hard to reverse, affect shared systems, or could be destructive. Apply to git-historian and any agent that performs push, delete, or modify-shared-resource operations. Also reflect in CLAUDE.md operational rules. The Group D Steps 1+2 inadvertent push to origin is the exact failure mode this language prevents.
+
+**Why deferred:** Mid-Phase-4. System-prompt changes during active features violate the workflow rule. Bundles naturally with the post-Phase-4 workflow automation work.
+
+**Trigger to revisit:** Post-Phase-4 workflow automation bundle. Add ~30 minutes to that session for these two updates.
+
+**Effort:** ~30 minutes total — read Anthropic's reference language, adapt to project subagents, test against a representative dispatch.
+
+**Source:** https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices
+
 ---
 
 Updated: May 10 2026
