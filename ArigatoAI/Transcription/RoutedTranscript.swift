@@ -17,6 +17,20 @@ import Foundation
 /// and the stable signal (``authoritativeLanguage``: what the router
 /// believes after N=2 gating).
 ///
+/// ## Group D bind targets (read this first)
+///
+/// - **Per-line transcript text styling**: bind ``detectedLanguage``
+///   (honesty — show what was actually heard for this window).
+/// - **Persistent language indicator chrome**: bind
+///   ``authoritativeLanguage`` (or ``LanguageRouter/currentLanguage``
+///   directly) — stability over momentary noise.
+/// - **Translation routing** (Phase 5, downstream of router):
+///   ``authoritativeLanguage`` — stable signal only.
+///
+/// Picking the wrong field surfaces as a one-window UI flicker during a
+/// real language transition (the SEAM-2 contract below). Read the seam
+/// detail before deciding.
+///
 /// **SEAM-2 (locked).** ``detectedLanguage`` and ``authoritativeLanguage``
 /// DIVERGE by exactly one window during a language transition. When the
 /// gate observes the first disagreement (counter = 1, below the N=2

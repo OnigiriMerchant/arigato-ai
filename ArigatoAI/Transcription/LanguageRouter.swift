@@ -81,10 +81,10 @@ import Foundation
 /// dropped here, but the upstream's bounded queue (contract C30) may
 /// drop oldest hops. That is the upstream's contract, not the router's.
 ///
-/// **Violation test.** The C29 cancel test drives an upstream
-/// ``TranscriptionActor/cancel()`` mid-flight; the router observes the
-/// upstream stream finish and finishes its own continuation cleanly,
-/// without throwing.
+/// **Violation test.** None currently. C29 covers cancellation, not the
+/// scheduling assumption above. A real violation test for
+/// upstream-bursts-vs-MainActor-hop-pacing is tracked in V3 backlog
+/// ("LanguageRouter scheduling-assumption violation test").
 @MainActor
 @Observable
 final class LanguageRouter: Transcribing {
@@ -142,15 +142,26 @@ final class LanguageRouter: Transcribing {
 
     // MARK: - SEAM-1 surface (a): RoutedTranscript stream
 
-    /// Begins a new transcription session and returns a throwing async
-    /// stream of ``RoutedTranscript`` values.
+    /// **DEAD-STREAM SHIM.** This method returns a stream that finishes
+    /// immediately with zero values. It is not yet wired to a real upstream
+    /// frames source.
     ///
-    /// Each yielded value reflects one ``TranscriptionWindow`` whose
-    /// detected language was a supported code (`ja` or `en`). Windows
-    /// with unsupported detected codes are dropped silently per SEAM-5.
+    /// Group D consumers that want the ``RoutedTranscript`` surface
+    /// (SEAM-1 surface a) must currently drive frames via
+    /// ``transcribe(frames:)`` (the SEAM-4 ``Transcribing`` surface) and
+    /// observe the gate via ``currentLanguage`` and the per-segment
+    /// ``TranscriptSegment/wasLanguageFallback`` flag. The router does NOT
+    /// currently multiplex one upstream session into both
+    /// ``RoutedTranscript`` and ``TranscriptSegment`` streams; calling
+    /// this method in production will yield nothing.
     ///
-    /// - Returns: A throwing async stream of ``RoutedTranscript`` values.
-    ///   Errors from the upstream transcriber propagate verbatim.
+    /// Multiplexing one upstream session into both stream surfaces is
+    /// tracked as the V3 backlog item "LanguageRouter routedTranscripts()
+    /// multiplex" — defer the decision until Group D plan review.
+    ///
+    /// - Returns: An immediately-finishing throwing async stream. Treat
+    ///   this method as a sentinel that exists to satisfy SEAM-1's
+    ///   surface shape; do not bind UI to it yet.
     func routedTranscripts() -> AsyncThrowingStream<RoutedTranscript, any Error> {
         AsyncThrowingStream<RoutedTranscript, any Error> { continuation in
             // The frames stream for this surface is empty; production
@@ -166,10 +177,10 @@ final class LanguageRouter: Transcribing {
                     continuation.finish()
                     return
                 }
-                let upstream = await self.transcriber.windowStream(frames: emptyFrames)
+                let upstream = self.transcriber.windowStream(frames: emptyFrames)
                 do {
                     for try await window in upstream {
-                        if let routed = await self.process(window: window) {
+                        if let routed = self.process(window: window) {
                             continuation.yield(routed)
                         }
                     }
@@ -226,7 +237,7 @@ final class LanguageRouter: Transcribing {
                 }
                 do {
                     for try await window in upstream {
-                        if let routed = await self.process(window: window) {
+                        if let routed = self.process(window: window) {
                             let segment = LanguageRouter.makeSegment(from: routed)
                             continuation.yield(segment)
                         }

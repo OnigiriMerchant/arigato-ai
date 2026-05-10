@@ -239,6 +239,48 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 **Related:** TranscribingProtocolTests cancel-test timing race (separate V3 entry, addressed in Step 9 deterministic handshake).
 
+### TranscriptionActor.awaitUpstreamDrained — test seam on production type
+
+**What:** TranscriptionActor exposes awaitUpstreamDrained() as a test-only signal method, used by C30/C31 to deterministically synchronize with the drain task before releasing test blocks. The method is documented as test-only but lives on the production type.
+
+**Why it's a smell:** Test-only methods on production types violate the principle that production code should not exist to serve tests. The current placement works and doc-comments warn callers, but a future contributor could call awaitUpstreamDrained() from production code (e.g., LanguageRouter, Group D UI) and create a hidden coupling that masks real timing issues.
+
+**Why it shipped this way:** The previous Step 9 attempt had a race between the consumer task releasing the test block and the drain task running, causing C30 to pass at 95ms by luck and fail deterministically thereafter. awaitUpstreamDrained eliminates the race. Removing it now would risk reintroducing the regression. Carrying it forward is the pragmatic choice for Group C closure.
+
+**Trigger to revisit:** Before MVP 1 ships, OR if any non-test code path is found calling awaitUpstreamDrained.
+
+**Replacement options (commit to evaluating these, not just "consider whether to keep"):**
+1. Move awaitUpstreamDrained to a test-only extension in a separate file under #if DEBUG, so it's invisible to release builds and clearly scoped to tests.
+2. Replace with a separate test-injection point — e.g., a synchronization protocol the actor optionally accepts in init, only used in tests, no production surface area.
+3. Restructure the test to synchronize via public API only (e.g., await the actor's stream until N windows have arrived, instead of waiting for drain completion). Likely requires test redesign.
+
+**Recommendation when revisited:** Option 1 (DEBUG-only extension) is the smallest change with the largest hygiene benefit. Option 2 is principled but heavier. Option 3 is cleanest but requires the most rework.
+
+### LanguageRouter scheduling-assumption violation test
+
+**What:** LanguageRouter's doc-comment documents a scheduling assumption (upstream produces faster than MainActor hop can advance) per the CLAUDE.md "Concurrency design discipline" rule. The rule requires a violation test. None exists — C29 is a cancellation test, not a violation test.
+
+**Required test:** drive the router with an upstream stream that bursts faster than MainActor can hop, assert the router survives without losing windows or corrupting authoritative-language state. Should test the documented contract explicitly, including C30's oldest-drop behavior propagating through the router.
+
+**Cost to add:** ~30 minutes including test design.
+
+**Trigger to revisit:** Before MVP 1 ships, OR if any router scheduling regression is observed.
+
+### LanguageRouter routedTranscripts() multiplex
+
+**What:** routedTranscripts() currently returns a dead stream. SEAM-1 surface (a) was supposed to deliver a RoutedTranscript stream consumable independently of the Transcribing protocol's TranscriptSegment surface. Current implementation does not multiplex; calling routedTranscripts() returns a stream that finishes immediately.
+
+**Why it shipped this way:** swift-implementer did not surface this design choice during Step 11 dispatch; the dead-stream shim was an auto-mode decision. Group C correctness is unaffected (Transcribing protocol surface works correctly). Group D's UI bindings will be affected.
+
+**Replacement options when revisited:**
+1. Refactor the router to multiplex one upstream session into both stream surfaces — clean but non-trivial concurrency work
+2. Drop routedTranscripts() from the public surface and have Group D consume detectedLanguage/didFlip via a different observation pattern (e.g., @Observable on individual fields)
+3. Restructure so Group D's UI binds only to currentLanguage and the Transcribing protocol surface, dropping the per-window RoutedTranscript stream concept entirely
+
+**Trigger to revisit:** Group D kickoff — first thing during Group D plan review.
+
+**Recommendation when revisited:** option 2 or 3 likely simpler than option 1. Decide based on Group D's actual UI needs.
+
 ---
 
 Updated: May 10 2026
