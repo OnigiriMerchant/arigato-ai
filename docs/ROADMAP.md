@@ -125,14 +125,22 @@ After Phase 9 ships and all 12 MVP 1 features are functional in real meetings: M
 **Group D plan review (next):**
 - #27 routedTranscripts() multiplex — first thing during plan review
 
-**End of Phase 4 (post-Group-D, before Phase 5 kickoff):**
+**End of Phase 4 (post-Group-D, before Phase 5 kickoff) — FIRED 2026-05-11 as the post-Phase-4 workflow automation bundle; see "Next workflow automation pass" below for follow-on items:**
 - #14 Workflow automation narrow bundle: feature-planner self-critique rules + /dispatch-implementer slash command
 - #28 feature-planner system prompt update — concurrency scheduling-assumption rule
-- #29 Test infrastructure as agent blind spot
+- #29 Test infrastructure as agent blind spot (Step 7 shipped; Step 8 finding-only — real fix deferred to Phase 5+ library extraction)
 - #30 swift-implementer scope-and-decision discipline (sharpening)
 - #31 Process trim re-evaluate
 - #37 AudioCaptureViewModel router param: optional → required
 - #39 Adopt Anthropic prompting best practices for Opus 4.7
+
+**Next workflow automation pass (deferred from the 2026-05-11 bundle):**
+- #41 Doc-researcher trigger: third-party tool configuration changes — code-reviewer BLOCKING rule shipped (workflow-step-11); remaining items: dispatch-implementer slash command pre-flight template + CLAUDE.md cross-reference under "External dependency configuration"
+- #42 feature-planner output channel rigidity — pre-flight enforcement permanently deferred from feature-planner system prompt; deferred-implementation plan IS the dispatch-implementer slash command work referenced by #41 (shared scope)
+- #43 Agent prompt hygiene — INFO findings from workflow bundle gate (5 findings, ~50 min total; Finding 4 is the load-bearing dispatch-implementer pre-flight work shared with #41 and #42)
+- #44 Agent prompt rules-as-pointers convention — refactor agent prompts to point at CLAUDE.md sections instead of duplicating; verify reliability on representative agent before wide adoption
+
+Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-flight work spans #41, #42, #43's Finding 4) so they compose naturally into one session.
 
 **Phase 2.5 trigger:**
 - Physical iPhone deployment: when Group D needs real mic hardware

@@ -386,6 +386,18 @@ The three-reviewer gate on the post-Phase-4 workflow automation bundle (pushed t
 
 **Trigger to revisit:** Next workflow automation pass.
 
+### Agent prompt rules-as-pointers convention
+
+**What:** Agent prompts in `.claude/agents/` currently duplicate content from CLAUDE.md. When rules update in one place, the other drifts. Group D gate findings (2026-05-11) surfaced this pattern in three separate code-reviewer findings: `swift-implementer.md` duplicates CLAUDE.md content needing a sync marker (Finding 8 in V3 entry "Agent prompt hygiene — INFO findings from workflow bundle gate"); `doc-researcher.md` and `code-reviewer.md` have similar duplication patterns (concurrency-discipline rules, scope-discipline rules, source-allowlist semantics). Proposed convention: agent prompts reference CLAUDE.md sections by name as pointers rather than duplicating text. Example: replace inline scope-discipline rules in `swift-implementer.md` with `See CLAUDE.md §"swift-implementer scope-and-decision discipline."`
+
+**Why deferred:** Mid-session after a long workflow bundle. Convention change touches multiple agent prompts and needs deliberate design (when to point vs. duplicate, how agents handle pointer-resolution at runtime, what happens when CLAUDE.md isn't loaded into the subagent's context). Not a one-line fix.
+
+**Trigger to revisit:** Next workflow automation pass, alongside Finding 8 cleanup (swift-implementer duplicate-content sync marker) and other agent prompt hygiene findings logged from the 2026-05-11 gate. Bundles naturally with the deferred dispatch-implementer doc-researcher pre-flight work.
+
+**Effort:** ~1–2 hours. Design the pointer convention, audit all 11 agent prompts for duplicate-content cases, refactor with pointers, verify agents still behave correctly with the new structure.
+
+**Risk:** Agents may not resolve pointers as reliably as inline rules — Step 10's three-iteration failure (V3 entry "feature-planner output channel rigidity") is the cautionary case that suggests agent prompts have template-shaped output surfaces that may not extend cleanly to pointer-based rule lookup. Verify with a small representative agent (probably `code-reviewer.md` — the most rule-dense) before wide adoption. If pointers degrade reliability, fall back to inline rules with explicit `[KEEP SYNCED WITH CLAUDE.md §X]` markers per Finding 8's narrower fix.
+
 ### swift-implementer scope-and-decision discipline (V3 entry sharpening)
 
 The existing V3 entry "feature-planner system prompt update — concurrency scheduling-assumption rule" addresses the planner side. This entry tracks the parallel work for swift-implementer's system prompt. Sharpening points from Group C reviewer feedback:
