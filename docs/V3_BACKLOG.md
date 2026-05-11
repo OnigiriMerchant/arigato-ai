@@ -301,13 +301,35 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 **Why it matters:** Test infrastructure issues live in agent blind spots — agents can read code and reason about static structure but cannot see GUI dialogs, simulator state, or scheme generation. Issues manifest as "tests are running for a long time" or "tests fail in confusing ways," not as code errors. Three separate test infra surprises in one group is a pattern worth fixing structurally.
 
-**Fix scope (one focused session, ~2-3 hours):**
+**Fix scope (one focused session, ~2-3 hours) — original proposal, partially superseded by 2026-05-11 update below:**
 - Generate explicit shared scheme files at ArigatoAI.xcodeproj/xcshareddata/xcschemes/ArigatoAI.xcscheme listing both test bundles
 - Drop TEST_HOST and BUNDLE_LOADER from the unit-test bundle's Debug + Release configs once the explicit scheme is in place
 - Add a CLAUDE.md "test target hygiene" section documenting: unit tests must not require host app launch; integration/UI tests use TEST_TARGET_NAME pattern
 - Document in the same session: when an agent reports tests "taking longer than expected" with no failure output, suspect simulator dialog or scheme issue before suspecting code
 
-**Trigger to revisit:** Bundle with the post-Phase-4 workflow automation work (alongside @feature-planner self-critique rules, @dispatch-implementer slash command, feature-planner concurrency-rule update). All four are workflow-and-test-infrastructure improvements that compose well in one session.
+**Update 2026-05-11 — Step 8 of the workflow automation bundle attempted the recipe and produced a negative result:**
+- Step 7 (explicit shared scheme) landed cleanly and ships. Step 8 then attempted the TEST_HOST + BUNDLE_LOADER drop. Both variants failed at link time with ~90 undefined `ArigatoAI.*` symbols (the test bundle has no production sources of its own; every `@testable import ArigatoAI` reference was being resolved through the host binary at link time).
+  - Variant 1: drop both `TEST_HOST` and `BUNDLE_LOADER` → link fails, ~90 missing symbols.
+  - Variant 2 (surgical): drop `TEST_HOST` only, keep `BUNDLE_LOADER` as a literal path `$(BUILT_PRODUCTS_DIR)/ArigatoAI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ArigatoAI` → same ~90 missing symbols.
+- Root cause: Xcode 26's `ENABLE_DEBUG_DYLIB=YES` default for iOS-app targets splits debug builds into a 58KB stub binary at `.app/ArigatoAI` and a `ArigatoAI.debug.dylib` containing the real Swift symbols. Verified empirically: `nm -gU` on the stub returns 0 `ArigatoAI.*` exports; the dylib has 800. `-bundle_loader` resolves against the stub, finds nothing.
+- `TEST_HOST` and `BUNDLE_LOADER` appear to be a coupled pair on Xcode 26+ for iOS-app-hosted unit-test bundles. The simple "drop TEST_HOST, keep BUNDLE_LOADER" recipe is not viable. Something about the pair's combined presence (likely an implicit linker search path or merged-thunk path that Xcode generates when both are set together) is what makes symbol resolution work in the baseline configuration. Dropping either one breaks it.
+- **Real fix is architectural:** extract production code into a Swift Package / framework target that both `ArigatoAI.app` and `ArigatoAITests` depend on as a product. Tests then compile against the library target directly — no `@testable` host-binary hack, no debug-dylib trap, no host-app launch (so no mic permission dialog). Deferred to Phase 5+ when this can be scoped properly (multi-hour refactor touching every Swift file's module membership).
+- **What lands from this bundle's Step 8:** the experiment itself (project.pbxproj edits) was reverted. The V3_BACKLOG.md updates here are the only artifact. A companion V3 entry on doc-researcher pre-flight discipline for third-party-tool-config changes was added (see "Doc-researcher trigger: third-party tool configuration changes").
+
+**Trigger to revisit:** Phase 5+ planning, when the library/framework extraction can be scoped as its own focused refactor. Until then, the mic-permission-dialog cost is accepted as a known test-infra papercut; the Step 7 explicit shared scheme protects against auto-scheme regeneration regressions even though the TEST_HOST removal cannot proceed.
+
+### Doc-researcher trigger: third-party tool configuration changes
+
+- **What:** When a V3 backlog entry describes a fix that touches third-party tool configuration (Xcode build settings, package-manager behavior, simulator/device defaults, SDK-private knobs, framework-loader pathing), the pre-implementation step must re-verify the entry's premises against current vendor docs before treating the entry as ground truth. The author of a V3 entry encodes their state of knowledge at write time; that snapshot can be invalidated by tool releases between entry-write and entry-execute, often in non-obvious ways (a default flipping, a new build-product layout, a deprecated mechanism still appearing to work).
+- **Cautionary case:** Step 8 of the post-Phase-4 workflow automation bundle on 2026-05-11 (see preceding entry "Test infrastructure as agent blind spot" for full diagnostic). The V3 entry recommended dropping `TEST_HOST` + `BUNDLE_LOADER` from the unit-test bundle once an explicit shared scheme was in place. The recipe was correct in spirit but wrong under Xcode 26's `ENABLE_DEBUG_DYLIB=YES` default — host-app symbols live in a separate `.debug.dylib` that `-bundle_loader` against the stub cannot resolve. The implementer correctly STOP'd on the first variant; a surgical follow-up also failed for the same reason. A ~15-minute doc-researcher pre-flight on "Xcode 26 iOS app test target hosting" would have surfaced the debug-dylib trap before any code was written, saving the round-trip.
+- **Proposed rule (to encode in @feature-planner / @dispatch-implementer):** dispatch briefs for steps that touch third-party tool config must require a pre-flight doc check when ANY of the following hold:
+  - (a) the V3 entry being implemented is older than ~1 month
+  - (b) the tool has released a major version since the entry was written
+  - (c) the recipe depends on a non-obvious tool-internal behavior (build-settings interaction, package-manager resolution order, simulator runtime behavior, linker/loader pathing)
+  - (d) the entry's "Fix scope" includes phrases like "once X is in place, just do Y" — those are exactly the recipes most likely to have invisible tool-version dependencies
+- **Scope of the rule update:** edit @feature-planner system prompt to add a "third-party config pre-flight" trigger; edit @dispatch-implementer slash command template to surface a "doc-researcher pre-flight ran on YYYY-MM-DD" line in the brief when the trigger fires; add a CLAUDE.md note under "External dependency configuration" linking to this V3 entry as the cautionary case.
+- **Trigger to revisit:** Bundle with the next workflow automation pass, alongside "Quarterly platform sanity review."
+- **Cost estimate:** ~30 min: edit feature-planner system prompt + dispatch-implementer template + add CLAUDE.md cross-reference.
 
 ### swift-implementer scope-and-decision discipline (V3 entry sharpening)
 
