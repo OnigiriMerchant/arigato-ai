@@ -148,6 +148,9 @@ Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-f
 **Phase 5 kickoff:**
 - #13 /dispatch-research slash command
 
+**Phase 6 kickoff:**
+- #46 Local-only diagnostics for performance tuning — natural bundle with SwiftData persistence work
+
 **Phase 7 kickoff:**
 - #22 Design language direction — @design-system subagent decision
 - #32 User-tunable latency/accuracy slider — after 5 real meetings if defaults wrong (may fire later)
@@ -185,6 +188,8 @@ Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-f
 **Conditional / monitored:**
 - #21 WhisperKit model variant — locked at turbo-632MB, monitored for Argmax recommendation drift
 - #23 Subagent MCP-inheritance — auto-revalidation when Anthropic ships fix
+- #45 Liquid AI / LFM2 model updates monitoring — weekly brief watches for variants, ENJP-MT releases, LEAP SDK changes
+- #47 LFM2 cache strategy — revisit after diagnostics (#46) ships AND 5+ real meetings show >50% within-meeting cache hit rate
 
 ## Agent stack
 

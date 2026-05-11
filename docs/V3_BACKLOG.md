@@ -533,3 +533,32 @@ Updated: May 10 2026
 - **What:** Google's open-weight translation models. TranslateGemma 4B/12B available, Gemma 4 E4B mobile-optimized.
 - **Why deferred:** Per Google's own technical report, TranslateGemma shows a **regression on Japanese→English** (worse named-entity translation) — exactly the failure mode that hurts Roche use cases. Memory footprint also too large for our constraints (~4GB for E4B vs ~250MB for LFM2-350M). iOS integration story (LiteRT-LM) more complex than LEAP iOS SDK.
 - **Trigger to revisit:** If we ever expand beyond JA↔EN to support more APAC languages (Mandarin, Korean), TranslateGemma's multilingual coverage becomes interesting as a fallback for non-JA pairs while LFM2 stays primary for JA↔EN.
+
+---
+
+## Pre-Phase-5 strategic walkthrough (2026-05-12)
+
+### Liquid AI / LFM2 model updates monitoring
+
+- **What:** Add Liquid AI and LFM2 model family to the weekly brief's external monitoring scope. Watch for new LFM2 variants, new ENJP-MT models, LEAP iOS SDK releases, and Apollo app feature changes that signal model improvements. Today's Phase 5 strategic walkthrough confirmed LFM2-350M-ENJP-MT as the locked choice for MVP 1, but a newer variant could shift the cost-benefit before we have real-meeting data to gate the V3 #35 upgrade trigger.
+- **Why deferred:** Monitoring only, no project change required. Bundles with existing daily/weekly brief routines.
+- **Trigger to revisit:** When brief surfaces a Liquid AI release, model variant, or SDK change. Re-evaluate against V3 #35's gating criteria (sub-200ms sentence latency on Neural Engine, measurable Roche-relevant JA accuracy gain, no app launch time bloat, no memory pressure killing other apps).
+- **Cost estimate:** Brief subscription update, ~5 min.
+
+### Local-only diagnostics for performance tuning
+
+- **What:** Add structured local-only diagnostic logging to the transcription/translation pipeline. Captures per-window Whisper inference time, per-sentence LFM2 translation time, language router gate behavior (N=2 firings, detected-vs-authoritative mismatches), LFM2 cache hit rate, memory/thermal peaks, segments/sentences per meeting. Logs stored in app sandbox, one file per meeting, auto-rotate to last 30. Exposed via Settings "Diagnostics" screen showing last meeting + 7-day averages. Manual export via share sheet (Markdown or JSON) for offline analysis.
+- **Why deferred:** MVP 1 must ship first. Diagnostics earns its keep only when real meeting data exists. Phase 6 introduces SwiftData persistence — natural moment to add diagnostic persistence alongside transcript persistence.
+- **Privacy commitment:** All diagnostic data is local-only. Will codify into CLAUDE.md when built: "Diagnostic logs never leave the device. No send-diagnostics feature even with opt-in. Only export path is explicit user-initiated file share."
+- **Trigger to revisit:** Phase 6 kickoff (SwiftData persistence work), OR if a specific performance issue surfaces before then that requires measurement.
+- **Cost estimate:** ~1–2 days. Instrumentation hooks at existing actor boundaries (zero new hot paths), structured logging format, diagnostics view in Settings, file rotation logic, share sheet export.
+- **Performance impact:** <1% overhead. Memory: few KB per meeting. Disk: ~50–200KB per 2-hour meeting, ~20MB cumulative after 100 meetings. No battery impact.
+- **Drives future V3 decisions:** validates N=2 gate calibration, validates window/hop sizing, drives cache strategy revisit (#47 in-memory vs persistent), informs LFM2 model upgrade trigger (#35), supports latency slider design (#32).
+
+### LFM2 cache strategy — revisit if cross-meeting hit rate proves valuable
+
+- **What:** Phase 5 ships with in-memory only cache (`LiquidCacheOptions` in-memory). Strategic walkthrough chose this over persistent on-disk because: (a) LFM2's prompt cache is inference-acceleration via KV-state, not translation-memory across sessions — cross-meeting hit rate likely near zero; (b) persistent cache in Documents folder backs up to iCloud by default, conflicting with CLAUDE.md "no cloud sync" privacy stance; (c) MVP discipline prefers simplest design that delivers value.
+
+  If real meeting data shows the cache assumption was wrong — i.e., within-meeting hit rate is high enough to suggest cross-meeting benefit would be material AND a way to handle iCloud-backup exclusion is identified — revisit. Liquid AI / Liquid SDK may also evolve the cache primitive in a future version.
+- **Trigger to revisit:** After local-only diagnostics ships (see preceding entry) AND 5+ real meetings show within-meeting cache hit rate >50%. OR if Liquid SDK introduces a translation-memory layer in a future version. OR if CLAUDE.md privacy stance evolves.
+- **Cost estimate to flip to persistent:** ~2 hours. Swap `LiquidCacheOptions` to disk path, add iCloud backup exclusion attribute on cache directory, add "Clear translation cache" button in Settings, codify size cap and eviction policy.
