@@ -53,6 +53,10 @@ These are unfilterable. Any single failure means `BLOCKED`. Report them comprehe
     - Architectural decisions surfaced post-hoc in the completion summary instead of pause-before-write
     - Tests discarded without written diagnosis (was the test wrong, or did production violate a contract?)
     - Doc-comment naming a test ID that does not match the test's actual behavior
+- Doc-researcher pre-flight discipline violations (see V3 entry "Doc-researcher trigger: third-party tool configuration changes"):
+    - Third-party tool config change (Xcode build settings, project.pbxproj keys, Package.swift, vendor framework defaults, scheme XML files in xcshareddata) without evidence of a doc-researcher pre-flight in the commit body, the dispatch brief, or recoverable prior conversation turns.
+    - Required fix when the rule fires: identify the specific config knob being changed; name the @doc-researcher query to run against current vendor docs (e.g., "Verify against Apple's current Xcode 26 documentation: does setting [KEY] affect [BEHAVIOR] on iOS targets?"); require the cited finding to land in the commit body or dispatch brief before re-requesting review.
+    - Cautionary example: 2026-05-11 Step 8 `ENABLE_DEBUG_DYLIB` debug-dylib trap shipped past initial planning because no doc-researcher pre-flight ran on the V3 recipe (see commits `d4de6d8`, `13132ac`).
 - Failing tests
 - Failed build
 - Force-push to main / master without explicit user instruction
