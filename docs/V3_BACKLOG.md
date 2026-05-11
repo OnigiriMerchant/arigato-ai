@@ -368,6 +368,24 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 - **What lands from this bundle's Step 10:** the diagnosis above (this V3 entry). feature-planner.md is unchanged from pre-Step-10 state. Code-reviewer's BLOCKING check (Step 11) is unaffected and will provide downstream enforcement regardless.
 
+### Agent prompt hygiene — INFO findings from workflow bundle gate (2026-05-11)
+
+The three-reviewer gate on the post-Phase-4 workflow automation bundle (pushed to `origin/main` 2026-05-11) surfaced eight LOW/MED INFO findings from @code-reviewer. Findings 2, 5, and 6 were addressed at gate time (finding 2 is the documented self-application caveat in Step 11's commit body; findings 5 and 6 in the immediate hygiene-pass follow-up commit `aa7b823`). The five findings below are real but not load-bearing and are logged here for the next workflow automation pass.
+
+- **Finding 1 — `.claude/agents/code-reviewer.md:21` lacks Bash fallback for MCP-inheritance bug.** Process step 5 says "invoke `mcp__xcodebuildmcp__build_sim_name_proj`" with no fallback for cases where the subagent context cannot inherit MCP tools (the known Claude Code issue documented in CLAUDE.md "Build workflow" section). Pre-bundle issue, but Step 4's Opus 4.7 + report-all expansion made the build-verification step more load-bearing. **Fix:** add a parenthetical "(or `xcodebuild -project ... build` via Bash if MCP tools are unavailable in subagent context, per CLAUDE.md MCP-inheritance note)" to that line. ~5 min.
+
+- **Finding 3 — `.claude/agents/code-reviewer.md:56` references unverifiable evidence source.** The Step 11 BLOCKING rule names "recoverable prior conversation turns" as a valid place for doc-researcher pre-flight evidence. From a fresh subagent dispatch, the reviewer has no access to prior conversation turns across invocations (no persistent memory). In practice the rule degrades to commit-body + dispatch-brief evidence only. **Fix:** either drop "or recoverable prior conversation turns" OR scope it explicitly ("when the reviewer is invoked in the same session, otherwise commit-body / dispatch-brief evidence only"). ~5 min.
+
+- **Finding 4 — `.claude/commands/dispatch-implementer.md` predates the doc-researcher pre-flight rule.** The slash command template does NOT yet include the "Doc-researcher pre-flight" section that the preceding V3 entry "feature-planner output channel rigidity" explicitly defers to "the next workflow automation pass." This is Step 10's deferred work; tracked here so the dispatch-brief-layer enforcement actually lands and Step 11's downstream BLOCKING check has its upstream backstop. ~30 min.
+
+- **Finding 7 — `.claude/commands/update-state.md:18` has unexplained second commit-subject prefix.** The amend branch's allow-list mentions both `docs: refresh current state for chat migration continuity` (used by step 8.3 of the command) AND `docs(state): refresh after` (origin unknown to a fresh reader). A future reader cannot tell whether the second prefix is legacy/dead or actively used. **Fix:** one-line comment clarifying the provenance of each prefix, or drop the unused one. ~5 min.
+
+- **Finding 8 — `.claude/agents/swift-implementer.md:31` duplicates CLAUDE.md content.** The "Scope-and-decision discipline (sharpened post-Group-C)" section largely duplicates CLAUDE.md's "swift-implementer scope-and-decision discipline" section (same three rules, same Group C citations). Intentional per the section header (surfaced at dispatch time so the implementer cannot miss it), but it creates a sync hazard: future edits must be kept in sync across two locations. **Fix:** add a `[KEEP SYNCED WITH .claude/agents/swift-implementer.md:31]` comment in CLAUDE.md, or vice-versa. ~5 min.
+
+**Total effort:** ~50 min for all five findings. Finding 4 is the load-bearing one (it carries the dispatch-brief-layer enforcement deferred from Step 10); the others are surgical hygiene. Bundle all five together in the next workflow automation pass.
+
+**Trigger to revisit:** Next workflow automation pass.
+
 ### swift-implementer scope-and-decision discipline (V3 entry sharpening)
 
 The existing V3 entry "feature-planner system prompt update — concurrency scheduling-assumption rule" addresses the planner side. This entry tracks the parallel work for swift-implementer's system prompt. Sharpening points from Group C reviewer feedback:
