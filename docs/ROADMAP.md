@@ -92,7 +92,7 @@ All four groups shipped. Pipeline runs end-to-end on simulator audio. 125/125 te
 
 ### Phase 5 — LFM2 translation (planned)
 
-Liquid AI's LFM2-350M-ENJP-MT bidirectional model loaded via LEAP iOS SDK v0.10.4.3. Q5_K_M quantization for vibe check, Q5/Q8 bake-off for production. Translation dispatcher attaches at LanguageRouter's output, routes Whisper's authoritative language to the correct translation direction. Cache control via the `LiquidCacheOptions.enabled(path:)` API. Outputs streaming bilingual text.
+Liquid AI's LFM2-350M-ENJP-MT bidirectional model loaded via LEAP iOS SDK v0.9.4. Q5_K_M quantization for vibe check, Q5/Q8 bake-off for production. Translation dispatcher attaches at LanguageRouter's output, routes Whisper's authoritative language to the correct translation direction. Cache control via the `LiquidCacheOptions.enabled(path:)` API. Outputs streaming bilingual text.
 
 The dispatcher consumes authoritativeLanguage (not detectedLanguage) — never sends a half-sentence through the wrong direction because the language gate already stabilized routing.
 

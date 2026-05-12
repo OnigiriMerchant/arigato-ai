@@ -573,3 +573,14 @@ Updated: May 10 2026
 - **Mitigation options when revisited:** (a) disable Xcode auto-updates in System Settings → General → Software Update → Automatic Updates; (b) use `xcodes` CLI or `xcode-select` to pin a specific Xcode version per project; (c) accept Apple's cadence and treat platform-install interruptions as a known ~30-min tax.
 - **Trigger to revisit:** next time an Xcode auto-update blocks active work, OR if the project moves to a CI/CD setup where toolchain pinning becomes load-bearing.
 - **Bonus item to evaluate when revisited:** whether to create a fresh iPhone 17 Pro Max sim on iOS 26.5 runtime. Today the existing sim is locked to iOS 26.4 and `useLatestOS: true` would pick 26.5 if a 26.5 sim existed. For Phase 5, iOS 26.4 sim is correct because it matches the deployment target. Reassess at Phase 7 or when deployment target bumps.
+
+---
+
+## Documentation hygiene
+
+### `.claude/skills/leap-sdk/SKILL.md` — reconcile phantom v0.10.4.3 framing
+- **What:** SKILL.md currently contains phantom-version claims discovered during the Phase 5 kickoff version-pin cleanup pass (2026-05-12). Line 9: "Minimum target version: v0.10.4.3 (released 2026-05-07)" — the version tag does not exist in the public `Liquid4All/leap-ios` repo, and the release date is unverified. Line 11: "Avoid the older `KotlinUInt` wrapping pattern seen in pre-v0.10.4.3 tutorials" — same phantom-version premise.
+- **Why deferred:** not a simple string substitution. The v0.10.4.3 framing is load-bearing for the skill's guidance — the entire "Recent SDK changes (May 2026)" section (and possibly the `KotlinUInt` advice) is built on the assumption that a version newer than v0.9.4 exists with specific API improvements. Without verified evidence of what those changes actually are (or whether they exist at all), substituting v0.10.4.3 → v0.9.4 would silently propagate stale or fabricated guidance. The fix requires deciding what the file should actually say after verifying current LEAP SDK API surface against v0.9.4 source tree.
+- **Action when revisited:** (a) read `.claude/skills/leap-sdk/SKILL.md` end-to-end; (b) for every claim tied to v0.10.4.3, verify against v0.9.4 source tree + docs.liquid.ai; (c) rewrite or delete unverifiable claims rather than substitute the version string; (d) cross-reference `docs/PHASE_5_DOC_RESEARCH.md` for what's known to be true in v0.9.4. Likely a 30–60 min focused rewrite, not a one-line edit.
+- **Trigger to revisit:** next time the LEAP / Liquid AI skill is invoked (e.g., during Group B SPM-add work or any LFM2 debugging), OR before Phase 6 kickoff, whichever comes first.
+- **Cost estimate:** ~30–60 min for the rewrite, plus any incidental @doc-researcher pre-flight if claims are uncertain.
