@@ -31,7 +31,7 @@ Last updated: 2026-05-12 after Xcode 26.5 toolchain bump — re-verified 125/125
   4. Cache strategy — LiquidCacheOptions in-memory only (V3 #47 filed for revisit)
   5. Doc-researcher pre-flight — five-category run before any code (SDK surface, streaming API, cache mechanics, concurrency/Sendable, model loading/warmup)
   6. Group breakdown — 4 groups mirroring Phase 4 (A: domain + Translating protocol; B: SDK + LFM2ModelLoader + AppBootstrapper extension; C: TranslationActor + sentence buffer + cache config; D: UI into TranscriptLiveView)
-- **Immediate next step**: Group A implementation via @swift-implementer (autonomous, Steps 1-5, checkpoint commits per step, end-of-group three-reviewer gate after Step 5). Step 0 findings landed in `docs/PHASE_5_DOC_RESEARCH.md`. Step 1 plan approved 2026-05-12 by Jose ("go"). One notable finding remaining for Group B pre-work: `LiquidCacheOptions` type cases not documented publicly — `.swiftinterface` inspection required after LEAP SDK SPM install before Group C cache config code.
+- **Immediate next step**: Group A implementation via @swift-implementer (autonomous, Steps 1-5, checkpoint commits per step, end-of-group three-reviewer gate after Step 5). Step 0 findings landed in `docs/PHASE_5_DOC_RESEARCH.md`. Step 1 plan approved 2026-05-12 by Jose ("go"). One notable finding remaining for Group B pre-work: `LiquidCacheOptions` type cases not documented publicly — `.swiftinterface` inspection required after LEAP SDK SPM install (v0.9.4, 2026-03-12) before Group C cache config code.
 
 ## Active prerequisites for Phase 5
 - **None blocking.**
