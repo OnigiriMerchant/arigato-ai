@@ -213,8 +213,9 @@ final class AppBootstrapper {
     /// `self`-bound closure is installed post-init.
     private func installLFM2ProgressHandler(into trampoline: ProgressTrampoline) {
         trampoline.bind { [weak self] progress in
+            guard let self else { return }
             Task { @MainActor in
-                self?.setLFM2Progress(progress)
+                self.setLFM2Progress(progress)
             }
         }
     }
@@ -363,14 +364,26 @@ private final class ProgressTrampoline: @unchecked Sendable {
     /// handler. Called by the loader's progress handler closure on the
     /// SDK's callback thread; the inner handler is responsible for
     /// hopping to the main actor.
-    func forward(_ progress: Double) {
+    ///
+    /// `nonisolated` because LEAP's `downloadProgressHandler` invokes
+    /// the wrapping `@Sendable` closure from the SDK's internal
+    /// callback thread — which is not main-actor — and Xcode 26.5 /
+    /// Swift 6.3.1 infers MainActor isolation on top-level classes by
+    /// default. Without the explicit `nonisolated`, the call from the
+    /// SDK thread would fail Swift 6 strict concurrency.
+    nonisolated func forward(_ progress: Double) {
         let handler = lock.withLock { $0 }
         handler?(progress)
     }
 
     /// Replaces the inner handler. Called once from
     /// ``AppBootstrapper/installLFM2ProgressHandler(into:)``.
-    func bind(_ handler: @escaping @Sendable (Double) -> Void) {
+    ///
+    /// `nonisolated` for symmetry with ``forward(_:)``; this method
+    /// is invoked from the MainActor-isolated bootstrapper `init`, but
+    /// declaring it `nonisolated` keeps the trampoline callable from
+    /// any context without forcing a hop.
+    nonisolated func bind(_ handler: @escaping @Sendable (Double) -> Void) {
         lock.withLock { $0 = handler }
     }
 }
