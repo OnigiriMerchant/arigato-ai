@@ -208,3 +208,246 @@ public nonisolated enum LFM2ClientFactory {
         return LFM2EngineAdapter(modelRunner: runner)
     }
 }
+
+// MARK: - Loader actor
+
+/// Owns the lifecycle of the underlying LFM2 engine and coalesces
+/// concurrent load and warmup requests into single in-flight tasks.
+///
+/// The loader is the single point of contact between the rest of the app
+/// and the LEAP-backed translation engine. It is an actor so the
+/// underlying engine — which is not `Sendable` in LEAP iOS SDK v0.9.4 —
+/// can be held safely across async boundaries.
+///
+/// Mirrors Phase 4's ``WhisperModelLoader`` shape closely: a single
+/// loading state, a single in-flight task, and a single `factory`
+/// dependency injected for testability. The LFM2 path adds the
+/// download-progress channel and the two-canary warmup step.
+///
+/// ## Concurrency contract
+///
+/// **A1 — Load coalescing.** Concurrent
+/// ``loadIfNeeded(quantization:)`` callers coalesce against the single
+/// in-flight task. The factory is invoked exactly once per fresh-load
+/// epoch; subsequent callers receive the resolved engine without
+/// re-invoking the factory. Locked by
+/// ``LFM2ModelLoaderTests/loadIfNeeded_concurrentCalls_coalesceToSingleLoad``.
+///
+/// **A2 — Unload non-interruption.** ``unload()`` resets state to
+/// ``LFM2LoaderState/idle`` synchronously but does **not** cancel an
+/// in-flight load. Any task spawned by ``loadIfNeeded(quantization:)``
+/// continues to run and its eventual success or failure overrides the
+/// idle reset. Callers that want to truly cancel an in-flight load
+/// should cancel their own awaiting task. Locked by
+/// ``LFM2ModelLoaderTests/unload_doesNotInterruptInFlightLoad``.
+///
+/// **A3 — Warmup sequential + idempotent.** ``warmup()`` runs the two
+/// direction canaries (EN-to-JA first, JA-to-EN second) **sequentially**
+/// inside a single coalesced task. Concurrent ``warmup()`` callers
+/// coalesce against that task — exactly two canaries fire per warmup
+/// epoch regardless of how many callers concurrently await. A
+/// ``warmup()`` call against an already-``LFM2LoaderState/ready`` loader
+/// is a no-op. Locked by
+/// ``LFM2ModelLoaderTests/warmup_concurrentCallsCoalesce`` and
+/// ``LFM2ModelLoaderTests/warmup_calledAfterReady_isNoOp``.
+///
+/// **A4 — Progress on SDK's thread.** The `progressHandler` closure
+/// passed into ``init(factory:progressHandler:)`` is invoked on
+/// whichever queue/thread the LEAP SDK uses for its download callback.
+/// The loader itself does not hop the handler onto the main actor;
+/// consumers that bind to UI state (e.g. ``AppBootstrapper``) are
+/// responsible for the main-actor hop in their own handler.
+///
+/// Access level is `internal` because the associated payload of
+/// ``LFM2LoaderState/loaded(_:)`` is the internal ``LFM2Engine`` protocol;
+/// this actor cannot be `public` without first promoting ``LFM2Engine``
+/// to `public`. (``LFM2Engine`` is declared `public` already; the
+/// loader API stays `internal` to match Phase 4's
+/// ``WhisperModelLoader`` access posture so tests retain `@testable`
+/// reach without exposing a wider module boundary.)
+actor LFM2ModelLoader {
+    private var state: LFM2LoaderState = .idle
+    /// Strong reference to the loaded engine, held independently of
+    /// ``state``. This decouples engine identity from the lifecycle
+    /// state machine so warmup transitions
+    /// (``LFM2LoaderState/loaded(_:)`` → ``LFM2LoaderState/warming`` →
+    /// ``LFM2LoaderState/ready``) do not drop the engine reference —
+    /// only ``unload()`` clears it.
+    private var loadedEngine: (any LFM2Engine)?
+    private var inFlightLoad: Task<any LFM2Engine, Error>?
+    private var inFlightWarmup: Task<Void, Error>?
+    private let factory: LFM2EngineFactory
+    private let progressHandler: (@Sendable (Double) -> Void)?
+
+    /// Designated initializer.
+    ///
+    /// - Parameters:
+    ///   - factory: The factory closure that resolves a quantization
+    ///     slug into an ``LFM2Engine``. Defaulted to the production
+    ///     wiring at ``LFM2ClientFactory/make``. Tests inject a custom
+    ///     closure that returns a fake.
+    ///   - progressHandler: Optional download-progress sink invoked with
+    ///     the SDK's reported fraction in `[0.0, 1.0]`. Per contract
+    ///     **A4**, this closure runs on the SDK's callback thread;
+    ///     consumers that touch main-actor state must hop themselves.
+    init(
+        factory: @escaping LFM2EngineFactory = LFM2ClientFactory.make,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
+    ) {
+        self.factory = factory
+        self.progressHandler = progressHandler
+    }
+
+    /// Loads the LFM2 model for the requested quantization slug if no
+    /// engine is already loaded; coalesces concurrent calls into a
+    /// single in-flight task.
+    ///
+    /// Behaviour:
+    /// - If the loader is already in ``LFM2LoaderState/loaded(_:)``,
+    ///   ``LFM2LoaderState/warming``, or ``LFM2LoaderState/ready``, the
+    ///   already-loaded engine is returned immediately. Quantization
+    ///   mismatch is silently ignored: callers requesting a different
+    ///   slug after one is loaded receive the already-loaded engine.
+    ///   This matches the single-engine ownership invariant.
+    /// - If a load is already in flight, the caller awaits the same
+    ///   task. No second load is started (contract **A1**).
+    /// - Otherwise a fresh `Task` is started against ``factory`` and
+    ///   ``state`` transitions to ``LFM2LoaderState/loading``. On
+    ///   success, ``state`` becomes ``LFM2LoaderState/loaded(_:)`` and
+    ///   the engine is returned. On failure, ``state`` becomes
+    ///   ``LFM2LoaderState/failed(_:)`` and the error is rethrown as
+    ///   ``TranslationError/modelLoadFailed(_:)``. The next call retries.
+    /// - **Cancellation**: if a caller's outer task is cancelled while
+    ///   it awaits the in-flight load, only that caller's await throws
+    ///   `CancellationError`. The shared in-flight task continues so
+    ///   other coalescing callers still receive their result.
+    ///
+    /// - Parameter quantization: The quantization slug to request.
+    ///   Defaulted to `"Q5_K_M"` per Phase 5 Decision 1.
+    /// - Returns: The loaded ``LFM2Engine`` instance.
+    /// - Throws: ``TranslationError/modelLoadFailed(_:)`` wrapping any
+    ///   underlying factory error.
+    func loadIfNeeded(quantization: String = "Q5_K_M") async throws -> any LFM2Engine {
+        // Engine identity is decoupled from state: any state at or past
+        // ``loaded`` retains ``loadedEngine`` until ``unload()`` clears
+        // it. Return the cached engine regardless of warmup progress.
+        if let loadedEngine {
+            return loadedEngine
+        }
+
+        if let inFlightLoad {
+            return try await inFlightLoad.value
+        }
+
+        let factory = self.factory
+        let progressHandler = self.progressHandler
+        let quantizationSlug = quantization
+        let task = Task<any LFM2Engine, Error> {
+            try await factory(quantizationSlug, progressHandler)
+        }
+        inFlightLoad = task
+        state = .loading
+
+        do {
+            let engine = try await task.value
+            loadedEngine = engine
+            state = .loaded(engine)
+            inFlightLoad = nil
+            return engine
+        } catch {
+            let wrapped = TranslationError.modelLoadFailed(error.localizedDescription)
+            state = .failed(wrapped)
+            inFlightLoad = nil
+            throw wrapped
+        }
+    }
+
+    /// Drives the two-canary warmup against an already-loaded engine.
+    ///
+    /// Precondition: the loader is in ``LFM2LoaderState/loaded(_:)``.
+    /// Calling ``warmup()`` against ``LFM2LoaderState/idle``,
+    /// ``LFM2LoaderState/loading``, ``LFM2LoaderState/downloading(_:)``,
+    /// or ``LFM2LoaderState/failed(_:)`` throws
+    /// ``TranslationError/modelNotReady``. Calling against
+    /// ``LFM2LoaderState/ready`` is a no-op (contract **A3**); calling
+    /// against ``LFM2LoaderState/warming`` coalesces onto the existing
+    /// task.
+    ///
+    /// Behaviour:
+    /// - On the first call from ``LFM2LoaderState/loaded(_:)``, ``state``
+    ///   transitions to ``LFM2LoaderState/warming`` and a fresh task is
+    ///   spawned that runs the two canaries **sequentially**: EN-to-JA
+    ///   first, JA-to-EN second. Order is locked by
+    ///   ``LFM2ModelLoaderTests/warmup_afterLoad_runsBothCanariesSequentially``.
+    /// - On both-canary success, ``state`` transitions to
+    ///   ``LFM2LoaderState/ready``.
+    /// - On any canary failure, ``state`` transitions to
+    ///   ``LFM2LoaderState/failed(_:)`` carrying
+    ///   ``TranslationError/warmupFailed(_:)`` and the error is rethrown.
+    ///
+    /// - Throws: ``TranslationError/modelNotReady`` if no engine is
+    ///   loaded; ``TranslationError/warmupFailed(_:)`` on canary failure.
+    func warmup() async throws {
+        if case .ready = state {
+            return
+        }
+
+        if let inFlightWarmup {
+            try await inFlightWarmup.value
+            return
+        }
+
+        guard let engine = loadedEngine else {
+            throw TranslationError.modelNotReady
+        }
+
+        let task = Task<Void, Error> {
+            do {
+                try await engine.warmupCanary(direction: .enToJa)
+                try await engine.warmupCanary(direction: .jaToEn)
+            } catch let error as TranslationError {
+                throw error
+            } catch {
+                throw TranslationError.warmupFailed(error.localizedDescription)
+            }
+        }
+        inFlightWarmup = task
+        state = .warming
+
+        do {
+            try await task.value
+            state = .ready
+            inFlightWarmup = nil
+        } catch let error as TranslationError {
+            state = .failed(error)
+            inFlightWarmup = nil
+            throw error
+        } catch {
+            let wrapped = TranslationError.warmupFailed(error.localizedDescription)
+            state = .failed(wrapped)
+            inFlightWarmup = nil
+            throw wrapped
+        }
+    }
+
+    /// Returns a snapshot of the loader's lifecycle. Cheap; safe to
+    /// poll from UI on every render pass.
+    func currentState() -> LFM2LoaderState {
+        state
+    }
+
+    /// Resets the loader to ``LFM2LoaderState/idle``, releasing the
+    /// engine reference so the underlying LEAP resources can be
+    /// reclaimed.
+    ///
+    /// Does **not** interrupt an in-flight load or warmup (contract
+    /// **A2**): any task spawned by ``loadIfNeeded(quantization:)`` or
+    /// ``warmup()`` continues to run, and its eventual success or
+    /// failure is recorded back into ``state`` overriding the idle
+    /// reset. Callers that want to truly cancel must cancel their own
+    /// awaiting task.
+    func unload() {
+        state = .idle
+        loadedEngine = nil
+    }
+}
