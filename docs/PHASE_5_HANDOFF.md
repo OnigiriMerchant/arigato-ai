@@ -24,7 +24,7 @@ Split `TranslationActor` (raw LFM2 inference + sentence buffering) from `LFM2Mod
 
 ## Doc-researcher pre-flight (Step 0 — runs before Group A)
 
-Five categories to verify against Liquid AI's current published docs and the LEAP iOS SDK v0.10.4.3 source/README:
+Five categories to verify against Liquid AI's current published docs and the LEAP iOS SDK v0.9.4 source/README:
 
 1. **SDK API surface**: Confirm current method signatures for model loading, init parameters, inference call. Has anything renamed/restructured since handoff was written?
 2. **Streaming/token-by-token API**: Does LEAP expose token-streaming inference, or batched complete-output only? Determines internal shape of `TranslationActor`'s emission pipeline.

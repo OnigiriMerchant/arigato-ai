@@ -24,14 +24,14 @@ Last updated: 2026-05-12 after Xcode 26.5 toolchain bump — re-verified 125/125
 - All eight Phase 4 architectural decisions still locked. WhisperKit v1.0.0 pinned 1.0.0..<2.0.0. Model variant: openai_whisper-large-v3-v20240930_turbo_632MB.
 
 ## Next planned action
-- **Phase 5 kickoff**: LFM2 translation via LEAP iOS SDK v0.10.4.3. Six locked architectural decisions in PHASE_5_HANDOFF.md:
+- **Phase 5 kickoff**: LFM2 translation via LEAP iOS SDK v0.9.4. Six locked architectural decisions in PHASE_5_HANDOFF.md:
   1. Streaming UX — chunk-by-chunk JA live as Whisper streams; EN fills per complete sentence; 200–500ms "translating…" perceived state
   2. Language binding — translator consumes LanguageRouter.currentLanguage (authoritative), UI still shows per-line detectedLanguage honestly
   3. Warmup pattern — AppBootstrapper warms Whisper first, then LFM2 sequentially (avoid 1.5GB parallel-load peak)
   4. Cache strategy — LiquidCacheOptions in-memory only (V3 #47 filed for revisit)
   5. Doc-researcher pre-flight — five-category run before any code (SDK surface, streaming API, cache mechanics, concurrency/Sendable, model loading/warmup)
   6. Group breakdown — 4 groups mirroring Phase 4 (A: domain + Translating protocol; B: SDK + LFM2ModelLoader + AppBootstrapper extension; C: TranslationActor + sentence buffer + cache config; D: UI into TranscriptLiveView)
-- **Immediate next step**: Group A implementation via @swift-implementer (autonomous, Steps 1-5, checkpoint commits per step, end-of-group three-reviewer gate after Step 5). Step 0 findings landed in `docs/PHASE_5_DOC_RESEARCH.md`. Step 1 plan approved 2026-05-12 by Jose ("go"). Two notable findings for Group B (not blockers for Group A): (a) SDK version `v0.10.4.3` in PHASE_5_HANDOFF.md does not exist publicly — latest tag is `v0.9.4` (2026-03-12); handoff will be amended in a separate commit before Group B work begins; (b) `LiquidCacheOptions` type cases not documented publicly — `.swiftinterface` inspection required as Group B pre-work.
+- **Immediate next step**: Group A implementation via @swift-implementer (autonomous, Steps 1-5, checkpoint commits per step, end-of-group three-reviewer gate after Step 5). Step 0 findings landed in `docs/PHASE_5_DOC_RESEARCH.md`. Step 1 plan approved 2026-05-12 by Jose ("go"). One notable finding remaining for Group B pre-work: `LiquidCacheOptions` type cases not documented publicly — `.swiftinterface` inspection required after LEAP SDK SPM install before Group C cache config code.
 
 ## Active prerequisites for Phase 5
 - **None blocking.**
