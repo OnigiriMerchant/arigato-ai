@@ -562,3 +562,14 @@ Updated: May 10 2026
   If real meeting data shows the cache assumption was wrong — i.e., within-meeting hit rate is high enough to suggest cross-meeting benefit would be material AND a way to handle iCloud-backup exclusion is identified — revisit. Liquid AI / Liquid SDK may also evolve the cache primitive in a future version.
 - **Trigger to revisit:** After local-only diagnostics ships (see preceding entry) AND 5+ real meetings show within-meeting cache hit rate >50%. OR if Liquid SDK introduces a translation-memory layer in a future version. OR if CLAUDE.md privacy stance evolves.
 - **Cost estimate to flip to persistent:** ~2 hours. Swap `LiquidCacheOptions` to disk path, add iCloud backup exclusion attribute on cache directory, add "Clear translation cache" button in Settings, codify size cap and eviction policy.
+
+---
+
+## Workflow risks
+
+### Xcode auto-update interrupts active feature work
+- **What:** macOS auto-installed Xcode 26.5 (Build 17F42) mid-Phase-5-kickoff on 2026-05-12. The 26.5 component installer is modal with no skip/close affordance — Apple forces the platform support download. Builds blocked until iOS 26.5 platform installed. ~30 min interruption between the toolchain bump being detected and 125/125 green being re-verified.
+- **Why deferred:** not a fixable issue per se — Apple controls Xcode update cadence. Worth recording the pattern so the next occurrence is faster to resolve.
+- **Mitigation options when revisited:** (a) disable Xcode auto-updates in System Settings → General → Software Update → Automatic Updates; (b) use `xcodes` CLI or `xcode-select` to pin a specific Xcode version per project; (c) accept Apple's cadence and treat platform-install interruptions as a known ~30-min tax.
+- **Trigger to revisit:** next time an Xcode auto-update blocks active work, OR if the project moves to a CI/CD setup where toolchain pinning becomes load-bearing.
+- **Bonus item to evaluate when revisited:** whether to create a fresh iPhone 17 Pro Max sim on iOS 26.5 runtime. Today the existing sim is locked to iOS 26.4 and `useLatestOS: true` would pick 26.5 if a 26.5 sim existed. For Phase 5, iOS 26.4 sim is correct because it matches the deployment target. Reassess at Phase 7 or when deployment target bumps.

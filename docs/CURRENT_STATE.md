@@ -1,9 +1,16 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-12 after Phase 5 strategic walkthrough — handoff drafted, three V3 entries logged.
+Last updated: 2026-05-12 after Xcode 26.5 toolchain bump — re-verified 125/125 green on the new toolchain; Phase 5 Step 0 doc-researcher findings approved; Step 1 (feature-planner Group A) is the next planned action.
 
 ## Most recent commit
 - 1671612 docs(phase-5): log V3 entries + draft PHASE_5_HANDOFF.md from strategic walkthrough
+
+## Toolchain
+- **Xcode**: 26.5 (Build 17F42) — auto-installed overnight 2026-05-12, iOS 26.5 platform support installed afterward
+- **SDK**: iOS 26.5
+- **Swift**: 6.3.1
+- **Default simulator**: iPhone 17 Pro Max on iOS 26.4 runtime (UUID 8BF8B150-CC7A-4FE4-85F7-ECA0D3A32325) — sim runtime intentionally matches deployment target IPHONEOS_DEPLOYMENT_TARGET=26.4, not the SDK
+- **Re-verification post-bump**: 125/125 tests passing, 0 errors, 0 new warnings beyond pre-existing V3 #38 (TranscriptionActorTests withLock unused-result). Build duration 9.5s, test duration 104.3s.
 
 ## Phase status
 - Phase 4 (WhisperKit/ArgmaxOSS streaming transcription): ✅ **SHIPPED in full**. Groups A, B, C, D all complete.
@@ -24,7 +31,7 @@ Last updated: 2026-05-12 after Phase 5 strategic walkthrough — handoff drafted
   4. Cache strategy — LiquidCacheOptions in-memory only (V3 #47 filed for revisit)
   5. Doc-researcher pre-flight — five-category run before any code (SDK surface, streaming API, cache mechanics, concurrency/Sendable, model loading/warmup)
   6. Group breakdown — 4 groups mirroring Phase 4 (A: domain + Translating protocol; B: SDK + LFM2ModelLoader + AppBootstrapper extension; C: TranslationActor + sentence buffer + cache config; D: UI into TranscriptLiveView)
-- **Immediate next step (Step 0)**: Doc-researcher pre-flight against LEAP iOS SDK v0.10.4.3. Findings drive Group A planning via @feature-planner.
+- **Immediate next step (Step 1)**: @feature-planner Group A dispatch. Step 0 doc-researcher pre-flight complete — findings written to `docs/PHASE_5_DOC_RESEARCH.md` (uncommitted as of 2026-05-12; approved by Jose). Two notable findings for Group B (not blockers for Group A): (a) SDK version `v0.10.4.3` in PHASE_5_HANDOFF.md does not exist publicly — latest tag is `v0.9.4` (2026-03-12); handoff will be amended in a separate commit before Group B work begins; (b) `LiquidCacheOptions` type cases not documented publicly — `.swiftinterface` inspection required as Group B pre-work.
 
 ## Active prerequisites for Phase 5
 - **None blocking.**
