@@ -574,6 +574,56 @@ Updated: May 10 2026
 - **Trigger to revisit:** next time an Xcode auto-update blocks active work, OR if the project moves to a CI/CD setup where toolchain pinning becomes load-bearing.
 - **Bonus item to evaluate when revisited:** whether to create a fresh iPhone 17 Pro Max sim on iOS 26.5 runtime. Today the existing sim is locked to iOS 26.4 and `useLatestOS: true` would pick 26.5 if a 26.5 sim existed. For Phase 5, iOS 26.4 sim is correct because it matches the deployment target. Reassess at Phase 7 or when deployment target bumps.
 
+### swift-implementer false-GREEN build reporting
+- **What:** swift-implementer self-reported "GREEN, 0 warnings" on Phase 5 Group B Steps 3-7 (2026-05-12) without running an authoritative XcodeBuildMCP build, despite the build surfacing 2 Swift 6 strict-concurrency warnings in code the implementer wrote (`AppBootstrapper.swift:189` MainActor-isolated forward + `AppBootstrapper.swift:217` captured-var-self in Task). The warnings were caught only because the main session re-ran the build via XcodeBuildMCP after dispatch return per CLAUDE.md.
+- **Why this is a discipline gap:** subagents in this project may fall back to raw `xcodebuild` via Bash due to the known MCP-inheritance bug (V3 #23). When that happens, the implementer's local "build green" check may not parse all warning text — some `xcodebuild` exit modes report success while still emitting warnings to stderr. The implementer treated build-exit-success as "0 warnings" without re-reading output. The dispatched brief also did not explicitly require warning-by-warning parsing.
+- **Discipline rule needed:** implementers must run authoritative build via XcodeBuildMCP (not raw xcodebuild) AND parse output for ALL warning text before reporting completion. "Build succeeded" is necessary but not sufficient — the report must explicitly list "warnings: 0" or enumerate each warning observed. This rule must be added to `.claude/agents/swift-implementer.md` and to CLAUDE.md as a gate rule that applies pre-checkpoint-commit.
+- **Action when revisited:** edit `.claude/agents/swift-implementer.md` to add the warning-parsing requirement under "Process" / "Hard rules"; edit CLAUDE.md to require the implementer's per-step report enumerate warnings explicitly; consider whether end-of-group reviewer-gate should re-run the build and diff warnings against the implementer's claim.
+- **Trigger to revisit:** before next swift-implementer dispatch, OR before Phase 5 Group C kickoff, whichever comes first.
+- **Cost estimate:** ~15 min for the prompt edits. Bundles naturally with the simulator-state-accumulation entry below — same session, same group, both workflow-discipline gaps.
+
+### Simulator state accumulates during long sessions, breaks test runs
+- **What:** After multiple test runs, interrupted dispatches, and warning-fix retries within a single session (Phase 5 Group B, 2026-05-12 to 2026-05-13), the iOS simulator (UUID `8BF8B150-...`) accumulates state that causes the next test run to hang. Specific failure mode: two `xcodebuild test` processes against the same sim UUID deadlock on `testmanagerd`. UI test runner launch ("Simulator device failed to launch") was the surface symptom.
+- **Why this happened:** Apple's simulator doesn't handle concurrent test invocations well. XcodeBuildMCP doesn't enforce serialization. Combined with an earlier "sim resource-exhausted" implementer report that left state lingering, the next test attempt hit the leftover mess. Even `xcrun simctl shutdown all` followed by retry did not fully recover within the same session — a longer-lived state leak somewhere in CoreSimulator.
+- **Mitigation options when revisited:**
+  - (a) Run `xcrun simctl shutdown all` at the start of every new Claude Code session (cheap hygiene step).
+  - (b) Add a pre-test-run check to `swift-implementer.md`: "verify no other `xcodebuild test` processes are running before invoking `test_sim`."
+  - (c) When a `test_sim` call times out or returns a sim-launch error, automatically run `simctl shutdown all` AND `killall -9 testmanagerd Simulator` (or equivalent) before retry instead of retrying directly against the same sim.
+  - (d) Investigate whether XcodeBuildMCP can serialize concurrent test invocations against the same sim UUID as a feature request.
+- **Trigger to revisit:** next time a test run hangs or returns "Simulator device failed to launch" — OR opportunistically during the next swift-implementer.md / CLAUDE.md hygiene pass.
+- **Note:** bundles naturally with V3 entry on "swift-implementer false-GREEN reporting" above — same session, same group, both workflow-discipline gaps that surfaced in Phase 5 Group B.
+
+### Xcode 26 simulator test hang (documented regression)
+- **What:** Xcode 26.x + iPhone 17 Pro simulator + Thread Performance Checker enabled causes `testmanagerd` to deadlock with the test runner. Documented in Apple Dev Forums, CircleCI Discuss, GitHub Actions `runner-images` #13264. Reproduces in this project on Xcode 26.5 + iOS 26.4 sim.
+- **Workaround:** disable Thread Performance Checker at `xcodebuild` invocation time via environment variable `OS_ACTIVITY_DT_MODE=disable`. Pass via `XcodeBuildMCP test_sim`'s `testRunnerEnv: {"OS_ACTIVITY_DT_MODE": "disable"}` (the MCP tool auto-prefixes `TEST_RUNNER_` which Xcode's test runner converts back to the raw env var inside the test process). Do NOT attempt to edit the Xcode test scheme UI — saving a test plan corrupts the project state (verified 2026-05-12).
+- **The flag `-disable-thread-performance-checker` is NOT a valid xcodebuild flag** — attempted 2026-05-12 and xcodebuild rejected it. Use the env var path only.
+- **Trigger to revisit:** when Apple ships a fix (watch Xcode release notes), or when XcodeBuildMCP adds a first-class flag for this.
+
+### Re-enable Thread Performance Checker and Main Thread Checker
+- **What:** After Xcode 26.x fixes the `testmanagerd` deadlock, re-enable both runtime checkers via `xcodebuild test` invocation (remove `OS_ACTIVITY_DT_MODE=disable` env var from XcodeBuildMCP `test_sim` calls).
+- **Why deferred:** workaround for documented Xcode 26 simulator hang (preceding V3 entry).
+- **Trigger to revisit:**
+  - (a) Apple ships an Xcode patch with release notes mentioning `testmanagerd` / thread checker fixes, OR
+  - (b) Monthly check — try a test run with checkers re-enabled, if tests complete cleanly, the bug is fixed.
+- **Steps when triggered:**
+  1. Tell Claude Code to drop the `OS_ACTIVITY_DT_MODE=disable` env var from the next `test_sim` invocation.
+  2. Run the full test suite once.
+  3. If it completes cleanly within 3 minutes, the bug is fixed — update CLAUDE.md to remove the workaround note.
+  4. If it hangs again, restore the env var, defer another month.
+
+### Group B test execution blocked by Xcode 26 testmanagerd hang
+- **What:** Phase 5 Group B test suite execution was blocked 2026-05-12 by the documented Xcode 26 simulator regression. Tests compile and are discovered (167 total, matches plan) but cannot execute — `testmanagerd` deadlocks with the test runner on iPhone 17 Pro sim.
+- **Workarounds tried:** `simctl shutdown all` + retry, isolated `-only-testing` flag, `OS_ACTIVITY_DT_MODE=disable` env var via `XcodeBuildMCP testRunnerEnv`. None resolved the hang.
+- **Code state:** build verified GREEN, 0 errors, 0 warnings. Logic reviewed via end-of-group gate. Risk of unverified test run is low because:
+  - (a) build compilation is clean
+  - (b) plan was thoroughly reviewed before implementation
+  - (c) feature-planner self-critique applied
+- **Trigger to revisit:**
+  - (a) Apple ships Xcode patch fixing `testmanagerd`, OR
+  - (b) Try a fresh iOS 26.5 simulator runtime (we never tested with 26.5 sim, only 26.4), OR
+  - (c) Try erasing the simulator with `simctl erase` before next test attempt.
+- **First action next session:** `simctl erase` the sim, boot fresh, run tests once. If still hangs, escalate to creating new iPhone 17 Pro sim on iOS 26.5 runtime.
+
 ---
 
 ## Documentation hygiene
