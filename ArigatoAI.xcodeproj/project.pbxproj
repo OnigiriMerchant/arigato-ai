@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6654348C6EEF4572AA40AFDB /* LeapSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C289E84C06B545368BD4E7E7 /* LeapSDK */; };
 		9248F09250F14F2A8C6806EA /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0CD61E73BC21433BAFBE87F8 /* WhisperKit */; };
 /* End PBXBuildFile section */
 
@@ -57,6 +58,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9248F09250F14F2A8C6806EA /* WhisperKit in Frameworks */,
+				6654348C6EEF4572AA40AFDB /* LeapSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +120,7 @@
 			name = ArigatoAI;
 			packageProductDependencies = (
 				0CD61E73BC21433BAFBE87F8 /* WhisperKit */,
+				C289E84C06B545368BD4E7E7 /* LeapSDK */,
 			);
 			productName = ArigatoAI;
 			productReference = F7E6601E2FAB83BA007B6076 /* ArigatoAI.app */;
@@ -203,6 +206,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
+				105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F7E6601F2FAB83BA007B6076 /* Products */;
@@ -591,6 +595,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Liquid4All/leap-ios";
+			requirement = {
+				kind = exactVersion;
+				version = 0.9.4;
+			};
+		};
 		8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
@@ -607,6 +619,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
 			productName = WhisperKit;
+		};
+		C289E84C06B545368BD4E7E7 /* LeapSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-ios" */;
+			productName = LeapSDK;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
