@@ -73,3 +73,9 @@ struct StartupErrorView: View {
 #Preview("Unknown error") {
     StartupErrorView(error: nil)
 }
+
+#Preview("LFM2 warmup failure") {
+    StartupErrorView(
+        error: TranslationError.warmupFailed("Canary inference timed out after 30s.")
+    )
+}

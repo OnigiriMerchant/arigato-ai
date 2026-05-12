@@ -49,14 +49,43 @@ struct ArigatoAIApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if let sharedModelContainer {
+            if let sharedModelContainer, startupError == nil {
                 ContentView()
                     .environment(bootstrapper)
                     .modelContainer(sharedModelContainer)
             } else {
-                StartupErrorView(error: bootstrapper.containerError)
+                StartupErrorView(error: startupError)
                     .environment(bootstrapper)
             }
         }
+    }
+
+    /// Selects which startup error (if any) to surface in
+    /// ``StartupErrorView``, in priority order:
+    ///
+    /// 1. SwiftData container construction error — terminal; without a
+    ///    container the rest of the app cannot run.
+    /// 2. Whisper loader failure — recording is the app's primary
+    ///    function; if ASR is unavailable the user cannot capture
+    ///    audio, so we treat this as terminal.
+    /// 3. LFM2 loader failure — translation is the app's secondary
+    ///    function but the post-handoff design treats both pipelines
+    ///    as load-bearing for the meeting use case. Surfacing the
+    ///    error at launch is honest about which capability the user
+    ///    will be missing.
+    ///
+    /// Returns `nil` when no startup error is present, in which case
+    /// the body renders ``ContentView``.
+    private var startupError: Error? {
+        if let containerError = bootstrapper.containerError {
+            return containerError
+        }
+        if case let .failed(error) = bootstrapper.loaderState {
+            return error
+        }
+        if case let .failed(error) = bootstrapper.lfm2LoaderState {
+            return error
+        }
+        return nil
     }
 }
