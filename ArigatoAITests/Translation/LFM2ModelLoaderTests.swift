@@ -298,9 +298,18 @@ struct LFM2ModelLoaderTests {
         let gate = LFM2ContinuationGate()
         let attempts = CallCounter()
         let engine = FakeModelRunner()
+        // The factory parks on the gate only for the *first* invocation
+        // (the load that will be cancelled). Subsequent invocations —
+        // the post-cancellation retry — return the engine immediately.
+        // ``LFM2ContinuationGate`` is single-shot, so a second `wait()`
+        // here would deadlock; V3's invariant is "cancellation does not
+        // strand the loader", not "the gate is reusable".
         let loader = LFM2ModelLoader(factory: { _, _ in
+            let isFirstCall = (attempts.value == 0)
             attempts.increment()
-            await gate.wait()
+            if isFirstCall {
+                await gate.wait()
+            }
             return engine
         })
 
