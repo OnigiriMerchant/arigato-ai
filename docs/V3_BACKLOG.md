@@ -280,6 +280,28 @@ Requires a different test mechanism than the current single-shot `LFM2Continuati
 
 **Trigger to revisit:** Before MVP 1 ships, OR if any real-world bug surfaces where the loader fails to recover after a cancelled load.
 
+### Swift Concurrency cancellation bridging — three-mechanism gotcha
+
+What: Three independent mechanisms in Swift Concurrency compound to make awaiter-cancellation-through-continuation a documented footgun. All three were involved in the V3 deadlock (resolved via Fix A in commit a49a93b).
+
+The three mechanisms:
+1. `await task.value` does NOT set up a cancellation handler — the awaiter's cancellation is not propagated to the inner task. See Swift Forums thread "Why doesn't `await task.value` set up a cancellation handler?" (forums.swift.org/t/57740).
+2. `Task.init` creates a new unstructured top-level task that does NOT inherit cancellation from its surrounding context. The new task starts uncancelled regardless of caller state.
+3. `withCheckedContinuation` does NOT honor task cancellation by design. A parked continuation remains parked unless explicitly resumed.
+
+Combined effect: if test or production code awaits an unstructured Task whose body parks on a plain continuation, cancelling the awaiter will NOT unblock the parked continuation.
+
+Pattern guidance for future code:
+- If a gate or continuation needs to honor awaiter cancellation, cancellation must be forwarded explicitly from the awaiter to the inner task (via `withTaskCancellationHandler` at the awaiter site that calls `task.cancel()` in its onCancel handler), AND the inner task's continuation must be cancellation-aware (via `withTaskCancellationHandler` wrapping `withCheckedContinuation`).
+- For test gates specifically: prefer test-only scaffolds that own the full bridging stack, rather than relying on the production loader's cancellation contract.
+- For production code: a documented A1-style coalescing contract (one cancellation should not cancel a shared load) is a strong argument AGAINST forwarding cancellation through to the inner task. Choose deliberately.
+
+Trigger to revisit: Anytime a future test or production code needs to bridge awaiter cancellation through an unstructured Task or continuation gate. Reference this entry before implementing.
+
+Cost to act on: Reading this entry. The pattern guidance is the deliverable.
+
+Related follow-up — add a test that genuinely exercises mid-load cancellation in LFM2ModelLoader. The renamed V3 test (commit a49a93b) no longer asserts cancellation propagation; it only asserts factory-park-and-release semantics. Genuine mid-load cancellation testing requires a different test mechanism — likely a custom test scaffold that wraps task.value in withTaskCancellationHandler at the test layer. Trigger: before MVP 1 ships, OR if any real-world bug surfaces where the loader fails to recover after a cancelled load. Cost: ~1-2 hours.
+
 ### LanguageRouter routedTranscripts() multiplex
 
 **What:** routedTranscripts() currently returns a dead stream. SEAM-1 surface (a) was supposed to deliver a RoutedTranscript stream consumable independently of the Transcribing protocol's TranscriptSegment surface. Current implementation does not multiplex; calling routedTranscripts() returns a stream that finishes immediately.
@@ -617,16 +639,35 @@ Updated: May 10 2026
 - **Trigger to revisit:** when Apple ships a fix (watch Xcode release notes), or when XcodeBuildMCP adds a first-class flag for this.
 
 ### Re-enable Thread Performance Checker and Main Thread Checker
-- **What:** After Xcode 26.x fixes the `testmanagerd` deadlock, re-enable both runtime checkers via `xcodebuild test` invocation (remove `OS_ACTIVITY_DT_MODE=disable` env var from XcodeBuildMCP `test_sim` calls).
-- **Why deferred:** workaround for documented Xcode 26 simulator hang (preceding V3 entry).
-- **Trigger to revisit:**
-  - (a) Apple ships an Xcode patch with release notes mentioning `testmanagerd` / thread checker fixes, OR
-  - (b) Monthly check — try a test run with checkers re-enabled, if tests complete cleanly, the bug is fixed.
-- **Steps when triggered:**
-  1. Tell Claude Code to drop the `OS_ACTIVITY_DT_MODE=disable` env var from the next `test_sim` invocation.
-  2. Run the full test suite once.
-  3. If it completes cleanly within 3 minutes, the bug is fixed — update CLAUDE.md to remove the workaround note.
-  4. If it hangs again, restore the env var, defer another month.
+
+What: During Phase 5 Group A and Group B test debugging, Thread Performance Checker (TPC) and Main Thread Checker (MTC) were disabled via xcodebuild config as a workaround for what was diagnosed as "Xcode 26 testmanagerd hang." The actual root cause was a Swift Concurrency deadlock in LFM2ModelLoaderTests V3 (LFM2ContinuationGate + unstructured Task.init + non-cancellable continuation). The testmanagerd workaround was masking symptoms but not the underlying issue. With V3 fixed via Fix A (commit a49a93b), the workaround may no longer be needed.
+
+Why deferred: Re-enabling immediately risks re-introducing unrelated diagnostic noise into an otherwise green test suite.
+
+Trigger to revisit: Phase 5 Group C kickoff, before Group C implementation begins.
+
+Investigation path:
+- Re-enable TPC + MTC in xcodebuild config
+- Run full test suite — if clean, the workaround was never needed
+- If new failures appear: investigate each. Real diagnostic signals were being suppressed.
+- Also review Group A test logs — possible the original "testmanagerd hang" diagnosis was a similar Task-cancellation issue.
+
+Cost estimate: ~30-60 min.
+
+### `xcode` MCP server failing on Claude Code startup
+
+What: User MCP `xcode` (separate from `XcodeBuildMCP`) fails to start every Claude Code session. Shows as "1 MCP server failed · /mcp". Running `/mcp` confirms `xcode` is the failing server. XcodeBuildMCP (the one we actively use) is healthy at 24 tools.
+
+Why deferred: Functionally harmless. `xcode` MCP appears unused.
+
+Trigger to revisit: Phase 5 Group C kickoff. Bundle as MCP/tooling hygiene with the Thread Checker re-enable.
+
+Investigation path:
+- Run `claude --debug` to capture startup errors for the `xcode` server
+- Check ~/.claude.json for what `xcode` MCP runs
+- Decide: fix or remove
+
+Cost estimate: ~15-30 min.
 
 ### Group B test execution blocked by Xcode 26 testmanagerd hang
 - **What:** Phase 5 Group B test suite execution was blocked 2026-05-12 by the documented Xcode 26 simulator regression. Tests compile and are discovered (167 total, matches plan) but cannot execute — `testmanagerd` deadlocks with the test runner on iPhone 17 Pro sim.

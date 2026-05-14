@@ -148,6 +148,10 @@ Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-f
 **Phase 5 kickoff:**
 - #13 /dispatch-research slash command
 
+**Phase 5 Group C kickoff:**
+- #49 Re-enable Thread Performance Checker and Main Thread Checker — verify post-V3-fix that the workaround is no longer needed
+- #50 `xcode` MCP server failing on Claude Code startup — bundle with #49 as MCP/tooling hygiene before Group C
+
 **Phase 6 kickoff:**
 - #46 Local-only diagnostics for performance tuning — natural bundle with SwiftData persistence work
 
@@ -163,6 +167,7 @@ Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-f
 - #26 LanguageRouter scheduling-assumption violation test
 - #34 JP-WER head-to-head benchmark — only if MVP 1 quality disappoints
 - #38 TranscriptionActorTests withLock unused-result warning
+- #48 LFM2ModelLoader mid-load cancellation violation test — V3 was renamed in commit a49a93b to honestly reflect that it no longer asserts cancellation propagation; replacement test still owed
 
 **MVP 1 acceptance gate:**
 - #10 App Store submission — 30 days personal use + 3 colleagues independently asking
@@ -190,6 +195,9 @@ Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-f
 - #23 Subagent MCP-inheritance — auto-revalidation when Anthropic ships fix
 - #45 Liquid AI / LFM2 model updates monitoring — weekly brief watches for variants, ENJP-MT releases, LEAP SDK changes
 - #47 LFM2 cache strategy — revisit after diagnostics (#46) ships AND 5+ real meetings show >50% within-meeting cache hit rate
+
+**Reference material — read before related work:**
+- #51 Swift Concurrency cancellation bridging — three-mechanism gotcha. Read before writing any test gate or production code that bridges awaiter cancellation through unstructured Task or continuation. Pattern guidance is the deliverable; no action required until a future bridging surface needs it.
 
 ## Agent stack
 
