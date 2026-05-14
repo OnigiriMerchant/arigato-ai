@@ -284,26 +284,38 @@ struct LFM2ModelLoaderTests {
         #expect(attempts.value == 2)
     }
 
-    /// **V3 — Cancellation-recovery violation test.** Drives one
-    /// caller, cancels the caller's outer task while the load is
-    /// in-flight, and verifies that a subsequent
-    /// ``LFM2ModelLoader/loadIfNeeded(quantization:)`` call still
-    /// succeeds. Violation: cancellation of one caller must not strand
-    /// the loader or poison the engine cache. Note: this test does
-    /// **not** assert specific cancellation propagation semantics —
-    /// it only asserts that the loader recovers cleanly so that
-    /// fresh callers receive an engine.
-    @Test("V3 loadIfNeeded after cancellation does not strand the loader")
-    func loadIfNeeded_afterCancellation_succeedsOnRetry() async throws {
+    /// **V3 — Factory-release recovery test.** Drives one caller into
+    /// the in-flight load, cancels that caller's outer task, releases
+    /// the factory so the in-flight load completes, and verifies that
+    /// a subsequent ``LFM2ModelLoader/loadIfNeeded(quantization:)``
+    /// call yields an engine. Violation: a load that completes after
+    /// one caller has cancelled must not strand the loader or poison
+    /// the engine cache.
+    ///
+    /// **Cancellation is functionally a no-op in this test.**
+    /// ``Task/init(priority:operation:)`` creates a new top-level
+    /// unstructured task that does **not** inherit awaiter
+    /// cancellation, and ``Task/value`` does **not** propagate the
+    /// awaiter's cancellation into the awaited task. The
+    /// ``cancellingTask.cancel()`` call below marks ``cancellingTask``
+    /// as cancelled but does not interrupt the in-flight factory work;
+    /// the load proceeds to completion once the gate releases. This
+    /// test therefore exercises factory-park-and-release semantics, not
+    /// cancellation propagation. A test that genuinely exercises
+    /// mid-load cancellation is tracked in ``docs/V3_BACKLOG.md``.
+    @Test("V3 loadIfNeeded after factory release completes engine retrieval for fresh callers")
+    func loadIfNeeded_afterFactoryRelease_completesEngineRetrievalForFreshCallers() async throws {
         let gate = LFM2ContinuationGate()
         let attempts = CallCounter()
         let engine = FakeModelRunner()
-        // The factory parks on the gate only for the *first* invocation
-        // (the load that will be cancelled). Subsequent invocations —
-        // the post-cancellation retry — return the engine immediately.
+        // The factory parks on the gate only for the *first* invocation.
         // ``LFM2ContinuationGate`` is single-shot, so a second `wait()`
-        // here would deadlock; V3's invariant is "cancellation does not
-        // strand the loader", not "the gate is reusable".
+        // here would deadlock. The ``isFirstCall`` guard is defensive
+        // scaffolding: with Fix A's ordering (release-before-await) the
+        // load completes successfully and the retry hits the cached
+        // engine without re-invoking the factory, so in the happy path
+        // this branch is never re-entered. Kept so a future restructure
+        // that re-invokes the factory cannot deadlock on the spent gate.
         let loader = LFM2ModelLoader(factory: { _, _ in
             let isFirstCall = (attempts.value == 0)
             attempts.increment()
@@ -318,19 +330,23 @@ struct LFM2ModelLoaderTests {
         }
         try? await Task.sleep(for: .milliseconds(50))
         cancellingTask.cancel()
+        // Release BEFORE awaiting ``cancellingTask.value``. ``Task.value``
+        // does not honor the awaiter's cancellation, and the inner
+        // ``Task.init`` spawned inside ``LFM2ModelLoader.loadIfNeeded``
+        // is a fresh top-level task that does not inherit cancellation
+        // from ``cancellingTask``. The only way to unblock the in-flight
+        // load is to release the factory directly; awaiting before
+        // releasing would deadlock V3.
+        gate.release()
         _ = try? await cancellingTask.value
 
-        gate.release()
-
-        // After the in-flight work completes (regardless of whether
-        // the cancellation propagated into the actor body), a fresh
-        // call must yield an engine. The retry may re-invoke the
-        // factory if the cancellation poisoned the in-flight task —
-        // either way the loader must not be stranded.
+        // The in-flight load completed successfully; the loader cached
+        // the engine. A fresh call returns that cached engine without
+        // re-invoking the factory.
         let result = try await loader.loadIfNeeded(quantization: "Q5_K_M")
         let fake = result as? FakeModelRunner
         #expect(fake === engine)
-        #expect(attempts.value >= 1)
+        #expect(attempts.value == 1)
     }
 
     /// **V2 — A2 violation test.** Calls ``LFM2ModelLoader/unload()``

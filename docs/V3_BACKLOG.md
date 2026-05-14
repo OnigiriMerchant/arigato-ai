@@ -263,6 +263,23 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 **Trigger to revisit:** Before MVP 1 ships, OR if any router scheduling regression is observed.
 
+### LFM2ModelLoader mid-load cancellation violation test
+
+**What:** `LFM2ModelLoader.loadIfNeeded(quantization:)`'s doc-comment claims a cancellation contract: "if a caller's outer task is cancelled while it awaits the in-flight load, only that caller's await throws `CancellationError`. The shared in-flight task continues so other coalescing callers still receive their result." No test currently exercises this contract. V3 (`loadIfNeeded_afterFactoryRelease_completesEngineRetrievalForFreshCallers`) is a factory-park-and-release test — cancellation is functionally a no-op there because `Task.init` inside the actor body is a fresh top-level task that does not inherit awaiter cancellation, and `await task.value` does not propagate awaiter cancellation either. So V3 verifies post-load recovery semantics, not the documented cancellation behaviour.
+
+**Required test:** drive a caller into the in-flight load, cancel that caller, and assert:
+1. The cancelled caller's `await` throws `CancellationError` (or completes per the loader's actual contract — verify against current code, not the stale doc-comment).
+2. A second coalescing caller already bound to the in-flight load still receives the engine.
+3. The loader's state machine ends in `.loaded(engine)` (not `.failed(_:)`).
+
+Requires a different test mechanism than the current single-shot `LFM2ContinuationGate`. Likely shape: a test-only scaffold that wraps `task.value` in `withTaskCancellationHandler` at the test layer (so the test can observe and forward cancellation deterministically), paired with a cancellation-aware gate (`withTaskCancellationHandler` wrapping `withCheckedContinuation`). Alternative shape: change `LFM2ModelLoader.loadIfNeeded` itself to forward awaiter cancellation to the inner `Task` — but this changes the documented A1 coalescing contract (one caller's cancellation would cancel the shared load), so the contract has to be re-decided first.
+
+**Why deferred:** Group B's V3 was meant to cover this and didn't. Adding a replacement test is non-trivial (needs new test scaffolding, plus a decision on whether the loader's documented cancellation contract should change). Group B is otherwise green; the gap is documented in the V3 doc-comment so future readers understand what V3 actually asserts.
+
+**Cost estimate:** ~1–2 hours. Includes deciding whether the production loader's cancellation contract should change, designing the test scaffold, writing the test, and updating `LFM2ModelLoader.loadIfNeeded`'s doc-comment to either point at the new test or document a revised contract.
+
+**Trigger to revisit:** Before MVP 1 ships, OR if any real-world bug surfaces where the loader fails to recover after a cancelled load.
+
 ### LanguageRouter routedTranscripts() multiplex
 
 **What:** routedTranscripts() currently returns a dead stream. SEAM-1 surface (a) was supposed to deliver a RoutedTranscript stream consumable independently of the Transcribing protocol's TranscriptSegment surface. Current implementation does not multiplex; calling routedTranscripts() returns a stream that finishes immediately.
