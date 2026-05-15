@@ -23,7 +23,7 @@ struct TranslationActorTests {
     /// `@unchecked Sendable` because every mutable field is guarded
     /// by an `OSAllocatedUnfairLock` — concurrent calls are safe for
     /// the test's purposes.
-    fileprivate final class FakeLFM2Engine: LFM2Engine, @unchecked Sendable {
+    fileprivate final nonisolated class FakeLFM2Engine: LFM2Engine, @unchecked Sendable {
         /// Records every `translate()` call's `userText` in arrival
         /// order. Tests assert order against this.
         private let calls = OSAllocatedUnfairLock<[String]>(initialState: [])
