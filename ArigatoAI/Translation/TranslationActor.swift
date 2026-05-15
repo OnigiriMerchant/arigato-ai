@@ -595,6 +595,14 @@ actor TranslationActor {
         }
         guard let session, session.token == sessionToken else { return }
 
+        // Capture the source segment ID once. Reaching the fallback `UUID()`
+        // path is structurally unreachable today (every non-empty
+        // `SentenceBuffer.append` records `segment.id`) but if the fallback
+        // ever fires, both the `.partialChunk` and `.completed` events for
+        // this sentence MUST carry the same UUID — otherwise downstream
+        // provenance grouping silently breaks.
+        let resolvedSourceSegmentID = sentence.sourceSegmentIDs.first ?? UUID()
+
         let task = Task<Void, Never> { [weak self] in
             var accumulated = ""
             let stream = engine.translate(userText: sentence.text, direction: direction)
@@ -613,13 +621,13 @@ actor TranslationActor {
                             accumulated += delta
                             await self?.yieldPartialChunk(
                                 delta: delta,
-                                sourceSegmentID: sentence.sourceSegmentIDs.first ?? UUID(),
+                                sourceSegmentID: resolvedSourceSegmentID,
                                 sessionToken: sessionToken
                             )
                         }
                     case .complete:
                         let translated = TranslatedSegment(
-                            sourceSegmentID: sentence.sourceSegmentIDs.first ?? UUID(),
+                            sourceSegmentID: resolvedSourceSegmentID,
                             sourceText: sentence.text,
                             translatedText: accumulated.isEmpty ? sentence.text : accumulated,
                             direction: direction,
