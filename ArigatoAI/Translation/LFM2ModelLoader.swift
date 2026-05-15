@@ -181,26 +181,59 @@ public typealias LFM2EngineFactory = @Sendable (
 /// next to each other in the type system. Mirrors Phase 4's
 /// ``WhisperClientFactory`` shape.
 ///
-/// **Cache strategy.** ``LeapSDK.Leap/load(model:quantization:options:downloadProgressHandler:)``
-/// is called with `options: nil`. Phase 5 Decision 4 ("in-memory only,
-/// no persistent disk cache") cannot be honored literally in LEAP iOS
-/// SDK v0.9.4 because ``LeapSDK.LiquidCacheOptions`` is disk-only and
-/// has no in-memory variant. Passing `nil` disables the KV cache
-/// entirely, which is acceptable for LFM2's single-turn translation
-/// semantics: each ``LeapSDK.Conversation`` is throwaway per direction,
-/// so KV-cache hits across calls are inherently near zero. The D4
-/// strategic re-walk happens before Group C; Group B is unaffected.
+/// **Cache strategy** (Phase 5 Decision 4, revised 2026-05-15 after
+/// xcframework inspection — see PHASE_5_HANDOFF.md commit `842c156`):
+/// ``LeapSDK.Leap/load(model:quantization:options:downloadProgressHandler:)``
+/// is called with a ``LeapSDK.LiquidCacheOptions`` rooted under iOS's
+/// user Caches directory (``LFM2CachePathResolver/resolve()``) with
+/// `maxEntries: 1000`. The originally-locked "in-memory only" framing
+/// was impossible to implement: ``LeapSDK.LiquidCacheOptions`` in LEAP
+/// iOS SDK v0.9.4 is a struct requiring both `path: String` and
+/// `maxEntries: Int` — no `.inMemory` case exists. Privacy stance is
+/// preserved at the architecture level because iOS's Caches directory
+/// is NOT iCloud-backed and is OS-managed (auto-purged under storage
+/// pressure). Performance > privacy on-device per revised D4 reasoning:
+/// capture any prompt-cache speedup the SDK delivers; flipping back to
+/// `cacheOptions: nil` is one-line trivial if Phase 6 diagnostics show
+/// the cache is irrelevant. V3 entry "LFM2 prompt cache effectiveness
+/// benchmark" tracks that revisit.
+///
+/// **What happens if cache path resolution throws.** ``LFM2CachePathResolver/resolve()``
+/// throws ``TranslationError/cachePathResolutionFailed(_:)`` only when
+/// `FileManager.urls(for: .cachesDirectory, in: .userDomainMask)`
+/// returns an empty array, which the sandbox guarantees never happens
+/// on real iOS. If it ever does, the factory's `try` propagates the
+/// error to the loader, which wraps it in
+/// ``TranslationError/modelLoadFailed(_:)`` per its standard error path.
 public nonisolated enum LFM2ClientFactory {
+    /// The maximum number of prompt-cache entries retained on disk
+    /// before the SDK applies its internal eviction policy (undocumented
+    /// beyond this cap — see swiftinterface for v0.9.4). Tuned downward
+    /// or upward per the V3 entry "LFM2 prompt cache effectiveness
+    /// benchmark" once Phase 6 diagnostics produce real-meeting data.
+    public static let cacheMaxEntries: Int = 1000
+
     /// The production ``LFM2EngineFactory``. Constructs a real
     /// ``LeapSDK.ModelRunner`` via the GGUF manifest path
-    /// (``LeapSDK.Leap/load(model:quantization:options:downloadProgressHandler:)``)
-    /// and wraps it in ``LFM2EngineAdapter``. The model identifier is
-    /// pinned to `"lfm2-350m-enjp-mt"` per Phase 5 Decision 1.
+    /// (``LeapSDK.Leap/load(model:quantization:options:downloadProgressHandler:)``),
+    /// supplies a ``LeapSDK.LiquidCacheOptions`` rooted under iOS's user
+    /// Caches directory (see the type-level "Cache strategy" doc), and
+    /// wraps the resulting runner in ``LFM2EngineAdapter``. The model
+    /// identifier is pinned to `"lfm2-350m-enjp-mt"` per Phase 5
+    /// Decision 1.
     public static let make: LFM2EngineFactory = { quantization, progressHandler in
+        let cachePath = try LFM2CachePathResolver.resolve()
+        let cacheOptions = LiquidCacheOptions(
+            path: cachePath,
+            maxEntries: cacheMaxEntries
+        )
+        let manifestOptions = LiquidInferenceEngineManifestOptions(
+            cacheOptions: cacheOptions
+        )
         let runner = try await Leap.load(
             model: "lfm2-350m-enjp-mt",
             quantization: quantization,
-            options: nil,
+            options: manifestOptions,
             downloadProgressHandler: { progress, _ in
                 progressHandler?(progress)
             }
