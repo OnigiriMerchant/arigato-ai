@@ -654,20 +654,30 @@ Investigation path:
 
 Cost estimate: ~30-60 min.
 
-### `xcode` MCP server failing on Claude Code startup
+### `xcode` MCP server failing on Claude Code startup — RESOLVED 2026-05-15 (commit 0c25820)
 
-What: User MCP `xcode` (separate from `XcodeBuildMCP`) fails to start every Claude Code session. Shows as "1 MCP server failed · /mcp". Running `/mcp` confirms `xcode` is the failing server. XcodeBuildMCP (the one we actively use) is healthy at 24 tools.
+What: User MCP `xcode` (separate from `XcodeBuildMCP`) failed to start every Claude Code session. Diagnosis: Apple's `xcrun mcpbridge` requires Xcode.app to be running with a project open — it fatal-errors at startup otherwise (`mcpbridge/MCPBridge.swift:32: Fatal error: MCP_XCODE_PID environment variable not set and no running Xcode processes found`). Initial "appears unused" framing was incorrect — `xcode` MCP exposes `DocumentationSearch` (canonical Apple/Swift/iOS API source, semantic search over Apple Developer Docs + WWDC transcripts) and `RenderPreview` (SwiftUI preview snapshots without sim boot), neither replicated by XcodeBuildMCP.
 
-Why deferred: Functionally harmless. `xcode` MCP appears unused.
+Resolution: Hybrid — kept the MCP, added a SessionStart hook (`.claude/hooks/auto-open-xcode.sh`) that auto-launches Xcode with this project's `.xcodeproj` if not already running. Hook is idempotent and tolerant of failure. Wired in both `.claude/settings.json` (checked-in, shared) and `.claude/settings.local.json` (gitignored, local). CLAUDE.md updated with "Xcode MCP server dependency" section; doc-researcher / build-doctor / ui-reviewer prompts updated to reference DocumentationSearch as canonical Apple-side source.
 
-Trigger to revisit: Phase 5 Group C kickoff. Bundle as MCP/tooling hygiene with the Thread Checker re-enable.
+### xcode MCP SessionStart hook monitoring
 
-Investigation path:
-- Run `claude --debug` to capture startup errors for the `xcode` server
-- Check ~/.claude.json for what `xcode` MCP runs
-- Decide: fix or remove
+What: The auto-launch hook from V3 #50 resolution should be monitored for friction. Possible failure modes: (a) slow Xcode cold-start meaningfully delays Claude Code start (hook polls up to 10s + 2s settle); (b) hook fires for non-Arigato-AI sessions if Claude Code is launched outside this project root (should not happen — project-local `.claude/settings.json` only loads in this CWD, but verify); (c) the polling interval is wrong for some workflows (always too long, or not long enough so mcpbridge still races); (d) Xcode auto-update is in progress and the hook silently times out; (e) hook script path resolution breaks if `.claude/hooks/` is moved or symlinked.
 
-Cost estimate: ~15-30 min.
+Why deferred: Resolution just landed (2026-05-15). Need real session-start telemetry to know whether it's actually helpful or actively annoying.
+
+Trigger to revisit:
+- If Claude Code session start feels noticeably slower than before 2026-05-15
+- If `xcode` MCP failures resume (run `/mcp` to verify the hook is doing its job)
+- If the hook fires inappropriately (e.g., for sessions where Xcode shouldn't open)
+- If new Xcode version changes mcpbridge startup behavior
+
+Action when revisited:
+- Time the hook directly: `time .claude/hooks/auto-open-xcode.sh` — should be <1s when Xcode is running, <15s when launching cold
+- Inspect `claude --debug` output for the `xcode` MCP server during a representative session
+- Consider replacing the polling with an `osascript -e 'tell application "Xcode" to launch'` + AppleEvent wait, which may be more deterministic than pgrep polling
+
+Cost estimate: ~15 min.
 
 ### Group B test execution blocked by Xcode 26 testmanagerd hang
 - **What:** Phase 5 Group B test suite execution was blocked 2026-05-12 by the documented Xcode 26 simulator regression. Tests compile and are discovered (167 total, matches plan) but cannot execute — `testmanagerd` deadlocks with the test runner on iPhone 17 Pro sim.
