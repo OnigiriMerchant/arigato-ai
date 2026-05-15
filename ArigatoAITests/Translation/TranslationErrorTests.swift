@@ -27,10 +27,18 @@ struct TranslationErrorTests {
             .overlappingGenerationRejected,
             .unsupportedDirection(source: .ja, target: .ja),
             .warmupFailed("z"),
+            .cachePathResolutionFailed("w"),
         ]
         for error in cases {
             #expect(!error.localizedDescription.isEmpty)
         }
+    }
+
+    @Test("localizedDescription for cachePathResolutionFailed includes the detail string")
+    func localizedDescription_cachePathResolutionFailed_includesDetail() {
+        let error = TranslationError.cachePathResolutionFailed("urls returned empty")
+        let description = error.localizedDescription
+        #expect(description.contains("urls returned empty"))
     }
 
     @Test("Equatable: same case with same detail is equal")
@@ -47,6 +55,7 @@ struct TranslationErrorTests {
             TranslationError.overlappingGenerationRejected
                 == TranslationError.overlappingGenerationRejected
         )
+        #expect(TranslationError.cachePathResolutionFailed("x") == TranslationError.cachePathResolutionFailed("x"))
     }
 
     @Test("Equatable: same case with different detail is not equal")
@@ -58,6 +67,7 @@ struct TranslationErrorTests {
             TranslationError.unsupportedDirection(source: .ja, target: .ja)
                 != TranslationError.unsupportedDirection(source: .en, target: .en)
         )
+        #expect(TranslationError.cachePathResolutionFailed("x") != TranslationError.cachePathResolutionFailed("y"))
     }
 
     @Test("TranslationError can cross an actor boundary by throw")

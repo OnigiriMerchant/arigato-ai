@@ -44,6 +44,14 @@ public nonisolated enum TranslationError: Error, Sendable, Equatable {
     /// Warmup completed the load step but the post-load dummy inference
     /// failed. The associated string carries the underlying detail.
     case warmupFailed(String)
+
+    /// The LFM2 cache directory path could not be resolved from the OS Caches
+    /// directory. In practice this should never fire on a sandboxed iOS process
+    /// — `FileManager.urls(for: .cachesDirectory, in: .userDomainMask)` always
+    /// returns at least one URL — but the explicit case avoids a force-unwrap
+    /// in the resolver and gives the caller a typed error to react to. The
+    /// associated string carries the underlying detail for diagnostics.
+    case cachePathResolutionFailed(String)
 }
 
 extension TranslationError: LocalizedError {
@@ -62,6 +70,8 @@ extension TranslationError: LocalizedError {
             return "Unsupported translation direction: \(source.rawValue) to \(target.rawValue)."
         case let .warmupFailed(detail):
             return "LFM2 warmup failed: \(detail)"
+        case let .cachePathResolutionFailed(detail):
+            return "Failed to resolve LFM2 cache directory path: \(detail)"
         }
     }
 }
