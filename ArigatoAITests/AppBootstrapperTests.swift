@@ -57,6 +57,18 @@ private final class FakeModelRunner: LFM2Engine, @unchecked Sendable {
         }
     }
 
+    /// Stub implementation for Group C's new protocol requirement. Returns an
+    /// empty stream that finishes immediately — `AppBootstrapperTests` never
+    /// exercises the translation path, so the stub does not need a
+    /// configurable hook. Group C's `TranslationActor` tests (Steps 5–8)
+    /// inject a different fake (`FakeLFM2Engine`) with real configurable
+    /// translate behavior.
+    func translate(userText _: String, direction _: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
     var directionsCalled: [TranslationDirection] {
         lock.withLock { $0.directionsCalled }
     }

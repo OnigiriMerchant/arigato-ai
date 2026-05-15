@@ -103,6 +103,41 @@ public protocol LFM2Engine: Sendable {
     /// - Throws: ``TranslationError/warmupFailed(_:)`` wrapping any
     ///   underlying SDK error.
     func warmupCanary(direction: TranslationDirection) async throws
+
+    /// Streams an LFM2 translation of `userText` in the requested
+    /// `direction`.
+    ///
+    /// **Scheduling assumption.** Conformers serialize translation
+    /// calls per instance: concurrent calls to this method on the same
+    /// engine instance result in undefined ordering. The actor owning
+    /// the engine (``LFM2ModelLoader`` for warmup; the Group C
+    /// ``TranslationActor`` for production translation) is responsible
+    /// for ensuring at most one call is in-flight at a time. The
+    /// production adapter (``LFM2EngineAdapter``) constructs a fresh
+    /// ``LeapSDK.Conversation`` per call so cross-call mutable state
+    /// from the SDK is avoided.
+    ///
+    /// **Cancellation.** The returned ``AsyncThrowingStream`` observes
+    /// cooperative task cancellation per Swift Concurrency semantics.
+    /// Group C Step 8 separately resolves the LEAP SDK's specific
+    /// cancellation behavior via doc-researcher before wiring
+    /// ``LeapSDK.GenerationHandler/stop()`` into ``TranslationActor``;
+    /// at the protocol level the contract is "respond to
+    /// `Task.cancel()` by finishing the stream — natural completion or
+    /// cancellation, the stream finishes either way".
+    ///
+    /// - Parameters:
+    ///   - userText: The source sentence to translate. Should be a
+    ///     single sentence; ``TranslationActor`` is responsible for
+    ///     sentence boundary detection upstream.
+    ///   - direction: The translation direction whose system prompt
+    ///     and generation parameters drive the inference.
+    /// - Returns: An ``AsyncThrowingStream`` of
+    ///   ``TranslationEngineEvent`` values. The stream yields zero or
+    ///   more ``TranslationEngineEvent/chunk(_:)`` events followed by
+    ///   exactly one ``TranslationEngineEvent/complete`` event and
+    ///   then finishes. On error the stream finishes by throwing.
+    func translate(userText: String, direction: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error>
 }
 
 /// Production adapter wrapping a real ``LeapSDK.ModelRunner`` instance.
@@ -150,6 +185,70 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
             }
         } catch {
             throw TranslationError.warmupFailed(error.localizedDescription)
+        }
+    }
+
+    /// Production translation surface: creates a fresh
+    /// ``LeapSDK.Conversation`` per call, drives
+    /// ``LeapSDK.Conversation/generateResponse(userTextMessage:generationOptions:)``
+    /// with ``TranslationGenerationParameters/recommended`` values, and
+    /// maps each ``LeapSDK.MessageResponse`` onto the
+    /// ``TranslationEngineEvent`` seam.
+    ///
+    /// Mapping rules:
+    /// - ``LeapSDK.MessageResponse/chunk(_:)`` → ``TranslationEngineEvent/chunk(_:)``
+    /// - ``LeapSDK.MessageResponse/complete(_:)`` → ``TranslationEngineEvent/complete``
+    /// - All other cases (`reasoningChunk`, `audioSample`, `functionCall`)
+    ///   are dropped per the seam's documented scope.
+    ///
+    /// Cancellation is cooperative: the continuation's `onTermination`
+    /// closure cancels the spawned task, which both unblocks the
+    /// `for try await` loop and lets the SDK stream finish naturally.
+    /// Group C Step 8 layers `LeapSDK.GenerationHandler/stop()` on top
+    /// of this via doc-researcher findings.
+    func translate(userText: String, direction: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task { [modelRunner] in
+                let conversation = modelRunner.createConversation(systemPrompt: direction.systemPrompt)
+                let recommended = TranslationGenerationParameters.recommended
+                let options = GenerationOptions(
+                    temperature: Float(recommended.temperature),
+                    topP: Float(recommended.topP),
+                    minP: Float(recommended.minP),
+                    repetitionPenalty: Float(recommended.repetitionPenalty)
+                )
+                do {
+                    let stream = conversation.generateResponse(
+                        userTextMessage: userText,
+                        generationOptions: options
+                    )
+                    for try await response in stream {
+                        if Task.isCancelled { break }
+                        // Map SDK MessageResponse → seam event. Case names
+                        // verified against arm64-apple-ios-simulator.swiftinterface
+                        // (MessageResponse declared with cases .chunk, .reasoningChunk,
+                        // .audioSample, .complete, .functionCall). Only .chunk and
+                        // .complete are surfaced; other cases are dropped per the
+                        // seam's documented scope.
+                        switch response {
+                        case let .chunk(text):
+                            continuation.yield(.chunk(text))
+                        case .complete:
+                            continuation.yield(.complete)
+                        default:
+                            // reasoningChunk / audioSample / functionCall:
+                            // dropped intentionally.
+                            continue
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
     }
 }
