@@ -785,4 +785,77 @@ struct TranslationActorTests {
         #expect(completed.count == 1)
         #expect(completed.first?.translatedText == "SECOND")
     }
+
+    // MARK: - Mixed-punctuation source within one direction call
+
+    @Test("translate: Japanese sentence followed by English sentence — both flush within one direction call")
+    func translate_japaneseSentenceFollowedByEnglishSentence_bothFlushed() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureChunks(["TRANSLATED_JP"], for: "こんにちは。")
+        fake.configureChunks(["TRANSLATED_EN"], for: " Hello.")
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .jaToEn)
+
+        // Per the protocol contract, direction is FIXED per translate() call.
+        // This test asserts the actor tolerates mixed-punctuation source text
+        // *within a single direction call* — the per-line direction-switching
+        // gate is the integration layer's responsibility (Group D).
+        continuation.yield(Self.segment(
+            text: "こんにちは。",
+            language: .ja
+        ))
+        continuation.yield(Self.segment(
+            text: " Hello.",
+            language: .en
+        ))
+        continuation.finish()
+
+        var completedTexts: [String] = []
+        for try await event in stream {
+            if case let .completed(translated) = event {
+                completedTexts.append(translated.translatedText)
+            }
+        }
+
+        #expect(completedTexts == ["TRANSLATED_JP", "TRANSLATED_EN"])
+    }
+
+    // MARK: - Exact-cap boundary semantics
+
+    @Test("translate: feeding exactly cap sentences accepts all — 21st is the first to drop")
+    func translate_sentenceAtExactCap_lastSentenceAccepted() async throws {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() }) // default .hang behavior
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments, direction: .enToJa)
+
+        let cap = TranslationActor.maxQueuedSentences
+
+        // Fence-post for .hang fake: sentence #1 pops to inflight via
+        // `dispatchNextSentenceIfIdle()` and hangs (never completes);
+        // sentences #2..#(cap+1) fill the pending queue to exactly cap;
+        // sentence #(cap+2) is the FIRST to hit the cap boundary and
+        // drop. Feeding cap+2 inputs in total pins down "exactly at
+        // cap accepts; one past cap drops exactly once" semantics,
+        // distinct from the GREEDY-UPSTREAM test's "exceeding cap by
+        // many".
+        //
+        // Expected: queue holds `cap` sentences; dropped count == 1
+        // (the last one to arrive, since drop-newest policy).
+        for i in 0 ..< (cap + 2) {
+            continuation.yield(Self.segment(text: "Sentence \(i)."))
+        }
+        continuation.finish()
+        await actor.awaitUpstreamDrained()
+
+        let queued = await actor.pendingSentenceCount()
+        let dropped = await actor.droppedNewestCount()
+        #expect(queued == cap)
+        #expect(dropped == 1)
+    }
 }
