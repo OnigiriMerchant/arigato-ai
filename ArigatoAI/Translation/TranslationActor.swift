@@ -361,16 +361,42 @@ actor TranslationActor {
         return stream
     }
 
-    /// Cancels in-flight translation, finishing the active stream
-    /// without throwing per the ``Translating/cancel()`` contract.
+    /// Cancels the current translation session.
     ///
-    /// Cancels the drain task and the timer task, finishes the
-    /// continuation normally, and clears the active session.
-    /// Pending queued sentences are discarded.
+    /// **Contract** (``Translating/cancel()``): after this method returns,
+    /// the current event stream finishes normally (NOT with
+    /// `CancellationError`); any queued segments are dropped without
+    /// delivery; the actor remains usable for subsequent
+    /// ``translate(segments:direction:)`` calls.
+    ///
+    /// **LEAP SDK cancellation semantics** (doc-researcher findings,
+    /// 2026-05-16): the maintainer documents `Task.cancel()` as the
+    /// canonical cancellation path for the `AsyncThrowingStream` variant
+    /// of `Conversation.generateResponse(...)`. Cancelling the
+    /// `inflightTask` (which owns the `for try await event in stream`
+    /// loop) cooperatively stops the underlying SDK generation. One
+    /// extra token may still arrive on the stream after cancellation is
+    /// signalled — ``startGeneration(sentence:direction:sessionToken:)``'s
+    /// loop guards against that with a `Task.isCancelled` check before
+    /// yielding any chunk.
+    ///
+    /// **Three task hierarchy**:
+    /// - `drainTask`: reads upstream `TranscriptSegment` stream. Cancel
+    ///   first so no new sentences enqueue.
+    /// - `inflightTask`: drives LFM2 generation for the current
+    ///   sentence. Cancel second so the SDK frees resources.
+    /// - `timerTask`: polls injected `Clock` for silence-timeout flushes.
+    ///   Cancel last; otherwise a pending tick may try to enqueue a
+    ///   stale sentence into a session that's about to be cleared.
+    ///
+    /// Idempotent. Calling `cancel()` against no-active-session is a
+    /// no-op.
     func cancel() async {
         guard let session else { return }
         session.drainTask?.cancel()
+        session.inflightTask?.cancel()
         session.timerTask?.cancel()
+        session.pendingSentences.removeAll()
         session.continuation.finish()
         self.session = nil
     }
@@ -501,34 +527,58 @@ actor TranslationActor {
 
     /// Drives one LFM2 translation for the supplied sentence + direction.
     ///
-    /// **Scheduling assumption.** The actor's isolation serialises
-    /// every method call against this engine instance. Conformers of
+    /// **Scheduling assumption.** The actor's isolation serialises every
+    /// method call against this engine instance. Conformers of
     /// ``LFM2Engine/translate(userText:direction:)`` document a
-    /// serial-per-conformer contract; this actor honors that contract
-    /// by guarding dispatch with `session.inflightTask == nil` in
-    /// ``dispatchNextSentenceIfIdle()``. A `LeapSDK.Conversation`
-    /// instance is created and consumed inside
-    /// ``LFM2EngineAdapter/translate(userText:direction:)``'s body; it
-    /// never escapes that scope and is never shared across
+    /// serial-per-conformer contract; this actor honors that contract by
+    /// guarding dispatch with `session.inflightTask == nil` in
+    /// ``dispatchNextSentenceIfIdle()``. A `Conversation` instance is
+    /// created and consumed inside `LFM2EngineAdapter.translate(...)`'s
+    /// body; it never escapes that scope and is never shared across
     /// ``TranslationActor`` calls.
     ///
-    /// **Violation behavior.** If the engine emits `.complete` with no
-    /// prior `.chunk` events — i.e. an empty translation — the
-    /// assembled text is empty. Per the ``TranslatedSegment/isFallback``
-    /// contract, the actor emits a ``TranslatedSegment`` whose
-    /// `translatedText` is the source sentence text and whose
-    /// `isFallback` flag is `true` (passthrough source text). This
-    /// honors the fallback discipline without throwing.
+    /// **Violation behavior (empty completion)**. If the engine emits
+    /// `.complete` with no prior `.chunk` events, the assembled text is
+    /// empty. The actor emits `TranslatedSegment(translatedText:
+    /// sentence.text, isFallback: true)` (passthrough source text).
     ///
-    /// If the engine throws mid-stream, the actor finishes the session
-    /// continuation with ``TranslationError/generationFailed(_:)``
-    /// wrapping the underlying message, clears the pending queue, and
-    /// cancels the inflight task. Step 8 separately wires
-    /// `LeapSDK.GenerationHandler.stop()` cancellation; at Step 7 the
-    /// dispatch path observes cooperative `Task.isCancelled` only.
+    /// **Violation behavior (error)**. If the engine throws a non-cancel
+    /// error mid-stream, the actor finishes the session continuation
+    /// with ``TranslationError/generationFailed(_:)`` wrapping the
+    /// underlying message, clears the pending queue, and drops the
+    /// session.
     ///
-    /// **Violation test.** `C-T-VIOLATION-SLOW-DOWNSTREAM` in
-    /// ``TranslationActorTests`` drives a slow downstream consumer
+    /// **Violation behavior (cancel-mid-generation)**. If the actor's
+    /// ``cancel()`` is called while this method's `Task` is iterating
+    /// the stream, `Task.cancel()` propagates into the SDK. The SDK's
+    /// cooperative cancellation **may emit one trailing `.chunk` event**
+    /// before the stream terminates (per Liquid AI docs, the engine
+    /// pauses between token emissions — one already-buffered token may
+    /// still drain). The loop guards against this with a
+    /// `Task.isCancelled` check before yielding any chunk: after the
+    /// actor's `cancel()` signals the task, no further events are
+    /// surfaced to the consumer. The stream typically terminates by
+    /// throwing `CancellationError`, which this method catches silently
+    /// and exits without finishing the continuation (the actor's
+    /// `cancel()` already did that). If the stream instead finishes
+    /// naturally with a stale event after cancel, the trailing
+    /// `if Task.isCancelled { return }` check after the loop catches
+    /// it.
+    ///
+    /// **Violation test**: `C-T-VIOLATION-CANCEL-MID-GENERATION` in
+    /// ``TranslationActorTests`` exercises this path — feeds 5
+    /// sentences, cancels mid-second-sentence, asserts the stream
+    /// finishes normally, the first sentence's `.completed` event is
+    /// delivered, and sentences 2–5 are abandoned.
+    ///
+    /// **V3 #51 (cancellation-bridging three-mechanism gotcha)** does
+    /// NOT apply here. The `AsyncThrowingStream` variant of
+    /// `Conversation.generateResponse(...)` returns no
+    /// `GenerationHandler`, so there is no "callback handle + Task"
+    /// dual-mechanism to coordinate. One mechanism: `Task.cancel()`.
+    ///
+    /// **Slow-downstream violation test**: `C-T-VIOLATION-SLOW-DOWNSTREAM`
+    /// in ``TranslationActorTests`` drives a slow downstream consumer
     /// against a fast upstream burst to assert that downstream stall
     /// does not affect upstream queueing or LFM2 generation, and that
     /// output ordering matches input ordering.
@@ -551,6 +601,11 @@ actor TranslationActor {
 
             do {
                 for try await event in stream {
+                    // LEAP SDK "at most one extra token" caveat: discard
+                    // any chunk that arrives after Task.cancel() has been
+                    // signalled. The SDK is cooperative — it pauses
+                    // between tokens, so one already-buffered token may
+                    // still drain after cancellation.
                     if Task.isCancelled { break }
                     switch event {
                     case let .chunk(delta):
@@ -575,8 +630,29 @@ actor TranslationActor {
                         await self?.yieldCompleted(translated, sessionToken: sessionToken)
                     }
                 }
+            } catch is CancellationError {
+                // Expected. The actor's cancel() called Task.cancel() on
+                // this task. The continuation has already been finished
+                // normally by cancel(); we simply exit. Do NOT call
+                // handleGenerationError — that wraps as
+                // TranslationError.generationFailed and finishes with an
+                // error, violating the Translating.cancel() contract
+                // ("CancellationError is not thrown").
+                return
             } catch {
                 await self?.handleGenerationError(error, sessionToken: sessionToken)
+                return
+            }
+
+            if Task.isCancelled {
+                // Stream finished naturally but a cancel raced ahead
+                // (LEAP SDK structural inference: cancellation may
+                // surface as a normal stream finish in some SDK
+                // versions, since GenerationFinishReason has no
+                // .cancelled case). Same semantics as the
+                // CancellationError catch above: silent exit, do NOT
+                // dispatch next sentence — the actor's cancel() already
+                // finished the continuation and cleared the session.
                 return
             }
 

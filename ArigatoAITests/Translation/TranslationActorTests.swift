@@ -665,4 +665,124 @@ struct TranslationActorTests {
         let actualOrder = receivedCompleted.map(\.translatedText)
         #expect(actualOrder == expectedOrder)
     }
+
+    // MARK: - Cancel-mid-generation (VIOLATION TEST — Step 8)
+
+    @Test("C-T-VIOLATION-CANCEL-MID-GENERATION: cancel mid-generation finishes stream normally and abandons rest")
+    func cancel_midGeneration_finishesStreamNormallyAndClearsQueue() async throws {
+        let fake = FakeLFM2Engine()
+        // Sentence 1: complete fast (one chunk + complete).
+        fake.configureChunks(["FIRST_TRANSLATED"], for: "First.")
+        // Sentence 2: slow — multiple chunks with delay so cancel can
+        // race ahead.
+        fake.configureChunks(
+            ["SECOND_chunk_a_", "SECOND_chunk_b_", "SECOND_chunk_c"],
+            for: "Second."
+        )
+        fake.configureChunkDelay(.milliseconds(100))
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        // Feed all 5 sentences in a burst — only Sentence 1 will complete
+        // before cancel; Sentence 2 starts and is interrupted; 3, 4, 5
+        // never start.
+        continuation.yield(Self.segment(text: "First."))
+        continuation.yield(Self.segment(text: "Second."))
+        continuation.yield(Self.segment(text: "Third."))
+        continuation.yield(Self.segment(text: "Fourth."))
+        continuation.yield(Self.segment(text: "Fifth."))
+
+        // Consume events; collect what arrives before cancel; then cancel
+        // mid-second-sentence.
+        var receivedCompleted: [TranslatedSegment] = []
+        var streamFinishedNormally = false
+        let consumerTask = Task<Void, Never> {
+            do {
+                for try await event in stream {
+                    if case let .completed(translated) = event {
+                        receivedCompleted.append(translated)
+                        // Cancel after the first completed event lands.
+                        if receivedCompleted.count == 1 {
+                            await actor.cancel()
+                        }
+                    }
+                }
+                streamFinishedNormally = true
+            } catch {
+                streamFinishedNormally = false
+            }
+        }
+
+        await consumerTask.value
+        continuation.finish() // Cleanup the AsyncStream upstream.
+
+        // Assertions:
+        // (1) Stream finished without throwing.
+        #expect(streamFinishedNormally)
+        // (2) The first completed event was delivered.
+        #expect(receivedCompleted.count == 1)
+        #expect(receivedCompleted.first?.translatedText == "FIRST_TRANSLATED")
+        // (3) Sentences 3, 4, 5 were never dispatched (they were in the
+        // queue when cancel cleared it). Sentence 2 was in-flight and
+        // abandoned. So no further .completed events surfaced.
+    }
+
+    // MARK: - Cancel idempotence
+
+    @Test("cancel: idempotent — safe to call twice")
+    func cancel_idempotent_safeToCallTwice() async throws {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments, direction: .enToJa)
+        continuation.finish()
+
+        await actor.cancel()
+        await actor.cancel() // Should NOT crash, throw, or otherwise misbehave.
+    }
+
+    @Test("cancel: before any translate is a no-op")
+    func cancel_beforeAnyTranslate_isNoOp() async {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
+        await actor.cancel() // No active session yet — should be a clean no-op.
+    }
+
+    // MARK: - Actor reusability after cancel
+
+    @Test("cancel: actor remains usable for subsequent translate calls")
+    func cancel_thenTranslateAgain_actorRemainsUsable() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureChunks(["FIRST"], for: "First.")
+        fake.configureChunks(["SECOND"], for: "Second.")
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        // First translate session — cancel before completion.
+        let (segments1, cont1) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments1, direction: .enToJa)
+        await actor.cancel()
+        cont1.finish()
+
+        // Second translate session — should complete normally.
+        let (segments2, cont2) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream2 = await actor.translate(segments: segments2, direction: .enToJa)
+        cont2.yield(Self.segment(text: "Second."))
+        cont2.finish()
+
+        var completed: [TranslatedSegment] = []
+        for try await event in stream2 {
+            if case let .completed(translated) = event {
+                completed.append(translated)
+            }
+        }
+
+        #expect(completed.count == 1)
+        #expect(completed.first?.translatedText == "SECOND")
+    }
 }
