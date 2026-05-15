@@ -632,27 +632,20 @@ Updated: May 10 2026
 - **Trigger to revisit:** next time a test run hangs or returns "Simulator device failed to launch" — OR opportunistically during the next swift-implementer.md / CLAUDE.md hygiene pass.
 - **Note:** bundles naturally with V3 entry on "swift-implementer false-GREEN reporting" above — same session, same group, both workflow-discipline gaps that surfaced in Phase 5 Group B.
 
-### Xcode 26 simulator test hang (documented regression)
-- **What:** Xcode 26.x + iPhone 17 Pro simulator + Thread Performance Checker enabled causes `testmanagerd` to deadlock with the test runner. Documented in Apple Dev Forums, CircleCI Discuss, GitHub Actions `runner-images` #13264. Reproduces in this project on Xcode 26.5 + iOS 26.4 sim.
-- **Workaround:** disable Thread Performance Checker at `xcodebuild` invocation time via environment variable `OS_ACTIVITY_DT_MODE=disable`. Pass via `XcodeBuildMCP test_sim`'s `testRunnerEnv: {"OS_ACTIVITY_DT_MODE": "disable"}` (the MCP tool auto-prefixes `TEST_RUNNER_` which Xcode's test runner converts back to the raw env var inside the test process). Do NOT attempt to edit the Xcode test scheme UI — saving a test plan corrupts the project state (verified 2026-05-12).
-- **The flag `-disable-thread-performance-checker` is NOT a valid xcodebuild flag** — attempted 2026-05-12 and xcodebuild rejected it. Use the env var path only.
-- **Trigger to revisit:** when Apple ships a fix (watch Xcode release notes), or when XcodeBuildMCP adds a first-class flag for this.
+### Xcode 26 simulator test hang (documented regression) — DISPUTED 2026-05-15
+- **Original claim:** Xcode 26.x + iPhone 17 Pro simulator + Thread Performance Checker enabled causes `testmanagerd` to deadlock with the test runner. Cited Apple Dev Forums, CircleCI Discuss, GitHub Actions `runner-images` #13264.
+- **2026-05-15 revisit:** Full 167-test suite ran clean in 62.5s (sequential, TPC + MTC enabled, NO `OS_ACTIVITY_DT_MODE` workaround) on Xcode 26.5 + iOS 26.4 sim. Log scan of the original 2026-05-13 "hang" log shows the run died at `LFM2ModelLoaderTests/V3 loadIfNeeded after cancellation does not strand the loader` — the V3 cancellation deadlock test, NOT a testmanagerd issue. The cited external reports of testmanagerd+TPC interaction may exist for other projects, but for THIS project the hang was the V3 deadlock all along (fixed in commit `a49a93b`). The workaround was never load-bearing here.
+- **Recommendation:** if a future test run hangs, do NOT default to `OS_ACTIVITY_DT_MODE=disable`. Capture the stuck test name first; the hang is more likely a project-side concurrency issue than a testmanagerd regression.
 
-### Re-enable Thread Performance Checker and Main Thread Checker
+### Re-enable Thread Performance Checker and Main Thread Checker — RESOLVED 2026-05-15
 
-What: During Phase 5 Group A and Group B test debugging, Thread Performance Checker (TPC) and Main Thread Checker (MTC) were disabled via xcodebuild config as a workaround for what was diagnosed as "Xcode 26 testmanagerd hang." The actual root cause was a Swift Concurrency deadlock in LFM2ModelLoaderTests V3 (LFM2ContinuationGate + unstructured Task.init + non-cancellable continuation). The testmanagerd workaround was masking symptoms but not the underlying issue. With V3 fixed via Fix A (commit a49a93b), the workaround may no longer be needed.
+What: During Phase 5 Group A and Group B test debugging, the team disabled TPC + MTC via `OS_ACTIVITY_DT_MODE=disable` passed at test invocation time, attributing test hangs to a documented Xcode 26 + TPC + testmanagerd regression. Post-Fix-A verification was needed to determine whether the workaround was load-bearing or masking the real V3 deadlock.
 
-Why deferred: Re-enabling immediately risks re-introducing unrelated diagnostic noise into an otherwise green test suite.
+Resolution (2026-05-15): Full 167/167 test suite passed clean in 62.5s with TPC + MTC at default (enabled), sequential mode (`-parallel-testing-enabled NO`), no env var workaround, on sim `930EC6EA-DA72-4A38-ABFF-583AD70B28D4` (iPhone 17 Pro Max, iOS 26.4). 0 failures, 0 warnings, 0 errors. The workaround was never persisted in any project file — it was passed ad-hoc as a `test_sim` parameter at each invocation — so "re-enabling" required no code change, just running tests without that parameter.
 
-Trigger to revisit: Phase 5 Group C kickoff, before Group C implementation begins.
+Bonus log scan finding: the 2026-05-13 hang log (`test_sim_2026-05-13T15-02-35-816Z_pid4566_c022a863.log`) shows execution stopping mid-test at `V3 loadIfNeeded after cancellation does not strand the loader` — the exact test where Fix A landed. Confirms the "testmanagerd hang" diagnosis was misattributed; the real cause was the V3 cancellation-bridging deadlock, not infrastructure.
 
-Investigation path:
-- Re-enable TPC + MTC in xcodebuild config
-- Run full test suite — if clean, the workaround was never needed
-- If new failures appear: investigate each. Real diagnostic signals were being suppressed.
-- Also review Group A test logs — possible the original "testmanagerd hang" diagnosis was a similar Task-cancellation issue.
-
-Cost estimate: ~30-60 min.
+Action: stop passing `testRunnerEnv: {"OS_ACTIVITY_DT_MODE": "disable"}` to `XcodeBuildMCP test_sim`. If a future hang appears, diagnose the stuck test first — do not reflexively re-apply the workaround.
 
 ### `xcode` MCP server failing on Claude Code startup — RESOLVED 2026-05-15 (commit 0c25820)
 
