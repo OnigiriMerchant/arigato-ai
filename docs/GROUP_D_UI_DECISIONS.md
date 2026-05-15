@@ -1,8 +1,8 @@
-# Group D UI Decisions — Working Intent
+# Group D UI Decisions — Locked Intent
 
-**Status:** Working intent captured during Phase 5 Group C walkthrough. NOT locked. Subject to revision after MVP 1 device testing in real meetings reveals what actually works vs what sounded good on paper.
+**Status:** Locked intent from the Phase 5 Group D strategic walkthrough (2026-05-16). These decisions feed directly into @feature-planner dispatch.
 
-**Use:** Input for the Group D strategic walkthrough. The walkthrough will expand each decision into concrete screen layouts, component shapes, and SwiftUI structure.
+Subject to revision after MVP 1 device testing in real meetings reveals what actually works vs what sounded good on paper.
 
 ---
 
@@ -16,69 +16,120 @@ This matches Apple's own pattern in Voice Memos, Music, Notes, and other first-p
 
 ---
 
-## Captured decisions
+## Locked decisions
 
-### 1. Transcript stays on screen after STOP
+### 1. Transcript layout — split top/bottom, timestamps for correlation
 
-The transcript view does NOT clear when the user taps STOP. Both Japanese (top) and English (bottom) panels remain visible and scrollable. The user can re-read what was just said or copy lines without losing visual context.
+Japanese transcript fills the top half of the screen. English translation fills the bottom half. Each half is its own independent scroll region. Sentence pairs are correlated via timestamps shown alongside text in both halves.
 
-**Rationale:** Wiping the screen on STOP would feel hostile. People glance back at meeting content to verify a key point or extract a quote.
+**Rejected alternatives:**
+- Interleaved sentence pairs (better for post-meeting review, worse for live glance)
+- Side-by-side columns (iPhone portrait too narrow for comfortable reading of either language)
 
-**Implementation note:** STOP halts the pipeline but does not unmount the transcript view. State stays in memory until "New Transcript" is tapped (decision #2 button morphing).
+**Rationale:** Primary use case is live meeting glance. Users look up for Japanese (source verification) or down for English (understanding). Timestamps let users mentally pair sentences when scrolling back.
 
-### 2. Button morphing across meeting states
+### 2. Scroll behavior — auto-follow at bottom, stay-put when scrolled up, unified return arrow
 
-The primary button morphs through meeting states rather than appearing/disappearing alongside other buttons. The user always has exactly one primary action available, plus contextually relevant secondary actions.
+When user is at the bottom of either half, new sentences scroll into view automatically.
+When user scrolls up to re-read past content, incoming sentences arrive in the data layer but the view does NOT yank back to the bottom.
+A unified "scroll to bottom" arrow appears whenever **either** half is scrolled up from bottom. Tapping the arrow smoothly scrolls **both** halves to the bottom simultaneously, resuming auto-follow.
+
+**Implementation note:** track scroll position per-half independently for "am I at bottom?" detection. Arrow visibility = OR across both halves. Arrow action = scroll both to bottom in a single coordinated animation.
+
+**Rationale:** Industry-standard pattern (iMessage, Slack, Discord). User control during scrollback + one-tap return to live.
+
+### 3. Recording indicator — status badge with state + elapsed time
+
+A status badge at the top of the active meeting view morphs through meeting states. The same badge slot shows different content based on state (parallel to button morphing in decision #4).
+
+| State | Badge content |
+|---|---|
+| Recording | `🔴 REC 03:42` (red dot pulses, timer updates every second) |
+| Paused | `⏸ PAUSED 03:42` (timer frozen, no pulse) |
+| Ended | `■ 50:12` (final duration, no pulse) |
+
+**Visual design:** integrates with the final UI theme of the app — colors, font, padding all match the broader visual system. Not a standalone "stamp" but a coherent component.
+
+**Rationale:** Combines state + elapsed time in one element. Glanceable. Battery cost negligible (text update once per second). Pulse cue maintains the iOS "live recording" affordance users expect.
+
+**Rejected alternatives:**
+- Pulsing dot only (no elapsed time, less informative)
+- Live waveform (eats screen space, battery cost, visual noise)
+
+### 4. Button morphing across meeting states
+
+The primary button morphs through meeting states. The user always has exactly one primary action available, plus contextually relevant secondary actions.
 
 | Meeting state | Primary button | Secondary button | Notes |
 |---|---|---|---|
 | Idle (first launch / after "New Transcript") | START | — | Clean slate, only one possible action |
 | Recording | PAUSE | STOP | Two valid actions: pause for break, or end meeting |
 | Paused | RESUME | STOP | Two valid actions: continue same session, or end meeting |
-| Ended (post-STOP) | NEW TRANSCRIPT | (Export icon — see decision #4) | Meeting is done; the only forward action is starting a new one |
+| Ended (post-STOP) | NEW TRANSCRIPT | Share icon (top-right) | Meeting is done; the only forward action is starting a new one |
 
 **Key observations:**
 - The same physical button position morphs label and action based on state.
-- STOP only exists during Recording and Paused states. After the meeting ends, STOP would be meaningless — it's replaced by NEW TRANSCRIPT.
-- You can't press STOP twice — by design, STOP disappears the moment it's tapped.
+- STOP only exists during Recording and Paused states. After the meeting ends, STOP is replaced by NEW TRANSCRIPT.
+- You can't press STOP twice — STOP disappears the moment it's tapped.
 - NEW TRANSCRIPT only exists post-STOP. Tapping it clears the transcript view, transitions to Idle state, and the button morphs back to START.
 
-**Rationale:** Cleaner screen, fewer visual elements competing for attention, and prevents a class of double-tap bugs (e.g., two cancel paths triggered by rapid STOP taps).
+### 5. Transcript stays on screen after STOP
 
-### 3. Auto-save continuously during meetings
+The transcript view does NOT clear when the user taps STOP. Both Japanese (top) and English (bottom) panels remain visible and scrollable. The user can re-read content or initiate export without losing visual context.
 
-Transcripts auto-save to SwiftData on every sentence as it's translated. NOT on STOP only. NOT on user action. Continuous incremental save.
+**Implementation note:** STOP halts the pipeline but does not unmount the transcript view. State stays in memory until "New Transcript" is tapped (button morphing in decision #4).
 
-**Rationale:** App crashes happen. iOS backgrounds apps. Phone calls interrupt. A 1-hour meeting transcript should never vanish because of an environmental failure. SwiftData incremental writes are cheap.
+### 6. Auto-save continuously to SwiftData
+
+Transcripts auto-save to SwiftData on every sentence as it's translated. NOT on STOP only. Continuous incremental save.
+
+**Rationale:** App crashes happen. iOS backgrounds apps. Phone calls interrupt. A 1-hour meeting transcript should never vanish because of an environmental failure.
 
 **Trade-off flagged:** Every sentence triggers a SwiftData write. At ~150 sentences/hour, this should be negligible. Monitor for UI hitching during Phase 6 diagnostics; if observed, V3 entry to batch writes or move off main actor.
 
-### 4. Export — scoped to completed transcripts only (history flow)
+### 7. Pause/Resume — keep single meeting intact across breaks
 
-Export is NOT available during Recording or Paused states. The active meeting transcript view stays focused on capture, not sharing. Export becomes available once a transcript is complete, in three contexts:
+During active recording, tapping PAUSE:
+- Temporarily halts audio capture (Whisper stops receiving frames)
+- Any in-flight sentence finishes translating naturally (~sub-second)
+- Translation actor stays alive, just idle
+- Transcript view stays mounted
+- Meeting session record in SwiftData stays open
+- UI shows "PAUSED" indicator
+- Primary button morphs to RESUME
 
-**Context A — Ended state on active transcript view (just stopped):**
-A share icon appears in the top-right after STOP is tapped. User can share the just-ended transcript directly without first navigating to history. Convenient for the common case of "meeting ended, AirDrop to my Mac immediately."
+Tapping RESUME:
+- Restarts audio capture in the same meeting session
+- Transcript continues in the same SwiftData record
+- Primary button morphs back to PAUSE
 
-**Context B — Single transcript detail view (opened from history):**
-When a user opens a past transcript from history, the share icon is visible top-right of that view. Tap → iOS Share Sheet for that single transcript.
+**Technical note:** Pause is primarily a UI state. The translation actor pipelines don't need a special "paused" mode. The cancel mechanism (Group C Step 8) is reserved for STOP only.
 
-**Context C — History list view, multi-select mode:**
-Same UX as multi-select delete. User long-presses to enter multi-select mode, picks one or multiple transcripts, taps "Share" (alongside "Delete") in the bottom action bar. Triggers iOS Share Sheet with one or multiple files attached.
+### 8. Undo toast on STOP — 5-second window
 
-**Rationale:** Recording-state UI stays minimal — focused entirely on capture. Export lives in the completed-transcript flow where it semantically belongs. The user mental model is clean: capture is one mode, review/share/delete is another.
+When user taps STOP, a toast appears at the bottom of the screen: "Meeting ended. Tap to resume." with a 5-second visible window. Tap → meeting resumes as if STOP had not been pressed. After window expires → STOP is final, button morphs to NEW TRANSCRIPT.
 
-**Implementation note:** All three contexts use the same Share Sheet primitive (`UIActivityViewController` or SwiftUI `ShareLink`) with a different file payload (single file in A and B, multiple files in C).
+**Rationale:** Recovers from accidental taps without adding confirmation friction. Modern iOS pattern (Gmail uses this for sent mail). Auto-save (decision #6) is the real safety net.
 
-**TBD for Group D:**
-- Whether the Ended-state share icon (Context A) lives in the top bar (consistent with B and C) or as a secondary button next to NEW TRANSCRIPT
-- File naming convention for exported transcripts (e.g., `arigato-2026-05-16-1422.txt` vs user-customizable)
+**Implementation note:** Hold meeting in a "stoppable but not yet stopped" state for the undo window. During the window, the primary button immediately morphs to NEW TRANSCRIPT, but the toast offers recovery — cleaner under decision #4's "one primary action" principle than holding the previous button state.
 
-### 5. Export format — plain text or markdown, both languages, with timestamps
+### 9. Export — scoped to completed transcripts only
 
-Exported transcripts are plain text or markdown (final choice TBD in Group D, but NOT PDF for MVP 1). Both Japanese original and English translation included. Each sentence pair carries a timestamp.
+Export is NOT available during Recording or Paused states. Available in three contexts, all using iOS Share Sheet:
 
-**Example format (sequential):**
+**Context A — Ended state on active transcript view:** Share icon top-right after STOP. Share the just-ended transcript without navigating to history first.
+
+**Context B — Single transcript detail view (opened from history):** Share icon top-right of detail view.
+
+**Context C — History list multi-select mode:** Same UX as multi-select delete. Long-press to enter multi-select, pick one or multiple transcripts, "Share N" + "Delete N" actions in bottom action bar.
+
+**Implementation note:** All three contexts use SwiftUI's `ShareLink` or `UIActivityViewController` with the appropriate file payload.
+
+### 10. Export format — plain text or markdown, both languages, with timestamps
+
+Exported transcripts are plain text or markdown (final choice TBD during implementation). Both Japanese original and English translation included sequentially with timestamps.
+
+**Example format:**
 
 ```
 Arigato AI Transcript
@@ -91,98 +142,199 @@ Arigato AI Transcript
 [14:22:08] Let's review today's agenda.
 ```
 
-**Rationale:** Plain text is universal — opens in Gmail compose, Slack, Notes, Apple Mail, anywhere. Markdown is light formatting upgrade if useful. PDF adds dependencies and complexity for marginal MVP 1 benefit.
+**Trade-off flagged:** PDF export is a possible Phase 7 enhancement if users request formal documents. Plain text is universal — opens anywhere.
 
-**Trade-off flagged:** PDF export is a possible Phase 7 enhancement if users request formal documents. Until then, plain text/markdown.
+### 11. Navigation between active view and history — top-bar icon
 
-### 6. Multi-select delete AND share in transcript history
+History is accessed via a history icon (clock or list icon) in the top-right of the active meeting view (next to the export share icon if both are visible). Tap → push to history screen. Back button on history screen → return to active view.
 
-History view shows past meetings as a list (sort order, title format TBD). Long-press enters multi-select mode. User taps multiple meetings via checkboxes. Bottom action bar shows "Share N transcripts" AND "Delete N transcripts" (or icons for each).
+**Rationale:** Switching between active meeting and history is NOT frequent. Optimizing for the rare action with a permanent tab bar would cost vertical real estate that the split-screen transcript layout needs. Top-bar icon is iOS-native, costs zero permanent space.
 
-**Rationale:** Standard iOS pattern from Mail, Photos, Notes. Users already know it. SwiftData makes per-record delete trivial. Multi-select share is the natural pairing — same selection model, different action.
+**Critical behavior:** Active meeting keeps recording in the background when user navigates to history. TranslationActor and Whisper stay alive regardless of which view is on screen. Auto-save continues. When user returns, transcript has caught up.
 
-**TBD for Group D:**
-- Title format (manual entry, auto from first sentence, timestamp, or some hybrid)
-- Sort order (newest first, by duration, by language pair)
-- Whether single-tap delete (swipe-to-delete from list) is also offered alongside multi-select
-- Whether single-tap export (swipe-to-share) is offered alongside multi-select
+**Rejected alternatives:**
+- Tab bar (eats ~50pt permanent vertical space)
+- Hamburger menu (anti-pattern on iOS per Apple HIG)
 
-### 7. Pause/Resume — keep single meeting intact across breaks
+### 12. Meeting title generation
 
-During active recording, the secondary STOP button is paired with a primary PAUSE button. Tapping PAUSE:
+**MVP 1:** Auto-derived from first English sentence + timestamp.
+- Format: `[Day Time] — [First English sentence, truncated to ~40 chars]`
+- Example: `Sat 2:22 PM — Hello, everyone. Let's review today's...`
+- Fallback when no translation happened: just timestamp (`Sat 2:22 PM`)
+- No edit affordance in MVP 1 (deferred to keep MVP scope tight)
 
-- Temporarily halts audio capture (Whisper stops receiving frames)
-- Any in-flight sentence finishes translating naturally (~sub-second)
-- Translation actor stays alive, just idle
-- Transcript view stays mounted
-- Meeting session record in SwiftData stays open and continues to grow when resumed
-- UI shows "PAUSED" indicator
-- Primary button morphs from PAUSE to RESUME
+**Phase 6+:** Apple Foundation Models on-device summarization.
+- Run full English transcript through Foundation Models after STOP
+- Prompt: "Generate a concise 5-8 word title summarizing this meeting's main topic"
+- Replaces first-sentence title generation; storage shape unchanged
+- Clean upgrade path: only the title-generation function swaps
 
-Tapping RESUME:
-- Restarts audio capture in the same meeting session
-- Transcript continues in the same SwiftData record
-- Primary button morphs back to PAUSE
+**V3 entry to file:** "Migrate meeting title generation from first-sentence to Foundation Models summarization. Trigger: Phase 6 post-meeting cleanup features begin."
 
-**Rationale:** Long meetings have natural breaks — coffee, agenda transitions, side conversations. Without pause, the user either keeps recording during the break (wastes battery, fills transcript with noise) or taps STOP (creates two separate transcripts for one logical meeting). Pause is the right primitive for the "5-min break in a 1-hour meeting" use case.
+### 13. History — multi-select delete + share
 
-**Technical note:** Pause is primarily a UI state. The translation actor pipelines don't need a special "paused" mode — pause just means "stop feeding audio in." No queue drain, no state restoration logic needed. The cancel mechanism (Group C Step 8) is reserved for STOP only.
+History view shows past meetings as a list, sorted newest first. Long-press enters multi-select mode. User taps multiple meetings via checkboxes. Bottom action bar shows "Share N" + "Delete N" actions.
 
-**Trade-off flagged:** If a sentence is mid-translation when pause is tapped, that sentence completes before audio stops. Sub-second delay, acceptable. If a future enhancement needs to also pause inference of an in-flight sentence (rare), that would need pipeline changes — defer until a real use case surfaces.
+**Per-meeting card metadata to show in list:**
+- Title (decision #12)
+- Date + time
+- Duration (e.g., "50 min")
 
-### 8. Undo toast on STOP — 3-5 second window
+**Deferred to implementation:**
+- Sort options beyond newest-first (by duration, by language pair)
+- Single-tap swipe actions (swipe-to-delete, swipe-to-share) alongside multi-select
 
-When user taps STOP, a toast appears at the bottom of the screen: "Meeting ended. Tap to resume." with a 3-5 second visible window. If the user taps the toast, the meeting resumes as if STOP had not been pressed (button morphs back to PAUSE+STOP for Recording state). After the window expires, the toast dismisses and STOP is final — the button morphs to NEW TRANSCRIPT.
+### 14. History search — debounced, full-content, filter-in-place
 
-**Rationale:** Recovers from genuine accidental taps without adding confirmation friction to every intentional STOP. Modern iOS pattern (Gmail uses this for sent mail). Auto-save (decision #3) is the real safety net — even if the undo window expires, the transcript is preserved in history.
+Search icon in history view top bar. Tap → expands to search field. As user types:
 
-**Trade-off flagged:** Implementation requires holding the meeting session in a "stoppable but not yet stopped" state for the undo window. Mild complexity, acceptable. Alternative considered and rejected: explicit confirmation dialog before STOP. Rejected because confirmation creates friction on every STOP, and intentional STOPs vastly outnumber accidental ones.
+- Search scope: meeting title + every English `translatedText` + every Japanese `sourceText` across all sentences in all meetings
+- Implementation: SwiftData `#Predicate` with `localizedStandardContains` across title, sourceText, translatedText
+- Debounce: 300ms after typing stops before query fires
+- Display: filter the history list in-place — non-matching meetings hidden, matching meetings show a snippet preview of the matched text on the card
 
-**Interaction with button morphing (decision #2):** During the undo window, the button could either (a) stay as PAUSE+STOP visually until the window expires, OR (b) immediately morph to NEW TRANSCRIPT but with the toast available for recovery. Group D walkthrough will decide.
+**V3 entry to file:** "Migrate history search to SQLite FTS5 — trigger: search latency exceeds ~200ms on real device with real data, OR transcript volume exceeds ~50K sentences and `LIKE`-based queries feel sluggish. Cost: ~1-2 days to add FTS5 virtual table alongside SwiftData schema."
+
+**Deferred to Phase 6+:**
+- Search results screen showing matching sentences with jump-to-sentence links (richer than in-place filter)
+- Search across language directions (e.g., search English and find Japanese matches)
+
+### 15. Error state UI
+
+| Failure | UI surface |
+|---|---|
+| LFM2 translation error (transient) | Inline grey italic marker in English half: `[Translation failed — retrying]` |
+| Whisper / mic failure | Toast at top + state badge changes color to red |
+| Queue full (drop-newest fires) | Subtle inline marker `[...]` in English half |
+
+**Rationale:** Inline markers contextualize WHERE the failure happened in the transcript. Toast + colored badge reserved for pipeline-blocking failures where the user must act.
+
+**Trade-off flagged:** Inline markers will appear in exported transcripts. Acceptable — better than silent gaps. Future enhancement: filter at export time if users complain.
+
+### 16. First-launch experience
+
+**Strategy:** Models downloaded on first launch + 2-screen minimal onboarding.
+
+**Screen 1 — Value prop:**
+- Title: "Translate meetings in real time"
+- Body: "Japanese-English, fully on-device. Your audio never leaves your phone."
+- Primary button: "Get Started"
+
+**Screen 2 — Permissions + model download:**
+- "Setting up Arigato AI..."
+- Microphone permission request fires here
+- Model download progress bars (Whisper, then LFM2)
+- Estimated time + tip: "Connect to Wi-Fi for faster setup"
+- Primary button (grayed until done): "Start translating"
+
+After Screen 2 → main app view in Idle state with START button.
+
+**Model storage location:** `Application Support/` (not iCloud-backed, persists across app updates, not OS-purged like `Caches/`).
+
+**Mitigations for slow networks:**
+- Pause/resume download if user backgrounds the app
+- Allow retry on download failure
+- Show granular progress per-file
+
+**V3 entry to file:** "First-launch download UX measurement — measure real download times on cellular vs Wi-Fi after MVP 1 testing; if >2 min on Wi-Fi feels too long, investigate bundling a smaller Whisper variant or showing more granular progress."
+
+### 17. Theme — system-adaptive
+
+App respects iOS-wide light/dark mode setting. No in-app theme picker for MVP 1. SwiftUI's semantic colors handle most of the adaptation automatically.
+
+**Rejected alternatives:**
+- Force one theme (ignores user preference)
+- In-app theme picker (defer to Phase 6+)
+
+### 18. Typography — system fonts, custom deferred
+
+| Surface | Font |
+|---|---|
+| Transcript text (Japanese + English) | System — SF Pro for Latin, Hiragino Sans for Japanese (iOS handles language-aware fallback automatically) |
+| App chrome (buttons, settings, labels) | System — SF Pro Display |
+| Branding moments (app icon text, "ARIGATO AI" wordmark, status badge) | System for MVP 1, Geist or Geist Pixel deferred to Phase 6+ enhancement pass |
+
+**Rationale:** CJK readability is non-negotiable. System fonts handle CJK better than any custom font we could bundle. Custom typography is a visual polish concern, not a functional one — defer to Phase 6+.
+
+### 19. Settings — minimal for MVP 1
+
+Two sections only:
+
+**About:**
+- Version number
+- "Fully on-device" privacy reassurance
+- Link to project info / GitHub repo
+
+**Storage:**
+- Show current LFM2 cache size + transcript count
+- Button: "Clear cache" (with confirmation)
+- Button: "Delete all transcripts" (with strong confirmation)
+
+**Deferred to Phase 6+:**
+- Diagnostic logs toggle (ships with V3 #46 diagnostic feature)
+- Default export format selection
+- History retention policy (auto-delete old transcripts)
+- Model selection (when multiple models ship)
+
+### 20. SwiftData schema — one-to-many with cascade delete
+
+**Entity: `Meeting`**
+- `id: UUID` — primary key
+- `startedAt: Date`
+- `endedAt: Date?` — nil while meeting is active
+- `title: String` — auto-generated per decision #12
+- `sentences: [Sentence]` — `@Relationship(deleteRule: .cascade)`
+
+**Entity: `Sentence`**
+- `id: UUID`
+- `meeting: Meeting` — inverse relationship
+- `timestamp: Date`
+- `sourceLanguage: String` — "ja" or "en"
+- `sourceText: String` — original Japanese or English
+- `translatedText: String` — translation in the other language
+- `sourceSegmentID: UUID` — upstream Whisper segment ID (debugging)
+
+**Migration policy for MVP 1:** Wipe-on-schema-mismatch. No formal VersionedSchema. Acceptable because MVP 1 testing is solo on Jose's device — losing test transcripts on schema change is fine.
+
+**Storage location:** SwiftData default — `Application Support/`. Backed up by iCloud Backup (encrypted, opt-in by user). Not synced live to iCloud (different from `Documents/`).
+
+**Trade-off flagged:** SwiftData relationship access has Swift 6 Sendable wrinkles when crossing actor boundaries. Implementation will likely use a SwiftData-owning actor for writes. Doc-comment but not a blocker.
+
+**V3 entry to file at end of Group D:** "SwiftData VersionedSchema migration — trigger: any external tester receives a build with persistent data they want preserved across schema changes. Cost: ~half-day to add VersionedSchema migration plan."
 
 ---
 
-## Decisions explicitly deferred to Group D walkthrough
+## Decisions NOT in scope for Group D (Phase 6+ or later)
 
-These came up during the Group C discussion but need full Group D treatment, not just intent capture:
-
-- **Transcript visual layout:** Split-screen (Japanese top, English bottom)? Vertically interleaved with timestamps? Side-by-side with horizontal scroll? Group D walkthrough will lock this.
-- **Scroll behavior:** When new sentence arrives, auto-scroll to bottom? Or only auto-scroll if the user is already at the bottom? Floating "scroll to bottom" arrow when user has scrolled up?
-- **Typography:** System fonts (SF Pro / Hiragino Sans for Japanese)? Custom (Geist family, possibly Geist Pixel for branding moments)? Reading priority on transcript text means CJK rendering takes precedence — pixel fonts likely reserved for branding/labels, not transcript content.
-- **Color and theme:** Dark mode by default? Light mode? Adaptive to system setting?
-- **Recording indicator:** What does "actively recording" look like? Pulsing dot? Waveform? Both?
-- **History view design:** List vs grid? Per-meeting metadata visible (duration, sentence count, languages)? Search/filter?
-- **Title generation for meeting history:** Auto-derived from first sentence (Japanese? English? Both?), or timestamp-only, or user-prompted at STOP, or editable post-meeting in history view?
-- **Error states:** What does the UI show if LFM2 fails to load mid-meeting? If Whisper fails? If translation lags behind audio significantly?
-- **Undo toast button morphing timing:** Does the primary button stay as PAUSE/STOP during the undo window, or immediately morph to NEW TRANSCRIPT? (decision #8 detail)
-- **Ended-state share icon placement:** Top bar vs secondary button position? (decision #4 detail)
-
----
-
-## Decisions NOT yet captured (worth raising in Group D walkthrough)
-
-- **First-launch experience:** What happens when user opens the app for the first time? Model download progress? Microphone permission flow? Brief tutorial overlay?
-- **Settings screen:** Cache size, model selection (if multiple models ever ship), default export format, retention policy for history?
-- **Privacy reassurance:** Does the UI ever surface "on-device, no cloud" messaging? Where?
-- **Accessibility:** VoiceOver labels on transcript? Dynamic Type support? Reduced Motion?
-- **Navigation between active view and history:** Tab bar? Hamburger menu? Top-bar nav? How does the user get to history during/between meetings?
+- Real Apple Foundation Models title generation
+- Diagnostic logs toggle
+- Theme picker / custom typography polish pass
+- Search results screen with jump-to-sentence links
+- FTS5 search migration
+- VersionedSchema migration support
+- iCloud Backup exclusion option
+- PDF export format
+- History retention auto-delete policy
+- Accessibility deep dive (VoiceOver labels, Dynamic Type validation, Reduced Motion)
+- Speaker detection / speaker labels in transcript
 
 ---
 
 ## Revision policy
 
-These decisions are **working intent, not contracts.** After MVP 1 ships and the app is tested in real meetings, expect to revise. Real usage will reveal:
+These decisions are **locked for Group D implementation** but **NOT contracts for MVP 1+**. After MVP 1 device testing in real meetings, expect to revise:
 
-- Whether the auto-save cadence is right (or causes UI hitching)
-- Whether pause is actually used or whether users prefer STOP-and-start-new
-- Whether multi-select delete/share is the right granularity or if single-swipe actions are preferred
+- Whether auto-save cadence is right (UI hitching)
+- Whether pause is actually used or users prefer STOP-and-start-new
+- Whether multi-select is right granularity or single-swipe is preferred
 - Whether the undo toast window is long enough (3s vs 5s vs 10s)
-- Whether export format needs more options (PDF, CSV, JSON for downstream tools)
-- Whether the button morphing pattern feels right or whether persistent buttons would actually be clearer
-- Whether the "no export during recording" decision holds up — users might request mid-meeting export
+- Whether the button morphing pattern feels right or persistent buttons would be clearer
+- Whether the "no export during recording" decision holds up
+- Whether search latency on real data triggers FTS5 migration sooner than expected
 
-Treat this doc as the starting point for Group D, not the ending point. Update after each MVP usage cycle.
+Treat this doc as the locked input for Group D feature-planner, but revisit after each MVP 1 usage cycle.
 
 ---
 
-**Original source:** Captured from Claude.ai Group C walkthrough conversation, 2026-05-16. User: Jose. Revise during Group D walkthrough and after MVP 1 testing.
+**Source:** Phase 5 Group D strategic walkthrough, Claude.ai conversation, 2026-05-16. User: Jose. Captures Q1-Q10 walkthrough decisions + decisions #1-#9 from the original captured-intent doc.
