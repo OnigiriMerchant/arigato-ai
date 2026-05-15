@@ -102,7 +102,7 @@ public protocol LFM2Engine: Sendable {
     ///   sequentially by ``LFM2ModelLoader/warmup()``.
     /// - Throws: ``TranslationError/warmupFailed(_:)`` wrapping any
     ///   underlying SDK error.
-    func warmupCanary(direction: TranslationDirection) async throws
+    nonisolated func warmupCanary(direction: TranslationDirection) async throws
 
     /// Streams an LFM2 translation of `userText` in the requested
     /// `direction`.
@@ -137,7 +137,7 @@ public protocol LFM2Engine: Sendable {
     ///   more ``TranslationEngineEvent/chunk(_:)`` events followed by
     ///   exactly one ``TranslationEngineEvent/complete`` event and
     ///   then finishes. On error the stream finishes by throwing.
-    func translate(userText: String, direction: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error>
+    nonisolated func translate(userText: String, direction: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error>
 }
 
 /// Production adapter wrapping a real ``LeapSDK.ModelRunner`` instance.
