@@ -83,10 +83,25 @@ nonisolated struct SentenceBuffer {
     /// Lazily-initialized static to avoid recomputing per-append.
     static let boundaryCharacters: CharacterSet = .init(charactersIn: "。！？.!?")
 
-    /// The silence-timeout threshold used by `flushIfStaleSince(_:)`.
+    /// Legacy default silence-timeout threshold, expressed as a
+    /// `Double` of seconds. Retained for backwards compatibility with
+    /// the existing ``SentenceBufferTests`` math
+    /// (`SentenceBuffer.silenceTimeoutSeconds + 0.1` etc.). The actual
+    /// runtime check uses the instance-level ``silenceTimeout``.
     static let silenceTimeoutSeconds: Double = 2.0
 
+    /// Default silence-timeout threshold as a ``Duration``. Used as the
+    /// default value of the instance-level ``silenceTimeout`` parameter
+    /// when callers do not supply one.
+    static let defaultSilenceTimeout: Duration = .seconds(SentenceBuffer.silenceTimeoutSeconds)
+
     // MARK: - Stored state
+
+    /// Per-instance silence-timeout threshold consulted by
+    /// ``flushIfStaleSince(_:)``. Defaults to
+    /// ``defaultSilenceTimeout`` (2.0s); tests may pass smaller values
+    /// when they need to drive the staleness path without real waits.
+    private let silenceTimeout: Duration
 
     private var accumulator: String = ""
 
@@ -107,7 +122,15 @@ nonisolated struct SentenceBuffer {
 
     // MARK: - Init
 
-    init() {}
+    /// Creates a sentence buffer.
+    ///
+    /// - Parameter silenceTimeout: The duration of silence (measured
+    ///   from the most recent non-empty append) after which
+    ///   ``flushIfStaleSince(_:)`` will flush the unfinished
+    ///   accumulator. Defaults to ``defaultSilenceTimeout`` (2.0s).
+    init(silenceTimeout: Duration = SentenceBuffer.defaultSilenceTimeout) {
+        self.silenceTimeout = silenceTimeout
+    }
 
     // MARK: - API
 
@@ -168,7 +191,7 @@ nonisolated struct SentenceBuffer {
         guard !accumulator.isEmpty else { return nil }
         guard let lastAppendInstant else { return nil }
         let elapsed = lastAppendInstant.duration(to: instant)
-        guard elapsed >= .seconds(Self.silenceTimeoutSeconds) else { return nil }
+        guard elapsed >= silenceTimeout else { return nil }
         return flushAccumulatorAsSentence()
     }
 

@@ -10,7 +10,7 @@ import Foundation
 import os
 import Testing
 
-@Suite("TranslationActor scaffold (Step 5)")
+@Suite("TranslationActor")
 struct TranslationActorTests {
     // MARK: - FakeLFM2Engine
 
@@ -38,6 +38,27 @@ struct TranslationActorTests {
                 continuation.finish()
             }
         }
+    }
+
+    // MARK: - Segment helper
+
+    private static func segment(
+        text: String,
+        startHost: UInt64 = 100,
+        endHost: UInt64 = 200,
+        language: SpokenLanguage = .en
+    ) -> TranscriptSegment {
+        TranscriptSegment(
+            id: UUID(),
+            text: text,
+            language: language,
+            startHostTime: startHost,
+            endHostTime: endHost,
+            startSeconds: 0,
+            endSeconds: 0.5,
+            isFinal: true,
+            wasLanguageFallback: false
+        )
     }
 
     // MARK: - Coalescing
@@ -168,5 +189,148 @@ struct TranslationActorTests {
         try await actor.warmup()
         let state = await actor.warmupState()
         #expect(state == .ready)
+    }
+
+    // MARK: - Queue: single sentence
+
+    @Test("translate: single sentence upstream enqueues one")
+    func translate_singleSentenceUpstream_enqueuesOne() async throws {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments, direction: .jaToEn)
+
+        continuation.yield(Self.segment(text: "こんにちは。"))
+        continuation.finish()
+        await actor.awaitUpstreamDrained()
+
+        let count = await actor.pendingSentenceCount()
+        #expect(count == 1)
+    }
+
+    // MARK: - Queue: burst within cap
+
+    @Test("translate: burst of sentences within cap enqueues all")
+    func translate_burstOfSentences_enqueuesAllUpToCap() async throws {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments, direction: .enToJa)
+
+        for i in 0 ..< 10 {
+            continuation.yield(Self.segment(text: "Sentence \(i)."))
+        }
+        continuation.finish()
+        await actor.awaitUpstreamDrained()
+
+        let count = await actor.pendingSentenceCount()
+        #expect(count == 10)
+        let dropped = await actor.droppedNewestCount()
+        #expect(dropped == 0)
+    }
+
+    // MARK: - Violation test (load-bearing)
+
+    @Test("C-T-VIOLATION-GREEDY-UPSTREAM: burst exceeding cap drops newest and logs overflow")
+    func translate_burstExceedingCap_dropsNewestAndLogsOverflow() async throws {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments, direction: .enToJa)
+
+        let cap = TranslationActor.maxQueuedSentences
+        // Feed cap + 5 sentences. First `cap` should be retained;
+        // last 5 dropped.
+        for i in 0 ..< (cap + 5) {
+            continuation.yield(Self.segment(text: "Sentence \(i)."))
+        }
+        continuation.finish()
+        await actor.awaitUpstreamDrained()
+
+        let count = await actor.pendingSentenceCount()
+        #expect(count == cap)
+        let dropped = await actor.droppedNewestCount()
+        #expect(dropped == 5)
+    }
+
+    // MARK: - Replacement on second translate call
+
+    @Test("translate: second call replaces first session")
+    func translate_secondCallReplacesFirstSession() async throws {
+        let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
+        try await actor.warmup()
+
+        let (segments1, cont1) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream1 = await actor.translate(segments: segments1, direction: .jaToEn)
+
+        cont1.yield(Self.segment(text: "First."))
+        // Don't finish session 1 yet.
+
+        let (segments2, cont2) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments2, direction: .enToJa)
+
+        cont2.yield(Self.segment(text: "Second."))
+        cont2.finish()
+        await actor.awaitUpstreamDrained()
+
+        // Stream 1 should have finished without throwing.
+        var stream1FinishedNormally = true
+        do {
+            for try await _ in stream1 {}
+        } catch {
+            stream1FinishedNormally = false
+        }
+        #expect(stream1FinishedNormally)
+
+        // Stream 2's queue has the second sentence.
+        let count = await actor.pendingSentenceCount()
+        #expect(count == 1)
+
+        cont1.finish() // Cleanup.
+    }
+
+    // MARK: - Silence timeout uses TestClock
+
+    @Test("translate: silence-timeout triggers flush via TestClock advance")
+    func translate_silenceTimeoutTriggersFlush() async throws {
+        let clock = TestClock()
+        let actor = TranslationActor(
+            engineFactory: { FakeLFM2Engine() },
+            clock: clock
+        )
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        _ = await actor.translate(segments: segments, direction: .enToJa)
+
+        // Feed a punctuation-less segment.
+        continuation.yield(Self.segment(text: "Hello world"))
+
+        // Yield once so the actor's drain task has a chance to absorb
+        // the segment into the buffer.
+        try await Task.sleep(for: .milliseconds(50))
+
+        // The buffer's *real* lastAppendInstant is now ~ContinuousClock.now.
+        // For the silence-timeout test we ALSO need real wall time to
+        // advance >= 2.0s — the SentenceBuffer is anchored to
+        // ContinuousClock, not the injected TestClock. The injected
+        // clock controls only the polling interval
+        // (`clock.sleep(for: 500ms)`).
+        // Strategy: real-sleep ~2.1s wall-clock so the next timer tick
+        // detects staleness, AND advance(TestClock) to trigger the
+        // next sleep cycle.
+        try await Task.sleep(for: .milliseconds(2100))
+        clock.advance(by: .milliseconds(600)) // wakes the next timer tick.
+
+        // Give the timer-tick callback a moment to run.
+        try await Task.sleep(for: .milliseconds(100))
+
+        let count = await actor.pendingSentenceCount()
+        #expect(count == 1)
+
+        continuation.finish()
     }
 }
