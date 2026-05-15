@@ -594,13 +594,24 @@ Updated: May 10 2026
 - **Performance impact:** <1% overhead. Memory: few KB per meeting. Disk: ~50–200KB per 2-hour meeting, ~20MB cumulative after 100 meetings. No battery impact.
 - **Drives future V3 decisions:** validates N=2 gate calibration, validates window/hop sizing, drives cache strategy revisit (#47 in-memory vs persistent), informs LFM2 model upgrade trigger (#35), supports latency slider design (#32).
 
-### LFM2 cache strategy — revisit if cross-meeting hit rate proves valuable
+### LFM2 cache strategy — SUPERSEDED 2026-05-15 by xcframework-driven Decision 4 revision
 
-- **What:** Phase 5 ships with in-memory only cache (`LiquidCacheOptions` in-memory). Strategic walkthrough chose this over persistent on-disk because: (a) LFM2's prompt cache is inference-acceleration via KV-state, not translation-memory across sessions — cross-meeting hit rate likely near zero; (b) persistent cache in Documents folder backs up to iCloud by default, conflicting with CLAUDE.md "no cloud sync" privacy stance; (c) MVP discipline prefers simplest design that delivers value.
+- **Original framing**: Phase 5 ships with in-memory only cache (`LiquidCacheOptions` in-memory). Strategic walkthrough chose this over persistent on-disk because: (a) LFM2's prompt cache is inference-acceleration via KV-state, not translation-memory across sessions — cross-meeting hit rate likely near zero; (b) persistent cache in Documents folder backs up to iCloud by default, conflicting with CLAUDE.md "no cloud sync" privacy stance; (c) MVP discipline prefers simplest design that delivers value.
+- **2026-05-15 revision**: Step 0 xcframework inspection (pre-Group-C feature-planner dispatch) discovered `LiquidCacheOptions` in LEAP iOS SDK v0.9.4 is a struct with REQUIRED `path: String` + `maxEntries: Int`, NOT an enum. No `.inMemory` case exists. The original "in-memory only" lock cannot be implemented through the SDK's type surface. User call: use a persistent path under iOS's Caches directory with `maxEntries: 1000`. Caches/ is NOT iCloud-backed (Apple architecture), so privacy stance is preserved at the architecture level even with persistence enabled. iOS auto-purges Caches/ under storage pressure. See PHASE_5_HANDOFF.md Decision 4 (revised) for full reasoning.
+- **Replacement V3 entry**: "LFM2 prompt cache effectiveness benchmark" below.
 
-  If real meeting data shows the cache assumption was wrong — i.e., within-meeting hit rate is high enough to suggest cross-meeting benefit would be material AND a way to handle iCloud-backup exclusion is identified — revisit. Liquid AI / Liquid SDK may also evolve the cache primitive in a future version.
-- **Trigger to revisit:** After local-only diagnostics ships (see preceding entry) AND 5+ real meetings show within-meeting cache hit rate >50%. OR if Liquid SDK introduces a translation-memory layer in a future version. OR if CLAUDE.md privacy stance evolves.
-- **Cost estimate to flip to persistent:** ~2 hours. Swap `LiquidCacheOptions` to disk path, add iCloud backup exclusion attribute on cache directory, add "Clear translation cache" button in Settings, codify size cap and eviction policy.
+### LFM2 prompt cache effectiveness benchmark
+
+- **What**: Phase 5 Group C ships with `LiquidCacheOptions(path: <Caches/leap-cache>, maxEntries: 1000)` per revised Decision 4 (xcframework-driven, 2026-05-15). Verify in Phase 6 diagnostics whether this delivers measurable per-sentence inference speedup on iPhone 17 Pro Max. Goal: distinguish "cache delivers value" from "cache is overhead noise we should drop for simplicity."
+- **Why filed**: The revised cache decision was driven by performance > privacy weighting plus "flipping back is trivial." That hedge requires real data to act on. Without measurement, the cache stays enabled by default forever even if it doesn't help.
+- **Measurement plan**:
+  - Phase 6 local-only diagnostics (V3 #46) must log per-`generateResponse(...)` inference time AND a cache-hit signal if the SDK exposes one (verify in Phase 6 doc-research pre-flight against LEAP SDK telemetry surface).
+  - Comparison: A/B test with `cacheOptions: nil` vs the persistent config, ~50–100 sentence pairs per side, on iPhone 17 Pro Max.
+- **Trigger to revisit**: After Phase 6 diagnostics ship AND accumulate ~1 week of real meeting data. Possible outcomes:
+  - **Savings <20ms per sentence**: flip to `cacheOptions: nil` for simplicity. One-line change in `LFM2ModelLoader` (or wherever Group C wires the engine options).
+  - **Savings 20–100ms per sentence**: keep at `maxEntries: 1000`, document the baseline, monitor.
+  - **Savings >100ms per sentence**: tune `maxEntries` upward based on observed cache hit patterns. Consider stricter cache-warming strategy at app launch (preload common system-prompt prefixes).
+- **Cost estimate**: ~1–2 hours instrumentation + ~30 min analysis once data accumulates.
 
 ---
 
