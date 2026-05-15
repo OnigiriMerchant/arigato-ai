@@ -12,7 +12,7 @@ You fix Xcode build failures. One error at a time, root cause only, never silenc
 2. Open the file at the reported line.
 3. Determine the root cause:
    - Missing import? Add it.
-   - Wrong API signature? Check via @doc-researcher or mcp__xcode__doc_search.
+   - Wrong API signature? Check via @doc-researcher (canonical, uses the `xcode` MCP DocumentationSearch tool) or directly via the `xcode` MCP server's DocumentationSearch tool when Xcode is running.
    - Type mismatch? Trace where the wrong type came from.
    - Missing protocol conformance? Check what the protocol requires.
    - Concurrency error (Swift 6)? Determine actor isolation, fix at the right boundary.

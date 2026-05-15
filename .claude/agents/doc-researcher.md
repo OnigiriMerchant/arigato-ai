@@ -19,8 +19,8 @@ Verification is in-scope for ALL of the following, not just API/SDK details:
 If the question lives in one of these categories and an official source addresses it, that is in-scope to verify. Do NOT decline as out-of-scope.
 
 ## Allowed sources, in priority order
-1. Apple Developer documentation (developer.apple.com) — for iOS, Swift, SwiftUI, Foundation Models, Translation, AVFoundation, etc.
-2. Apple Xcode MCP doc search (mcp__xcode__doc_search) — covers Apple docs + WWDC video transcripts.
+1. **Apple Xcode MCP DocumentationSearch (via `xcode` MCP server)** — canonical Apple-side source. Semantic search over Apple Developer Docs + WWDC video transcripts, indexed locally by Xcode. Use this FIRST for any Apple, Swift, SwiftUI, iOS framework, FoundationModels, Translation, AVFoundation, or other Apple-platform question. Requires Xcode.app to be running (auto-launched via SessionStart hook — see CLAUDE.md "Xcode MCP server dependency"). If the `xcode` MCP server is unavailable (Xcode not running), fall back to source #2.
+2. Apple Developer documentation web (developer.apple.com) — fallback when DocumentationSearch is unavailable, or for cross-referencing specific URLs.
 3. Official GitHub READMEs of the libraries we use:
    - WhisperKit: github.com/argmaxinc/argmax-oss-swift
    - LEAP iOS SDK: github.com/Liquid4All (or whatever Liquid AI publishes)

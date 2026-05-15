@@ -57,9 +57,19 @@ For any plan or implementation involving Swift actors, AsyncStreams, async seque
 
 ## Build workflow
 - Use XcodeBuildMCP for all build/test/run/deploy from the main session. Subagents may fall back to raw xcodebuild via Bash due to a known MCP-inheritance bug in Claude Code (see https://github.com/anthropics/claude-code/issues/25200). When this happens, the main session is responsible for verifying subagent build output via XcodeBuildMCP after subagent completion. Do not blanket-permit raw xcodebuild from the main session.
-- Use Apple's xcode MCP for documentation search, SwiftUI preview screenshots, live diagnostics.
+- Use Apple's xcode MCP for documentation search, SwiftUI preview snapshots, and live Xcode diagnostics. See "Xcode MCP server dependency" below.
 - After every Swift edit, run mcp__xcodebuildmcp__build_sim_name_proj to verify.
 - Run tests with mcp__xcodebuildmcp__test_sim_name_proj before committing.
+
+### Xcode MCP server dependency
+- The `xcode` MCP server is Apple's `xcrun mcpbridge`, shipped with Xcode 26.3+. It requires Xcode.app to be running with a project open — mcpbridge fatal-errors at startup if no Xcode process exists.
+- Auto-launched via SessionStart hook `.claude/hooks/auto-open-xcode.sh` (wired in `.claude/settings.json`). The hook checks `pgrep -x Xcode`, opens this project's `.xcodeproj` if no Xcode is running, and waits briefly for the process to be detectable. Tolerant of failure — never blocks Claude Code start.
+- Provides capabilities XcodeBuildMCP does not replicate:
+  - `DocumentationSearch` — canonical Apple/Swift/iOS API source (semantic search over Apple Developer Docs + WWDC transcripts). Primary research tool for new APIs (SwiftUI iOS 26, FoundationModels, Liquid Glass, post-cutoff frameworks).
+  - `RenderPreview` — SwiftUI preview snapshots without booting the simulator. Useful for fast UI iteration.
+  - Live diagnostics — `XcodeRefreshCodeIssuesInFile`, `XcodeListNavigatorIssues` surface the indexer's current view.
+- XcodeBuildMCP remains primary for builds, tests, simulators — it works independently of Xcode running. The two MCP servers are complementary, not redundant.
+- If Xcode is closed mid-session, MCP calls through `xcode` will fail until Xcode is reopened. The MCP reconnects on next call after Xcode comes back up. Restarting Claude Code is not required.
 
 ## Rollback safety
 Every step within a group that lands clean (production code compiles, tests pass) must be committed locally as a checkpoint before the next step is dispatched.
