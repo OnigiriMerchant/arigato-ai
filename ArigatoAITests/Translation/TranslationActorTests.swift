@@ -15,27 +15,156 @@ struct TranslationActorTests {
     // MARK: - FakeLFM2Engine
 
     /// Test-local fake conformer to ``LFM2Engine``. Records every
-    /// `warmupCanary(direction:)` invocation; ignores `translate(...)`
-    /// (Step 5 doesn't exercise the translation path).
+    /// `warmupCanary(direction:)` and `translate(userText:direction:)`
+    /// invocation; per-call chunks, errors, inter-chunk delay, and
+    /// "emit no chunks before complete" mode are individually
+    /// configurable.
     ///
-    /// `@unchecked Sendable` because the recording array is mutated
-    /// under an `OSAllocatedUnfairLock` — concurrent calls are safe
-    /// for the test's purposes (counting invocations under
-    /// coalescing-warmup load).
+    /// `@unchecked Sendable` because every mutable field is guarded
+    /// by an `OSAllocatedUnfairLock` — concurrent calls are safe for
+    /// the test's purposes.
     fileprivate final class FakeLFM2Engine: LFM2Engine, @unchecked Sendable {
+        /// Records every `translate()` call's `userText` in arrival
+        /// order. Tests assert order against this.
+        private let calls = OSAllocatedUnfairLock<[String]>(initialState: [])
+
+        /// Per-call chunks to emit, keyed by `userText`. If absent for
+        /// a given input, the fake's default behavior depends on
+        /// ``defaultBehavior``: ``DefaultBehavior/hang`` produces an
+        /// inflight stream that yields nothing and never completes (so
+        /// the dispatch task starts but never advances past the first
+        /// pop — used by Step 6 queue-shape tests);
+        /// ``DefaultBehavior/reverseInput`` emits one chunk equal to
+        /// the input reversed and then completes (used by the
+        /// SLOW-DOWNSTREAM violation test, which relies on the reverse
+        /// behavior to assert FIFO output ordering against fast input).
+        private let configuredChunks = OSAllocatedUnfairLock<[String: [String]]>(initialState: [:])
+
+        /// Selects what an unconfigured `translate()` call does.
+        enum DefaultBehavior {
+            /// The inflight stream yields no chunks and never completes
+            /// until cancelled. The actor's dispatch task starts but
+            /// never finishes, so subsequent enqueues observe the
+            /// "first sentence consumed by dispatch, remainder queued"
+            /// shape. Default; preserves Step 6 queue-shape tests.
+            case hang
+            /// The inflight stream yields exactly one chunk equal to
+            /// the input reversed, then `.complete`s and finishes.
+            /// Used by `C-T-VIOLATION-SLOW-DOWNSTREAM` to drive the
+            /// dispatch loop forward against a slow downstream
+            /// consumer.
+            case reverseInput
+        }
+
+        private let defaultBehavior = OSAllocatedUnfairLock<DefaultBehavior>(initialState: .hang)
+
+        func setDefaultBehavior(_ behavior: DefaultBehavior) {
+            defaultBehavior.withLock { $0 = behavior }
+        }
+
+        /// Optional error to throw on the stream before completion.
+        /// When set, applies to every subsequent `translate()` call.
+        private let configuredError = OSAllocatedUnfairLock<TranslationError?>(initialState: nil)
+
+        /// Optional artificial delay between chunks (e.g., to drive
+        /// the slow-downstream test in a deterministic order).
+        private let chunkDelay = OSAllocatedUnfairLock<Duration>(initialState: .zero)
+
+        /// When `true`, the stream emits zero chunks before
+        /// `.complete` — exercises the empty-completion fallback path.
+        private let emitNoChunksBeforeComplete = OSAllocatedUnfairLock<Bool>(initialState: false)
+
         private let canaryInvocations = OSAllocatedUnfairLock<[TranslationDirection]>(initialState: [])
+
+        var recordedCalls: [String] {
+            calls.withLock { $0 }
+        }
 
         var recordedCanaries: [TranslationDirection] {
             canaryInvocations.withLock { $0 }
+        }
+
+        func configureChunks(_ chunks: [String], for userText: String) {
+            configuredChunks.withLock { $0[userText] = chunks }
+        }
+
+        func configureError(_ error: TranslationError?) {
+            configuredError.withLock { $0 = error }
+        }
+
+        func configureChunkDelay(_ delay: Duration) {
+            chunkDelay.withLock { $0 = delay }
+        }
+
+        func setEmitNoChunksBeforeComplete(_ value: Bool) {
+            emitNoChunksBeforeComplete.withLock { $0 = value }
         }
 
         func warmupCanary(direction: TranslationDirection) async throws {
             canaryInvocations.withLock { $0.append(direction) }
         }
 
-        func translate(userText _: String, direction _: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
-            AsyncThrowingStream { continuation in
-                continuation.finish()
+        func translate(
+            userText: String,
+            direction _: TranslationDirection
+        ) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
+            let configured = configuredChunks.withLock { $0[userText] }
+            let behavior = defaultBehavior.withLock { $0 }
+            let error = configuredError.withLock { $0 }
+            let delay = chunkDelay.withLock { $0 }
+            let emitNone = emitNoChunksBeforeComplete.withLock { $0 }
+            calls.withLock { $0.append(userText) }
+
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    if let error {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                    if emitNone {
+                        // Empty-completion fallback path: no chunks
+                        // before complete.
+                        continuation.yield(.complete)
+                        continuation.finish()
+                        return
+                    }
+                    if let configured {
+                        for chunk in configured {
+                            if Task.isCancelled { break }
+                            if delay > .zero {
+                                try? await Task.sleep(for: delay)
+                            }
+                            continuation.yield(.chunk(chunk))
+                        }
+                        continuation.yield(.complete)
+                        continuation.finish()
+                        return
+                    }
+                    switch behavior {
+                    case .hang:
+                        // Park until the consumer's onTermination
+                        // closure cancels us. Yields no events. The
+                        // actor's dispatch task starts but never
+                        // advances past the first pop, so Step 6
+                        // queue-shape tests observe "first popped,
+                        // remainder queued".
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: .milliseconds(50))
+                        }
+                    case .reverseInput:
+                        let chunk = String(userText.reversed())
+                        if Task.isCancelled { return }
+                        if delay > .zero {
+                            try? await Task.sleep(for: delay)
+                        }
+                        continuation.yield(.chunk(chunk))
+                        continuation.yield(.complete)
+                        continuation.finish()
+                    }
+                }
+                continuation.onTermination = { _ in
+                    task.cancel()
+                }
             }
         }
     }
@@ -193,7 +322,7 @@ struct TranslationActorTests {
 
     // MARK: - Queue: single sentence
 
-    @Test("translate: single sentence upstream enqueues one")
+    @Test("translate: single sentence upstream enqueues one (dispatched immediately)")
     func translate_singleSentenceUpstream_enqueuesOne() async throws {
         let actor = TranslationActor(engineFactory: { FakeLFM2Engine() })
         try await actor.warmup()
@@ -205,8 +334,11 @@ struct TranslationActorTests {
         continuation.finish()
         await actor.awaitUpstreamDrained()
 
+        // Step 7: the lone sentence is popped immediately by
+        // `dispatchNextSentenceIfIdle()`; the default hanging fake
+        // never completes, so it stays inflight. Pending queue is 0.
         let count = await actor.pendingSentenceCount()
-        #expect(count == 1)
+        #expect(count == 0)
     }
 
     // MARK: - Queue: burst within cap
@@ -225,8 +357,11 @@ struct TranslationActorTests {
         continuation.finish()
         await actor.awaitUpstreamDrained()
 
+        // Step 7: first sentence is popped immediately by
+        // `dispatchNextSentenceIfIdle()` and stays inflight against
+        // the hanging fake; the remaining 9 stay queued.
         let count = await actor.pendingSentenceCount()
-        #expect(count == 10)
+        #expect(count == 9)
         let dropped = await actor.droppedNewestCount()
         #expect(dropped == 0)
     }
@@ -242,8 +377,11 @@ struct TranslationActorTests {
         _ = await actor.translate(segments: segments, direction: .enToJa)
 
         let cap = TranslationActor.maxQueuedSentences
-        // Feed cap + 5 sentences. First `cap` should be retained;
-        // last 5 dropped.
+        // Feed cap + 5 sentences. Step 7: the first sentence is
+        // popped by `dispatchNextSentenceIfIdle()` and held inflight
+        // against the hanging fake; subsequent enqueues then refill
+        // the queue up to `cap`, after which the remaining 4 are
+        // drop-newest victims. Final shape: pending=cap, dropped=4.
         for i in 0 ..< (cap + 5) {
             continuation.yield(Self.segment(text: "Sentence \(i)."))
         }
@@ -253,7 +391,7 @@ struct TranslationActorTests {
         let count = await actor.pendingSentenceCount()
         #expect(count == cap)
         let dropped = await actor.droppedNewestCount()
-        #expect(dropped == 5)
+        #expect(dropped == 4)
     }
 
     // MARK: - Replacement on second translate call
@@ -285,9 +423,11 @@ struct TranslationActorTests {
         }
         #expect(stream1FinishedNormally)
 
-        // Stream 2's queue has the second sentence.
+        // Stream 2's only sentence is popped immediately by
+        // `dispatchNextSentenceIfIdle()` and held inflight against
+        // the hanging fake; pending queue is empty.
         let count = await actor.pendingSentenceCount()
-        #expect(count == 1)
+        #expect(count == 0)
 
         cont1.finish() // Cleanup.
     }
@@ -328,9 +468,201 @@ struct TranslationActorTests {
         // Give the timer-tick callback a moment to run.
         try await Task.sleep(for: .milliseconds(100))
 
+        // Step 7: the silence-flushed sentence is popped immediately
+        // by `dispatchNextSentenceIfIdle()` and held inflight against
+        // the hanging fake; pending queue is empty.
         let count = await actor.pendingSentenceCount()
-        #expect(count == 1)
+        #expect(count == 0)
 
         continuation.finish()
+    }
+
+    // MARK: - End-to-end dispatch tests (Step 7)
+
+    @Test("translate: one sentence emits chunks then completed event")
+    func translate_oneSentence_emitsChunksThenCompleted() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureChunks(["Hello", " world"], for: "Hello world.")
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "Hello world."))
+        continuation.finish()
+
+        var events: [TranslationEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        var chunks: [String] = []
+        var completed: [TranslatedSegment] = []
+        for event in events {
+            switch event {
+            case let .partialChunk(_, delta):
+                chunks.append(delta)
+            case let .completed(translated):
+                completed.append(translated)
+            }
+        }
+
+        #expect(chunks == ["Hello", " world"])
+        #expect(completed.count == 1)
+        #expect(completed.first?.translatedText == "Hello world")
+        #expect(completed.first?.isFallback == false)
+    }
+
+    @Test("translate: two sentences serialized order preserved in output")
+    func translate_twoSentences_serializedOrderPreserved() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureChunks(["A"], for: "First.")
+        fake.configureChunks(["B"], for: "Second.")
+        fake.configureChunkDelay(.milliseconds(20)) // small ordered delay
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "First."))
+        continuation.yield(Self.segment(text: "Second."))
+        continuation.finish()
+
+        var completedOrder: [String] = []
+        for try await event in stream {
+            if case let .completed(translated) = event {
+                completedOrder.append(translated.translatedText)
+            }
+        }
+
+        #expect(completedOrder == ["A", "B"])
+    }
+
+    @Test("translate: engine throws → stream finishes with generationFailed wrapped")
+    func translate_engineThrows_wrapsAsGenerationFailedAndFinishesStream() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureError(.generationFailed("simulated SDK error"))
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "Hello."))
+        continuation.finish()
+
+        var thrownError: (any Error)?
+        do {
+            for try await _ in stream {}
+        } catch {
+            thrownError = error
+        }
+
+        #expect(thrownError != nil)
+        if let translationError = thrownError as? TranslationError {
+            if case let .generationFailed(detail) = translationError {
+                #expect(detail == "simulated SDK error")
+            } else {
+                Issue.record("Expected .generationFailed, got \(translationError)")
+            }
+        } else {
+            Issue.record("Expected TranslationError, got \(String(describing: thrownError))")
+        }
+    }
+
+    @Test("translate: empty completion yields fallback segment preserving source text")
+    func translate_emptyCompletion_yieldsFallbackSegmentPreservingSourceText() async throws {
+        let fake = FakeLFM2Engine()
+        fake.setEmitNoChunksBeforeComplete(true)
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "Hello."))
+        continuation.finish()
+
+        var completed: [TranslatedSegment] = []
+        for try await event in stream {
+            if case let .completed(translated) = event {
+                completed.append(translated)
+            }
+        }
+
+        #expect(completed.count == 1)
+        #expect(completed.first?.translatedText == "Hello.")
+        #expect(completed.first?.isFallback == true)
+        #expect(completed.first?.sourceText == "Hello.")
+    }
+
+    @Test("translate: end of upstream flushes remaining buffer before stream finishes")
+    func translate_endOfUpstream_flushesRemainingBufferBeforeStreamFinishes() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureChunks(["TRANSLATED"], for: "incomplete sentence without punctuation")
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "incomplete sentence without punctuation"))
+        continuation.finish() // No punctuation, no silence timeout — relies on flushRemaining.
+
+        var completed: [TranslatedSegment] = []
+        for try await event in stream {
+            if case let .completed(translated) = event {
+                completed.append(translated)
+            }
+        }
+
+        #expect(completed.count == 1)
+        #expect(completed.first?.translatedText == "TRANSLATED")
+    }
+
+    @Test("C-T-VIOLATION-SLOW-DOWNSTREAM: consumer not draining → upstream continues enqueuing")
+    func translate_consumerNotDraining_upstreamContinuesEnqueuing() async throws {
+        let fake = FakeLFM2Engine()
+        // Default fake behavior is `.hang` so Step 6 queue-shape
+        // tests stay clean. The SLOW-DOWNSTREAM test needs the
+        // dispatch loop to actually drive forward, so switch the
+        // fake to `.reverseInput` for this test only — each
+        // `translate(...)` then yields one chunk equal to the
+        // input reversed and completes.
+        fake.setDefaultBehavior(.reverseInput)
+
+        let actor = TranslationActor(engineFactory: { fake })
+        try await actor.warmup()
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        // Fast upstream: 5 sentences in a burst.
+        for i in 0 ..< 5 {
+            continuation.yield(Self.segment(text: "Sentence \(i)."))
+        }
+        continuation.finish()
+
+        // Slow downstream: sleep between iterations.
+        var receivedCompleted: [TranslatedSegment] = []
+        for try await event in stream {
+            if case let .completed(translated) = event {
+                receivedCompleted.append(translated)
+                try await Task.sleep(for: .milliseconds(20)) // slow consumer
+            }
+        }
+
+        #expect(receivedCompleted.count == 5)
+        // Ordering: same as input arrival order.
+        let expectedOrder = (0 ..< 5).map { ".\($0) ecnetneS" } // reverse of "Sentence \(i)."
+        let actualOrder = receivedCompleted.map(\.translatedText)
+        #expect(actualOrder == expectedOrder)
     }
 }

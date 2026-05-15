@@ -194,6 +194,15 @@ actor TranslationActor {
         var droppedNewestCount: Int = 0
         var drainTask: Task<Void, Never>?
         var timerTask: Task<Void, Never>?
+        var inflightTask: Task<Void, Never>?
+        /// `true` once the upstream-drain task has observed the upstream
+        /// stream finishing and flushed any remaining accumulator into
+        /// the pending queue. Used by
+        /// ``handleGenerationNaturalCompletion(sessionToken:)`` to decide
+        /// when the session's continuation can finish — only after the
+        /// drain task has finished AND the pending queue is empty AND
+        /// no inflight LFM2 task is running.
+        var drainTaskFinished: Bool = false
 
         init(
             token: SessionToken,
@@ -386,20 +395,41 @@ actor TranslationActor {
 
     /// Handles the upstream stream's natural finish on the actor's
     /// isolation domain. Flushes any unfinished accumulator as a
-    /// terminal sentence, cancels the timer task, and finishes the
-    /// continuation.
+    /// terminal sentence, sets ``Session/drainTaskFinished`` so the
+    /// final inflight task's natural-completion branch will close out
+    /// the session, and immediately closes the session if no work
+    /// remains.
     ///
-    /// Step 6 scope: no LFM2 dispatch yet, so the continuation
-    /// finishes immediately after flushing. Step 7 will replace
-    /// "finish immediately" with "await inflight drain, THEN finish".
+    /// Step 7 wiring: the continuation no longer finishes here in the
+    /// general case. The continuation finishes either (a) immediately
+    /// in this method if the pending queue is empty AND no inflight
+    /// generation is running, or (b) later via
+    /// ``handleGenerationNaturalCompletion(sessionToken:)`` when the
+    /// last inflight task observes `drainTaskFinished && queue empty`.
     private func handleUpstreamFinished(sessionToken: SessionToken) {
         guard let session, session.token == sessionToken else { return }
 
         if let last = session.sentenceBuffer.flushRemaining() {
             enqueue(last, into: session)
         }
+        session.drainTaskFinished = true
+        dispatchNextSentenceIfIdle()
+        if session.pendingSentences.isEmpty, session.inflightTask == nil {
+            finishSession(sessionToken: sessionToken)
+        }
+        // Otherwise: the last inflight task's natural-completion branch
+        // detects `drainTaskFinished && empty queue` and calls
+        // `finishSession(sessionToken:)`.
+    }
+
+    /// Finishes the session's continuation normally, cancels the timer
+    /// task, and clears `self.session` if it still matches the supplied
+    /// token. Late callers with a stale token are no-ops.
+    private func finishSession(sessionToken: SessionToken) {
+        guard let session, session.token == sessionToken else { return }
         session.continuation.finish()
         session.timerTask?.cancel()
+        self.session = nil
     }
 
     /// Handles one timer-task tick on the actor's isolation domain.
@@ -416,10 +446,9 @@ actor TranslationActor {
     /// Enqueues a buffered sentence into the session's pending queue,
     /// applying the drop-NEWEST overflow policy (Q2). When the queue
     /// is at cap, the incoming sentence is dropped and the diagnostic
-    /// counter increments.
-    ///
-    /// Step 6 scope: no LFM2 dispatch yet. Step 7 wires
-    /// ``dispatchNextSentenceIfIdle()``.
+    /// counter increments. On successful enqueue, kicks
+    /// ``dispatchNextSentenceIfIdle()`` so the LFM2 pump observes the
+    /// newly-arrived work.
     private func enqueue(_ sentence: BufferedSentence, into session: Session) {
         if session.pendingSentences.count >= Self.maxQueuedSentences {
             // Drop-NEWEST cap policy (Q2). Differs from
@@ -435,7 +464,184 @@ actor TranslationActor {
             return
         }
         session.pendingSentences.append(sentence)
-        // Step 6 scope: do NOT dispatch to LFM2 here. Step 7 wires it.
+        dispatchNextSentenceIfIdle()
+    }
+
+    // MARK: - LFM2 dispatch (Step 7)
+
+    /// Spawns LFM2 dispatch for the next pending sentence if (a) the
+    /// session has one queued, and (b) no inflight generation is
+    /// currently running. Idempotent.
+    ///
+    /// **Scheduling assumption.** This method is called from
+    /// (1) ``enqueue(_:into:)`` after appending a fresh sentence, and
+    /// (2) the natural-completion branch of
+    /// ``handleGenerationNaturalCompletion(sessionToken:)`` after the
+    /// prior inflight task finishes. The actor's isolation guarantees
+    /// at most one of (1) or (2) runs at a time, so the
+    /// `session.inflightTask == nil` guard cannot race against itself.
+    ///
+    /// **Violation behavior.** If a future caller bypasses the actor's
+    /// isolation domain (e.g., calls this from a detached Task without
+    /// awaiting actor state), the guard becomes a check-then-act race
+    /// and two generations could start. The doc-comment is the only
+    /// guardrail; the protocol-level scheduling assumption (one
+    /// inflight per actor instance) is enforced by Swift's actor
+    /// model only when callers stay inside the actor's isolation.
+    private func dispatchNextSentenceIfIdle() {
+        guard let session, session.inflightTask == nil else { return }
+        guard !session.pendingSentences.isEmpty else { return }
+        let sentence = session.pendingSentences.removeFirst()
+        startGeneration(
+            sentence: sentence,
+            direction: session.direction,
+            sessionToken: session.token
+        )
+    }
+
+    /// Drives one LFM2 translation for the supplied sentence + direction.
+    ///
+    /// **Scheduling assumption.** The actor's isolation serialises
+    /// every method call against this engine instance. Conformers of
+    /// ``LFM2Engine/translate(userText:direction:)`` document a
+    /// serial-per-conformer contract; this actor honors that contract
+    /// by guarding dispatch with `session.inflightTask == nil` in
+    /// ``dispatchNextSentenceIfIdle()``. A `LeapSDK.Conversation`
+    /// instance is created and consumed inside
+    /// ``LFM2EngineAdapter/translate(userText:direction:)``'s body; it
+    /// never escapes that scope and is never shared across
+    /// ``TranslationActor`` calls.
+    ///
+    /// **Violation behavior.** If the engine emits `.complete` with no
+    /// prior `.chunk` events — i.e. an empty translation — the
+    /// assembled text is empty. Per the ``TranslatedSegment/isFallback``
+    /// contract, the actor emits a ``TranslatedSegment`` whose
+    /// `translatedText` is the source sentence text and whose
+    /// `isFallback` flag is `true` (passthrough source text). This
+    /// honors the fallback discipline without throwing.
+    ///
+    /// If the engine throws mid-stream, the actor finishes the session
+    /// continuation with ``TranslationError/generationFailed(_:)``
+    /// wrapping the underlying message, clears the pending queue, and
+    /// cancels the inflight task. Step 8 separately wires
+    /// `LeapSDK.GenerationHandler.stop()` cancellation; at Step 7 the
+    /// dispatch path observes cooperative `Task.isCancelled` only.
+    ///
+    /// **Violation test.** `C-T-VIOLATION-SLOW-DOWNSTREAM` in
+    /// ``TranslationActorTests`` drives a slow downstream consumer
+    /// against a fast upstream burst to assert that downstream stall
+    /// does not affect upstream queueing or LFM2 generation, and that
+    /// output ordering matches input ordering.
+    private func startGeneration(
+        sentence: BufferedSentence,
+        direction: TranslationDirection,
+        sessionToken: SessionToken
+    ) {
+        guard let engine = resolvedEngine else {
+            // Defensive: should not happen if warmup() ran first. Finish
+            // the session with a typed error.
+            session?.continuation.finish(throwing: TranslationError.modelNotReady)
+            return
+        }
+        guard let session, session.token == sessionToken else { return }
+
+        let task = Task<Void, Never> { [weak self] in
+            var accumulated = ""
+            let stream = engine.translate(userText: sentence.text, direction: direction)
+
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    switch event {
+                    case let .chunk(delta):
+                        if !delta.isEmpty {
+                            accumulated += delta
+                            await self?.yieldPartialChunk(
+                                delta: delta,
+                                sourceSegmentID: sentence.sourceSegmentIDs.first ?? UUID(),
+                                sessionToken: sessionToken
+                            )
+                        }
+                    case .complete:
+                        let translated = TranslatedSegment(
+                            sourceSegmentID: sentence.sourceSegmentIDs.first ?? UUID(),
+                            sourceText: sentence.text,
+                            translatedText: accumulated.isEmpty ? sentence.text : accumulated,
+                            direction: direction,
+                            startHostTime: sentence.startHostTime,
+                            endHostTime: sentence.endHostTime,
+                            isFallback: accumulated.isEmpty
+                        )
+                        await self?.yieldCompleted(translated, sessionToken: sessionToken)
+                    }
+                }
+            } catch {
+                await self?.handleGenerationError(error, sessionToken: sessionToken)
+                return
+            }
+
+            await self?.handleGenerationNaturalCompletion(sessionToken: sessionToken)
+        }
+        session.inflightTask = task
+    }
+
+    /// Yields a `.partialChunk` event on the active session's
+    /// continuation, guarded by session-token equality so stale-session
+    /// callbacks become no-ops.
+    private func yieldPartialChunk(
+        delta: String,
+        sourceSegmentID: UUID,
+        sessionToken: SessionToken
+    ) {
+        guard let session, session.token == sessionToken else { return }
+        session.continuation.yield(.partialChunk(sourceSegmentID: sourceSegmentID, delta: delta))
+    }
+
+    /// Yields a `.completed` event on the active session's continuation,
+    /// guarded by session-token equality so stale-session callbacks
+    /// become no-ops.
+    private func yieldCompleted(
+        _ translated: TranslatedSegment,
+        sessionToken: SessionToken
+    ) {
+        guard let session, session.token == sessionToken else { return }
+        session.continuation.yield(.completed(translated))
+    }
+
+    /// Handles a mid-generation error: finishes the continuation with
+    /// the wrapped ``TranslationError``, clears the pending queue, and
+    /// drops the session. Non-``TranslationError`` values are wrapped
+    /// as ``TranslationError/generationFailed(_:)`` per the
+    /// ``Translating`` error contract.
+    private func handleGenerationError(_ error: any Error, sessionToken: SessionToken) {
+        guard let session, session.token == sessionToken else { return }
+        let wrapped: TranslationError
+        if let translationError = error as? TranslationError {
+            wrapped = translationError
+        } else {
+            wrapped = .generationFailed(error.localizedDescription)
+        }
+        session.continuation.finish(throwing: wrapped)
+        session.pendingSentences.removeAll()
+        session.inflightTask = nil
+        session.timerTask?.cancel()
+        self.session = nil
+    }
+
+    /// Handles natural (non-error) completion of one inflight LFM2
+    /// generation. Clears `inflightTask`, dispatches the next queued
+    /// sentence if any, and finishes the session if upstream has
+    /// already drained and the queue is empty.
+    private func handleGenerationNaturalCompletion(sessionToken: SessionToken) {
+        guard let session, session.token == sessionToken else { return }
+        session.inflightTask = nil
+        dispatchNextSentenceIfIdle()
+        if session.drainTaskFinished,
+           session.pendingSentences.isEmpty,
+           session.inflightTask == nil
+        {
+            finishSession(sessionToken: sessionToken)
+        }
     }
 }
 
