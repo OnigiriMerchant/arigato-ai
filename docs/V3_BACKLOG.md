@@ -706,3 +706,56 @@ Cost estimate: ~15 min.
 - **Action when revisited:** (a) read `.claude/skills/leap-sdk/SKILL.md` end-to-end; (b) for every claim tied to v0.10.4.3, verify against v0.9.4 source tree + docs.liquid.ai; (c) rewrite or delete unverifiable claims rather than substitute the version string; (d) cross-reference `docs/PHASE_5_DOC_RESEARCH.md` for what's known to be true in v0.9.4. Likely a 30–60 min focused rewrite, not a one-line edit.
 - **Trigger to revisit:** next time the LEAP / Liquid AI skill is invoked (e.g., during Group B SPM-add work or any LFM2 debugging), OR before Phase 6 kickoff, whichever comes first.
 - **Cost estimate:** ~30–60 min for the rewrite, plus any incidental @doc-researcher pre-flight if claims are uncertain.
+
+---
+
+## Phase 5 Group C follow-ups (filed 2026-05-16 at end-of-group reviewer gate)
+
+### TranslationActor queue cap revisit if real meetings hit it
+
+- **What**: Phase 5 Group C ships with `TranslationActor.maxQueuedSentences = 20` and a drop-newest overflow policy (`enqueue(_:into:)` in `ArigatoAI/Translation/TranslationActor.swift`). The cap was picked as a defensible best-guess for "live meeting" backpressure (roughly: 20 sentences × 5s/sentence-of-translation budget = 100s of LFM2 backlog before drops start). Drop-newest diverges from `TranscriptionActor` C30's drop-oldest because sentences are coarser and irrecoverable.
+- **Trigger to revisit**: ANY meeting test where `actor.droppedNewestCount() > 0` is observed (i.e., the queue actually hit the cap), OR if MVP 1 users report "translations went missing mid-meeting." Phase 6 diagnostics (V3 #46) should surface this counter to local-only logs.
+- **Action**: review what produced the drop (speaker rate? LFM2 inference latency?), tune `maxQueuedSentences` upward or move to a smarter policy (drop oldest queued; preserve a "recent N" plus "earliest 1" pattern; etc).
+- **Cost estimate**: ~30 min if the cap just needs tuning; ~2 hours if the overflow policy needs redesign.
+
+### ModelRunner exclusive ownership invariant — code-review gate
+
+- **What**: `LFM2EngineAdapter` (in `ArigatoAI/Translation/LFM2ModelLoader.swift`) holds the SDK's non-`Sendable` `ModelRunner` reference as a private property. The doc-comment (lines ~143–149) asserts the adapter has exclusive ownership: no other actor accesses the `ModelRunner` directly. Group C's `TranslationActor` consumes the adapter via the `LFM2Engine` protocol, not by reaching through to the runner. The unchecked-`Sendable` annotation on the adapter is sound only as long as this invariant holds.
+- **Trigger to revisit**: any future PR that touches `LFM2ModelLoader.swift` or `TranslationActor.swift` AND introduces a new caller of `loader.loadIfNeeded()` (which returns the engine) OR a new consumer of the adapter from a different actor. Code-reviewer should reject such PRs unless the invariant is explicitly preserved.
+- **Action**: re-verify nothing has leaked a `ModelRunner` reference outside the adapter. If the design needs to share access (unlikely), refactor to wrap the runner in an actor instead of `@unchecked Sendable`.
+- **Cost estimate**: ~15 min of code-review attention per PR that touches these files.
+
+### TranscriptionActor C16 test-seam backport — `#if DEBUG`-gate the `awaitUpstreamDrained` extension
+
+- **What**: Group C gated its three diagnostic test seams (`pendingSentenceCount()`, `droppedNewestCount()`, `awaitUpstreamDrained()`) inside `#if DEBUG` from Step 6 per the user's Risk #3 call. Phase 4's `TranscriptionActor` has a similar production-visible seam (`awaitUpstreamDrained`, V3 #25) that was deferred to "pre-MVP-1 hardening" rather than fixed up-front. The Group C pattern is the clean reference for what the TranscriptionActor fix should look like.
+- **Trigger to revisit**: next sweep of Phase 4 V3 backlog cleanup, OR before MVP 1 ships if `TranscriptionActor`'s seam visibility becomes a production concern.
+- **Action**: mirror Group C's `#if DEBUG` extension pattern to `awaitUpstreamDrained` in `TranscriptionActor.swift`. Update any callers in `TranscriptionActorTests.swift` to also be `#if DEBUG`-conditional if they aren't already.
+- **Cost estimate**: ~15 min — same shape as the Group C application.
+
+### LEAP SDK cancellation semantics — empirical confirmation
+
+- **What**: Doc-researcher findings (2026-05-16) established that `Task.cancel()` is the maintainer-documented cancellation idiom for the `AsyncThrowingStream` variant of `Conversation.generateResponse(...)`. Quote from `docs.liquid.ai/.../conversation-generation.md`: "Cancelling the Swift Task or the Kotlin coroutine Job stops generation and frees native resources." However: (a) whether the stream throws `CancellationError` or finishes normally on cancel is NOT explicitly documented (`GenerationFinishReason` has no `.cancelled` case, suggesting it throws — but inference, not documentation); (b) `GenerationHandler.stop()` blocking-vs-fire-and-forget semantics are not documented (irrelevant for our stream-variant path, but would matter if we ever moved to the callback variant).
+- **Trigger to revisit**: when LEAP SDK ships a version that documents the cancellation behavior explicitly, OR when any real-world bug surfaces around mid-generation cancel (e.g., "tapping stop sometimes leaves the model in a broken state"). Group C Step 8 implementation handles BOTH paths (catch `CancellationError` AND a trailing `if Task.isCancelled { return }` guard), so the ambiguity is defensively neutralized in production.
+- **Action**: if the LEAP doc gets updated and the answer is definitive in either direction, drop the redundant defensive branch in `TranslationActor.startGeneration`. Until then, leave the belt-and-suspenders pattern alone.
+- **Cost estimate**: ~15 min cleanup once the SDK doc is definitive.
+
+### SentenceBuffer should be clock-injectable for deterministic silence-timeout tests
+
+- **What**: `SentenceBuffer` (`ArigatoAI/Translation/SentenceBuffer.swift`) is anchored to `ContinuousClock.Instant` per Step 4's locked signature. `TranslationActor.handleSegment` and `handleTimerTick` pass `ContinuousClock.now` to the buffer's append/flush methods. The injected `clock: any Clock<Duration>` on `TranslationActor` controls only the polling-interval `sleep`, NOT the buffer's staleness anchor. Consequence: the silence-timeout test (`translate_silenceTimeoutTriggersFlush`) has to use a real ~2.1s wall-clock sleep — a slow test in an otherwise fast suite.
+- **Trigger to revisit**: any future sweep of test suite performance, OR if `SentenceBuffer` gains additional time-sensitive responsibilities (e.g., a more aggressive flush policy under bursty Whisper output).
+- **Action**: refactor `SentenceBuffer` to take a generic `Clock<Duration>` parameter or accept a "now closure" instead of a concrete `ContinuousClock.Instant`. Tests then inject `TestClock`-driven instants for deterministic, fast staleness verification. Step 4's existing tests' arithmetic (`tSecondAppend.advanced(by: .seconds(threshold + 0.1))`) will need parallel updates.
+- **Cost estimate**: ~1 hour. Touches `SentenceBuffer.swift`, `TranslationActor.swift`, and ~5 tests across `SentenceBufferTests.swift` + `TranslationActorTests.swift`.
+
+### SentenceBuffer multi-boundary provenance accuracy
+
+- **What**: When `SentenceBuffer.append(_:at:)` encounters multiple boundary characters in a single appended chunk (e.g., text "Hello. World. Foo."), the buffer correctly splits into multiple `BufferedSentence` instances but assigns provenance conservatively: the first sentence inherits the segment's full host-time range, and subsequent splits use the most recent `endHostTime` as their `startHostTime`. Inline comment at `SentenceBuffer.swift:~232` flags this as best-effort. No production test currently exercises multi-boundary provenance accuracy; the existing `append_segmentWithMultipleBoundaries_yieldsSentencesInOrder` test asserts text content order, not host-time accuracy.
+- **Trigger to revisit**: when Group D UI integration surfaces visible mistiming on hop-overlapped sentences (i.e., the second sentence in a multi-boundary chunk would visually start at the wrong audio timeline position), OR when persistence/replay features need accurate host-time anchoring.
+- **Action**: derive per-split host-time ranges proportionally from the original segment's range (split point divides time linearly). Add a test that pins the exact times on a multi-boundary case.
+- **Cost estimate**: ~30 min — implementation is straightforward linear interpolation; test is one new case.
+
+### TranslationProtocolTests.translate_burstThenCancel — intermittent flake
+
+- **What**: `TranslationProtocolTests.translate_burstThenCancelFinishesStreamWithoutError` (in `ArigatoAITests/Translation/TranslationProtocolTests.swift`, line ~181) intermittently fails on the first run of a full test suite and passes on retry. The failure shape: `nextCompletedIDs → []` instead of `[nextSegmentID]` — the second `translate(...)` call (post-cancel reusability check) emits no `.completed` event in the consumer's window. Root cause: `FakeTranslator`'s post-cancel reset timing has a race where the cancel hasn't fully drained before the next translate's stream is consumed. Group C did not touch `FakeTranslator`; the flake pre-dates Group C work (first observed during Step 2 verification).
+- **Trigger to revisit**: when test-suite reliability becomes a CI blocker (currently no CI), OR pre-MVP-1 hardening, OR when test-flake detection rate becomes high enough to be annoying in normal local dev. Currently the flake fires roughly 1 in 5 full-suite runs on iPhone 17 Pro Max sim.
+- **Action**: inspect `FakeTranslator.cancel()` / `setConfiguredFailure(_:)` ordering; introduce a synchronization barrier or explicit "session done" signal. Could mirror Group C's `awaitUpstreamDrained` pattern.
+- **Cost estimate**: ~30 min to diagnose + ~30 min to fix + verify.
