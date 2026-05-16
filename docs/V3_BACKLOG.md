@@ -866,6 +866,14 @@ Cost estimate: ~15 min.
   - Local-path loading workaround: 2–4 hours if SDK supports it (verify load path + implement bundled-or-cached-first logic + Hugging Face download flow + tests).
   - Bundled-model alternative: 1–2 hours (add GGUF to app resources + configure SDK to load from bundle + handle bundle vs download decision).
   - SDK fork: 1–2 days if neither workaround is viable. Last resort.
+- **External research findings (partial verification, 2026-05-16):** external AI research (Grok + Gemini) was reviewed; most of the research's specific code surface (`ModelDownloader.loadModel(repoId:quantization:)`) is UNVERIFIED against our pinned LEAP SDK v0.9.4 and may be v0.10.x-specific or hallucinated. Three pieces of usable information emerged:
+  - **VERIFIED:**
+    - Quantization sizes (more precise than prior estimates): Q4_K_M ~229MB, Q5_K_M ~350MB, F16 ~711MB. Supersedes the "~150–200MB" estimate in the Shipping implication section above.
+    - Mandatory system prompts for LFM2-350M-ENJP-MT are exact strings: `"Translate to Japanese."` or `"Translate to English."` Already implemented in Group C's `TranslationActor`; no action needed.
+  - **FLAGGED, UNVERIFIED:**
+    - Research recommended SDK v0.10.x+ with an API surface differing from our pinned v0.9.4: specifically `ModelDownloader.loadModel(repoId: "LiquidAI/LFM2-350M-ENJP-MT-GGUF", quantization: "Q4_K_M")`. If accurate, v0.10.x may support Hugging Face direct loading by `repoId`, bypassing the broken portal entirely. NEEDS VERIFICATION: xcframework inspection of v0.10.x against v0.9.4's `Leap.load(model:quantization:)` API surface (verified during Phase 5 Group B pre-flight). If true, an SDK version bump becomes a viable workaround path.
+    - Research also mentioned `LeapModelDownloader` as a separate SPM product target. This product IS visible in our integration (per `AppBootstrapper` logs: `LeapModelDownloader initialized with directory: .../Documents/leap_models`), but its full API surface beyond the basic init has not been doc-researched in v0.9.4. May expose a separate loading path that doesn't route through the auth-gated portal.
+  - **Action when triggered:** when this V3 entry is triggered (pre-MVP-1 hardening per the existing hard trigger), include these UNVERIFIED leads in the @doc-researcher pre-flight: verify the v0.10.x API surface AND the v0.9.4 `LeapModelDownloader` surface BEFORE deciding between the workaround paths enumerated in "Cost estimate" above. An SDK bump that genuinely fixes the download path would dominate all other workaround paths on cost.
 - **Cross-references:**
   - Hugging Face source: `https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF` (open, license `lfm1.0`)
   - LEAP SDK pinned version: v0.9.4 (per `docs/CURRENT_STATE.md`)
