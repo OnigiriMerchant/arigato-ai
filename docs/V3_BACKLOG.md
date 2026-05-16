@@ -948,3 +948,53 @@ Cost estimate: ~15 min.
 - **Cross-references:**
   - Swift 6 mode build warnings entry above — the finding that prompted this entry
   - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update
+
+### Phase-2 view + view-model + formatter trio convention — document in CLAUDE.md
+
+- **What:** Group D's Phase 2 produced three consistent view trios — `MeetingListView` + `MeetingListViewModel` + `MeetingListRowFormatter` (Step 6), `MeetingControlsView` + `MeetingControlsViewModel` + `MeetingControlsFormatter` (Step 7), `TranscriptSplitScreenView` + `TranscriptSplitScreenViewModel` + `TranscriptSplitScreenFormatter` (Step 9a). All three trios follow the identical shape: `@MainActor @Observable` VM owning state + reload logic, `nonisolated` formatter enum with pure-value projection helpers, view body that consumes both. The pattern is now load-bearing for testability because ViewInspector is not in the project — extracting state + projection into testable types is the only behavioral-coverage path.
+- **Why this is V3 and not just a one-off note:** future view work (Step 10's auto-save subscriber UI, Phase 3's history detail view, Phase 6+ settings + export surfaces) will repeat this pattern. New agents reaching for a single-file SwiftUI view will miss the pattern unless CLAUDE.md surfaces it. The trio is also what makes the "no ViewInspector required" decision sustainable.
+- **Trigger:** before the next view-introducing dispatch (Step 11 detail view OR Phase 3 history search) OR next workflow automation pass.
+- **Action when triggered:** add a "Phase-2 view trio convention" section to CLAUDE.md's "Coding standards" or as a new section adjacent to "SwiftUI for all views". Reference all three Step 6 / 7 / 9a precedents.
+- **Cost estimate:** ~15 min to draft the CLAUDE.md section. Tiny investment.
+- **Cross-references:**
+  - Step 6 trio (commit `7287099`): `MeetingListView` + `MeetingListViewModel` + `MeetingListRowFormatter`
+  - Step 7 trio (commit `ecc9bbe`): `MeetingControlsView` + `MeetingControlsViewModel` + `MeetingControlsFormatter` (formatter is in-file enum)
+  - Step 9a trio (commit `d3b827a`): `TranscriptSplitScreenView` + `TranscriptSplitScreenViewModel` + `TranscriptSplitScreenFormatter`
+
+### LanguageRouter.routedHistory consumed only for chrome currentLanguage — retire post-Phase-5
+
+- **What:** Step 9a's split-screen `TranscriptLiveView` refactor replaced the `routedHistory`-driven middle-region `List` with a `MeetingStore.fetchSentences`-driven `TranscriptSplitScreenView`. After Step 9a, `LanguageRouter.routedHistory` is consumed by exactly one production surface: the chrome's `currentLanguage` binding in `TranscriptLiveView.indicatorChrome` (top region). The full `routedHistory` array is no longer rendered anywhere in production code — only the `currentLanguage` derived value is observed.
+- **Why this is V3 and not just a one-off note:** the array storage keeps growing (one entry per Whisper window) but the value is unused. For a 1-hour meeting at 5-second windows, that's 720 stored entries the UI never reads. Memory cost is small but non-zero; cleanup is owed.
+- **Bundle with:** existing V3 entry "Remove dead router-drain path from AudioCaptureViewModel" — both entries are Phase-4 → Phase-5 lifecycle dead-code-removal candidates and share investigation surface.
+- **Trigger:** post-Group-D cleanup OR pre-MVP-1 hardening, whichever fires first.
+- **Action when triggered:** decide whether to (a) narrow `LanguageRouter` to expose only `currentLanguage` and remove `routedHistory` storage, or (b) keep `routedHistory` for future diagnostic surfaces (e.g. V3 #46 local-only diagnostics consumes it). Option (a) is the more aggressive cleanup; option (b) keeps the option open for diagnostic UI. Decision belongs to the cleanup pass.
+- **Cost estimate:** ~30 min if option (a) is chosen (narrow the type + update the chrome binding + adjust 2-3 tests in `LanguageRouterTests`); ~zero if option (b) is chosen (no code change, just documentation).
+- **Cross-references:**
+  - `LanguageRouter.routedHistory` declaration
+  - `TranscriptLiveView.indicatorChrome` consumer
+  - V3 entry "Remove dead router-drain path from AudioCaptureViewModel" — co-tracked cleanup
+  - V3 #46 (Local-only diagnostics) — possible future re-consumer of `routedHistory`
+
+### Scroll animation timing tuning — 0.35s easeInOut needs physical device verification
+
+- **What:** Step 9a's ``TranscriptSplitScreenViewModel.scrollBothToBottom()`` wraps both `ScrollPosition.scrollTo(edge: .bottom)` mutations in `withAnimation(.easeInOut(duration: 0.35))` per DR-4 § "Synchronized dual-scroll animation". The 0.35s easeInOut curve was picked as a reasonable default — fast enough to feel snappy on a return-to-live tap, slow enough that the eye can track both columns animating in parallel.
+- **Why this is V3:** simulator scroll animation does not faithfully represent the physical iPhone 17 Pro Max's display refresh + ProMotion timing characteristics. The curve may feel right in the simulator but jittery / sluggish / over-snappy on real hardware. The strict `withAnimation` single-transaction assertion is also V3-deferred (no stable SwiftUI animation observability seam in the current target — see `TranscriptSplitScreenViewModelTests.viewModel_scrollBothToBottom_setsBothPositionsToBottomEdge` floor-test pattern).
+- **Trigger:** MVP-1 device testing — run a populated transcript, scroll one column up, tap the return arrow, evaluate the feel on both columns simultaneously across light/dark mode + Dynamic Type variants. If the curve feels off, tune duration in the 0.20–0.50s range and re-evaluate.
+- **Action when triggered:** physical-device session with a populated split-screen view; tune `scrollBothToBottom`'s `withAnimation` duration. If a stable SwiftUI animation observability seam emerges in a future iOS SDK, write the strict single-transaction test.
+- **Cost estimate:** ~10–15 min of on-device evaluation per tuning iteration; one tuning pass should suffice. Strict single-transaction test deferred indefinitely pending SwiftUI seam availability.
+- **Cross-references:**
+  - DR-4 § "Synchronized dual-scroll animation"
+  - `TranscriptSplitScreenViewModel.scrollBothToBottom()`
+  - `TranscriptSplitScreenViewModelTests.viewModel_scrollBothToBottom_setsBothPositionsToBottomEdge` — floor-test
+
+### Live-chunk streaming display in split-screen view — deferred from Step 9a
+
+- **What:** Step 9a's ``TranscriptSplitScreenView`` reads ``TranscriptSplitScreenViewModel.sentences`` exclusively, which only contains persisted `.completed` sentences (D3-A option 2 contract). Token-by-token streaming output from `MeetingSession.liveChunks` is NOT rendered in the JA / EN columns — partial chunks arrive in the data layer but the user sees nothing until the completion lands and the next reload fires.
+- **Why this is V3:** UI decision #1 framed the split-screen as "JA top + EN bottom" with no specific commitment to live-token streaming inside the columns; sentence-level granularity is acceptable for MVP-1. But token streaming would meaningfully improve perceived latency — users see translation progress as it happens rather than discrete sentence drops. Original brief enumerated `view_streamingPartialChunk_appearsInColumnImmediately` as a test candidate; Step 9a pre-authorized STOP deferred it because integration would require new VM state (a mirror of `liveChunks`) + a new view-body branch.
+- **Trigger:** post-MVP-1 device testing if the sentence-drop cadence feels too discrete OR if user feedback explicitly requests token streaming in transcript columns.
+- **Action when triggered:** (1) add `liveChunks: [UUID: String]` mirror to `TranscriptSplitScreenViewModel` driven by a new `MeetingSession.liveChunksDidUpdate` callback or by direct `@Observable` binding; (2) extend `TranscriptSplitScreenView` to render the in-flight chunk row (typically appended as a "ghost" row below the persisted rows in each column, replaced when the matching `.completed` arrives); (3) extend `TranscriptSplitScreenFormatter` with a `liveChunkRow(for:)` projection that handles in-flight state styling (italic / lower contrast / etc); (4) add the deferred view test `view_streamingPartialChunk_appearsInColumnImmediately`.
+- **Cost estimate:** ~2–3 hours including formatter + view-body integration + tests. The live-chunk infrastructure is already in `MeetingSession`, so this is UI-only work.
+- **Cross-references:**
+  - `MeetingSession.liveChunks` (Step 3)
+  - `TranscriptSplitScreenViewModel` — currently consumes only `sentences`
+  - Step 9a recovery dispatch documentation in CURRENT_STATE.md
