@@ -1,0 +1,222 @@
+//
+//  MeetingStoreTests.swift
+//  ArigatoAITests
+//
+//  Created by Jose Castell on 2026/05/16.
+//
+
+@testable import ArigatoAI
+import Foundation
+import SwiftData
+import Testing
+
+/// Tests for ``MeetingStore`` — the first `@ModelActor` in the project.
+///
+/// Each test builds an in-memory `ModelContainer` so they run fast and
+/// leave no on-disk artifacts. The actor's saves are verified against
+/// a **fresh** `ModelContext` constructed from the same container, so
+/// the assertions confirm durability of the actor's `save()` rather
+/// than mere visibility inside the actor's own context.
+///
+/// Marked `@MainActor` to match the project convention
+/// (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`) and so that the
+/// suite can safely call main-actor-isolated helpers like
+/// ``SearchTextNormalizer/normalize(_:)`` between `await` calls on
+/// the actor under test.
+@Suite("MeetingStore")
+@MainActor
+struct MeetingStoreTests {
+    /// Builds an in-memory container fresh for each test.
+    private static func makeContainer() throws -> ModelContainer {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        return try ModelContainer(
+            for: Meeting.self, Sentence.self,
+            configurations: config
+        )
+    }
+
+    /// `startMeeting` inserts a `Meeting` row and returns its
+    /// persistent identifier. Verified against a fresh `ModelContext`
+    /// to confirm the actor's `save()` is durable.
+    @Test func startMeeting_returnsPersistentIdentifier() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let id = try await store.startMeeting(
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            title: "Kickoff"
+        )
+
+        // Fresh context against the same container — proves the row
+        // landed on the persistent store, not just the actor's context.
+        let context = ModelContext(container)
+        let meetings = try context.fetch(FetchDescriptor<Meeting>())
+        #expect(meetings.count == 1)
+        #expect(meetings.first?.persistentModelID == id)
+        #expect(meetings.first?.title == "Kickoff")
+    }
+
+    /// `appendSentence` must populate `searchableText` via
+    /// ``SearchTextNormalizer/normalize(_:)`` over the concatenated
+    /// source + translation text. This is the Amendment 1 contract.
+    @Test func appendSentence_populatesSearchableText() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(),
+            title: "Search-field test"
+        )
+
+        let source = "こんにちは、Tanaka-san"
+        let translation = "Hello, Mr. Tanaka"
+        try await store.appendSentence(
+            meetingID: meetingID,
+            timestamp: Date(),
+            sourceLanguage: "ja",
+            sourceText: source,
+            translatedText: translation,
+            sourceSegmentID: UUID()
+        )
+
+        let context = ModelContext(container)
+        let sentences = try context.fetch(FetchDescriptor<Sentence>())
+        #expect(sentences.count == 1)
+        let expected = SearchTextNormalizer.normalize(source + " " + translation)
+        #expect(sentences.first?.searchableText == expected)
+        #expect(sentences.first?.searchableText.isEmpty == false)
+    }
+
+    /// `appendSentence` against a deleted meeting must throw
+    /// ``MeetingStoreError/meetingNotFound(_:)``. The test path uses a
+    /// real-but-stale `PersistentIdentifier` — start a meeting, capture
+    /// its id, delete it, then call `appendSentence`. We do not
+    /// fabricate identifiers because `PersistentIdentifier`'s internals
+    /// are not public.
+    @Test func appendSentence_meetingNotFound_throwsMeetingStoreError() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(),
+            title: "Doomed"
+        )
+        try await store.deleteMeeting(meetingID: meetingID)
+
+        await #expect(throws: MeetingStoreError.meetingNotFound(meetingID)) {
+            try await store.appendSentence(
+                meetingID: meetingID,
+                timestamp: Date(),
+                sourceLanguage: "en",
+                sourceText: "won't land",
+                translatedText: "届かない",
+                sourceSegmentID: UUID()
+            )
+        }
+    }
+
+    /// `endMeeting` sets `endedAt` to the value passed in and saves.
+    @Test func endMeeting_setsEndedAt() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let endedAt = Date(timeIntervalSince1970: 1_700_003_600)
+        let meetingID = try await store.startMeeting(
+            startedAt: startedAt,
+            title: "Bounded meeting"
+        )
+
+        try await store.endMeeting(meetingID: meetingID, endedAt: endedAt)
+
+        let context = ModelContext(container)
+        let meetings = try context.fetch(FetchDescriptor<Meeting>())
+        #expect(meetings.count == 1)
+        #expect(meetings.first?.endedAt == endedAt)
+    }
+
+    /// `deleteMeeting` cascades through the `@Relationship(deleteRule:
+    /// .cascade)` declared on `Meeting.sentences`. The cascade is
+    /// already covered at the unit-entity level in
+    /// `MeetingEntityTests.cascadeDelete_singleSave_removesOrphanSentences`;
+    /// this test confirms the same contract holds when the writes go
+    /// through the actor's save path.
+    @Test func deleteMeeting_cascadesSentences() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(),
+            title: "Cascade-through-actor"
+        )
+        for i in 0 ..< 3 {
+            try await store.appendSentence(
+                meetingID: meetingID,
+                timestamp: Date(),
+                sourceLanguage: "ja",
+                sourceText: "src\(i)",
+                translatedText: "tr\(i)",
+                sourceSegmentID: UUID()
+            )
+        }
+
+        // Pre-delete sanity.
+        let preContext = ModelContext(container)
+        #expect(try preContext.fetch(FetchDescriptor<Sentence>()).count == 3)
+
+        try await store.deleteMeeting(meetingID: meetingID)
+
+        let postContext = ModelContext(container)
+        #expect(try postContext.fetch(FetchDescriptor<Meeting>()).isEmpty)
+        #expect(try postContext.fetch(FetchDescriptor<Sentence>()).isEmpty)
+    }
+
+    /// **Concurrency violation test (per CLAUDE.md "Concurrency design
+    /// discipline").** The doc-comment on ``MeetingStore`` declares the
+    /// scheduling assumption that the actor serializes its work on its
+    /// own executor. This test violates the assumption by firing 50
+    /// concurrent `appendSentence` calls via `withTaskGroup` against
+    /// the same meeting. Actor isolation must serialize them
+    /// automatically — the floor-test is: all 50 sentences land, with
+    /// 50 distinct `sourceSegmentID` values and no duplicates.
+    ///
+    /// If this test fails, the `@ModelActor` pattern itself is broken
+    /// in the toolchain — not a regression in our code.
+    @Test func appendSentence_concurrentCallsSerializeCleanly() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(),
+            title: "Greedy producer"
+        )
+
+        // Pre-generate 50 distinct segment IDs so we can detect drops
+        // or duplicates after the fact.
+        let segmentIDs: [UUID] = (0 ..< 50).map { _ in UUID() }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for segID in segmentIDs {
+                group.addTask {
+                    try await store.appendSentence(
+                        meetingID: meetingID,
+                        timestamp: Date(),
+                        sourceLanguage: "ja",
+                        sourceText: "burst",
+                        translatedText: "burst-tr",
+                        sourceSegmentID: segID
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let context = ModelContext(container)
+        let sentences = try context.fetch(FetchDescriptor<Sentence>())
+        #expect(sentences.count == 50)
+
+        let landedIDs = Set(sentences.map(\.sourceSegmentID))
+        #expect(landedIDs.count == 50, "Duplicate or dropped segment IDs after concurrent burst")
+        #expect(landedIDs == Set(segmentIDs), "Landed IDs do not match dispatched IDs")
+    }
+}

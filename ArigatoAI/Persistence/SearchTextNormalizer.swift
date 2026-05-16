@@ -36,12 +36,19 @@ enum SearchTextNormalizer {
     ///
     /// The transform is idempotent: `normalize(normalize(x)) == normalize(x)`.
     ///
+    /// Marked `nonisolated` so ``MeetingStore`` (an off-main
+    /// `@ModelActor`) can call this on its own executor without a
+    /// main-actor hop. The function is pure — no global state, no
+    /// UIKit, no SwiftUI — and the project's
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` setting would
+    /// otherwise force callers to await it.
+    ///
     /// - Parameter s: Arbitrary mixed-script input.
     /// - Returns: A folded, katakana-normalized string. Returns `s`
     ///   unchanged on the `applyingTransform` path only if the
     ///   transform itself produces `nil` (which is not expected for the
     ///   built-in `.hiraganaToKatakana` transform but is defensively handled).
-    static func normalize(_ s: String) -> String {
+    nonisolated static func normalize(_ s: String) -> String {
         let katakana = (s as NSString)
             .applyingTransform(.hiraganaToKatakana, reverse: false) ?? s
         return katakana.folding(
