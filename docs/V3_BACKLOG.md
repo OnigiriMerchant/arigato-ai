@@ -852,7 +852,7 @@ Cost estimate: ~15 min.
 - **Critical observation:** this is an EXTERNAL operational problem, not a code bug. Production wiring (Steps 1–8) is correct. Only the model fetch fails — everything downstream of it would work if the model loaded.
 - **Shipping implication** (load-bearing):
   - **For MVP-1 shipping, this MUST be resolved.** Users cannot launch the app today without a working LFM2 fetch. The current state — "app shows `StartupErrorView` on every launch" — is a hard blocker for any device testing or release.
-  - Recommended shipping strategy: implement bundled-or-cached-first loading. Bundle a Q5_K_M GGUF in the app's resources OR fetch from Hugging Face on first launch (publicly accessible, no auth, stable infrastructure). Liquid AI's portal becomes optional/fallback, not primary.
+  - Recommended shipping strategy (sharpened by 2026-05-16 sideload findings): implement local-path loading in `AppBootstrapper`. The LEAP SDK's auto-download path is broken AND the file-detection fallback does not exist in v0.9.4 (see "Empirical findings" subsection below). The fix requires (1) downloading the GGUF from Hugging Face directly on first launch via `URLSession` (bypassing the LEAP portal entirely), (2) caching to Application Support, (3) initializing `Leap.load()` via whatever API surface accepts a local URL (to be verified during investigation). If no local-URL API exists in v0.9.4, either SDK bump to v0.10.x is required OR fork the SDK to add the surface.
   - Trade-off: bundling adds ~150–200MB to the app binary (LFM2-350M-ENJP-MT Q5_K_M is roughly that size). First-launch download from Hugging Face keeps binary small but adds first-launch latency + network dependency.
 - **Trigger to investigate:**
   - **Hard trigger:** BEFORE any device testing of MVP-1 features that touch translation.
@@ -861,15 +861,21 @@ Cost estimate: ~15 min.
 - **Investigation steps when triggered:**
   1. Verify LEAP SDK download URL pattern in v0.9.4 vs current `leap.liquid.ai` API.
   2. Check if LEAP SDK v0.10+ ships fresh credentials or changes the download path.
-  3. Investigate whether `Leap.load(model:quantization:)` accepts a local file path / URL, bypassing the portal entirely (Phase 5 Group B doc-researcher work locked GGUF-path loading as supported — see `PHASE_5_HANDOFF.md`).
+  3. Investigate whether `Leap.load(model:quantization:)` accepts a local file path / URL directly (BYPASSES the portal entirely):
+     - The 2026-05-16 empirical sideload (see "Empirical findings" subsection below) confirmed that placing the GGUF file in `Documents/leap_models/` does NOT trigger SDK fallback to local file. The SDK ALWAYS attempts portal download first.
+     - Therefore, "local-path loading" must mean an explicit alternate API surface, not implicit file detection. Possible candidates:
+       a. A separate overload of `Leap.load()` that takes a local URL parameter.
+       b. The `LeapModelDownloader` SPM product (separate from `LeapSDK`) may expose direct file-loading APIs.
+       c. A lower-level primitive that constructs a `Conversation` or `ModelRunner` from a local URL without going through `Leap.load()`.
+     - xcframework inspection required to verify what's exposed in v0.9.4 vs v0.10.x.
   4. If local-path loading is supported: implement bundled-or-cached-first strategy in `AppBootstrapper`. Download GGUF from Hugging Face directly (not Liquid AI portal) on first launch; cache to Application Support; re-use thereafter.
   5. If local-path loading is NOT supported: file SDK feature request OR fork LEAP SDK to add it OR write a thin wrapper over the SDK's lower-level loading primitives.
 - **Workaround for development:** none yet. Smoke testing visual UI works (app shows `StartupErrorView` before crashing), but end-to-end translation testing is blocked until LFM2 loads. UI development continues unblocked (Step 9 design rebuild).
 - **Cost estimate:**
-  - Diagnosis: 30 min (mostly already done — this entry captures it).
-  - Local-path loading workaround: 2–4 hours if SDK supports it (verify load path + implement bundled-or-cached-first logic + Hugging Face download flow + tests).
-  - Bundled-model alternative: 1–2 hours (add GGUF to app resources + configure SDK to load from bundle + handle bundle vs download decision).
-  - SDK fork: 1–2 days if neither workaround is viable. Last resort.
+  - Diagnosis: ~complete (this entry captures it through 2026-05-16 evening).
+  - Local-path loading workaround: 2–4 hours IF a v0.9.4 API exists; +4–8 hours if SDK bump required (regression testing across our existing Group C integration); +1–2 days if SDK fork required.
+  - Hugging Face direct download wrapper in `AppBootstrapper`: 1–2 hours additional regardless of which loading path is used.
+  - The whole work is best-bundled as a single pre-MVP-1 hardening sprint.
 - **External research findings (partial verification, 2026-05-16):** external AI research (Grok + Gemini) was reviewed; most of the research's specific code surface (`ModelDownloader.loadModel(repoId:quantization:)`) is UNVERIFIED against our pinned LEAP SDK v0.9.4 and may be v0.10.x-specific or hallucinated. Three pieces of usable information emerged:
   - **VERIFIED:**
     - Quantization sizes (more precise than prior estimates): Q4_K_M ~229MB, Q5_K_M ~350MB, F16 ~711MB. Supersedes the "~150–200MB" estimate in the Shipping implication section above.
@@ -878,12 +884,28 @@ Cost estimate: ~15 min.
     - Research recommended SDK v0.10.x+ with an API surface differing from our pinned v0.9.4: specifically `ModelDownloader.loadModel(repoId: "LiquidAI/LFM2-350M-ENJP-MT-GGUF", quantization: "Q4_K_M")`. If accurate, v0.10.x may support Hugging Face direct loading by `repoId`, bypassing the broken portal entirely. NEEDS VERIFICATION: xcframework inspection of v0.10.x against v0.9.4's `Leap.load(model:quantization:)` API surface (verified during Phase 5 Group B pre-flight). If true, an SDK version bump becomes a viable workaround path.
     - Research also mentioned `LeapModelDownloader` as a separate SPM product target. This product IS visible in our integration (per `AppBootstrapper` logs: `LeapModelDownloader initialized with directory: .../Documents/leap_models`), but its full API surface beyond the basic init has not been doc-researched in v0.9.4. May expose a separate loading path that doesn't route through the auth-gated portal.
   - **Action when triggered:** when this V3 entry is triggered (pre-MVP-1 hardening per the existing hard trigger), include these UNVERIFIED leads in the @doc-researcher pre-flight: verify the v0.10.x API surface AND the v0.9.4 `LeapModelDownloader` surface BEFORE deciding between the workaround paths enumerated in "Cost estimate" above. An SDK bump that genuinely fixes the download path would dominate all other workaround paths on cost.
+- **Empirical findings (2026-05-16 evening):** manual sideload attempt confirmed the LEAP SDK v0.9.4's download behavior:
+  - The SDK's `Leap.load(model:quantization:)` always attempts the portal download FIRST.
+  - It does NOT scan the local `Documents/leap_models/` directory for an existing model file before initiating download.
+  - Pre-populating the directory with the correct GGUF file does NOT bypass the portal download path.
+  - Error `NSURLErrorDomain -1011` fires regardless of whether the target model file already exists locally.
+  - **Procedure executed (and what it confirmed):**
+    - Downloaded `LFM2-350M-ENJP-MT-Q5_K_M.gguf` (248MB) directly from Hugging Face.
+    - Placed it in the simulator's `Documents/leap_models/` directory via `xcrun simctl get_app_container booted com.jose.ArigatoAI data`.
+    - Re-launched the app.
+    - Observed: SDK still attempted portal download, still failed with `-1011`.
+  - **This rules out the simplest workaround:**
+    - ~~"Bundle file in app resources / pre-populate at first launch"~~ — does NOT work without SDK changes.
+  - **This sharpens the viable workaround paths to two:**
+    - (a) Use a LEAP SDK API surface that loads from a local path/URL directly (BYPASSES portal). Requires verifying whether such an API exists in v0.9.4 (or v0.10.x).
+    - (b) Fork the SDK to add disk-first lookup before initiating portal download. Last resort.
 - **Cross-references:**
   - Hugging Face source: `https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF` (open, license `lfm1.0`)
   - LEAP SDK pinned version: v0.9.4 (per `docs/CURRENT_STATE.md`)
   - Phase 5 Group B doc-researcher findings (`docs/PHASE_5_HANDOFF.md`): GGUF-path loading via `Leap.load(model:quantization:)` confirmed available
   - V3 #45 LFM2 model monitoring
-  - User decision noted: Path 3 selected (defer fix; address before MVP-1 ship)
+  - User decision noted: Path 3 selected (defer fix; address before MVP-1 ship); 2026-05-16 evening sideload attempt confirmed sideload-only workaround is non-viable
+  - 2026-05-16 empirical sideload finding — see "Empirical findings" subsection above (filed in this commit)
   - `StartupErrorView` surfacing path (Phase 5 Group B) — error handling working correctly
 
 ### Swift 6 mode build warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel
