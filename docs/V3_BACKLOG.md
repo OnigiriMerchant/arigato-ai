@@ -832,3 +832,26 @@ Cost estimate: ~15 min.
   - V3 #16 (`TranslationProtocolTests.translate_burstThenCancel`)
   - Step 4 verification run logs
   - Step 8 verification run logs
+
+### LFM2 model download failing across simulators (NSURLErrorDomain -1011) — auth-gating suspected
+
+- **What:** Manual smoke testing after Step 8 production wiring revealed both iPhone 17 Pro and iPhone 17 Pro Max simulators fail at app launch with `Failed to load LFM2 model: NSURLErrorDomain error -1011`. App's error handling working as designed (`StartupErrorView` surfaces gracefully). Liquid AI's CDN endpoint (`leap.liquid.ai/api/models/lfm2-350m-enjp-mt`) returns 200 OK to anonymous HEAD but is Clerk-authenticated (`x-clerk-auth-reason: session-token-and-uat-missing` header on anonymous request); anonymous JSON body fetch would likely return 401/403. LEAP iOS SDK v0.9.4 must handle auth via bundled credentials or session token.
+- **Suspected causes (ranked):**
+  1. SDK's bundled auth credentials expired or revoked since v0.9.4 release.
+  2. Liquid AI rotated Clerk keys or changed auth requirements without bumping SDK.
+  3. Free-tier model distribution throttled or discontinued.
+- **Critical observation:** this is an EXTERNAL operational problem, not a code bug. Production wiring (Steps 1–8) is correct. Only the model fetch fails — everything downstream of it would work if the model loaded.
+- **Trigger to investigate:** before MVP-1 device testing OR when V3 #45 (LFM2 model monitoring) surfaces relevant Liquid4All activity, whichever fires first. Daily brief should flag any auth-related commits in `Liquid4All/leap-sdk` or `Liquid4All/docs`.
+- **Investigation steps when triggered:**
+  1. Re-test on fresh simulator to rule out cache state.
+  2. Read LEAP SDK source to identify the auth mechanism (bundled API key, Clerk session, OAuth).
+  3. Check `Liquid4All/leap-sdk` GitHub issues for similar reports.
+  4. Check Liquid AI's developer documentation / changelog for auth changes.
+  5. If credentials expired: check whether v0.10+ ships fresh credentials, or whether explicit auth init is now required.
+  6. If auth model changed: implement explicit auth init in `AppBootstrapper` (new V3 entry).
+  7. If service discontinued: hard blocker — needs alternative model distribution path.
+- **Workaround for development:** none yet. Smoke testing visual UI works (app shows `StartupErrorView` before crashing), but end-to-end translation testing is blocked until LFM2 loads. UI development continues unblocked (Step 9 design rebuild).
+- **Cross-references:**
+  - V3 #45 (LFM2 model monitoring) — bundle investigation here
+  - `StartupErrorView` surfacing path (Phase 5 Group B) — error handling working correctly
+- **Cost estimate:** 1–2 hours diagnosis. Variable remediation cost depending on root cause (~10 min if v0.10+ fixes it, days if service-side block).
