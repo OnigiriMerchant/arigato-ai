@@ -251,6 +251,103 @@ struct MeetingStoreTests {
         #expect(summaries.map(\.startedAt) == [newest, middle, oldest])
     }
 
+    // MARK: - fetchSentences (Step 9a)
+
+    /// **D9a-T-store-1** — `fetchSentences` for a meeting with no
+    /// sentences returns an empty array (NOT throw). The empty-array
+    /// contract matches ``fetchAllUnfiltered`` and supports
+    /// ``TranscriptSplitScreenViewModel/reload()`` treating absence as
+    /// "nothing to display yet."
+    @Test func fetchSentences_meetingWithNoSentences_returnsEmptyArray() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            title: "Empty"
+        )
+
+        let sentences = try await store.fetchSentences(meetingID: meetingID)
+        #expect(sentences.isEmpty)
+    }
+
+    /// **D9a-T-store-2** — `fetchSentences` returns every sentence in the
+    /// meeting, **oldest-first** by `timestamp`. Inserted out of
+    /// chronological order so the assertion proves the sort is the
+    /// descriptor's, not the insertion order's. Step 9a's split-screen
+    /// UI relies on the ascending order to render top-down chronological
+    /// rows under the auto-follow contract (UI decision #2).
+    @Test func fetchSentences_meetingWithSentences_returnsAllInTimestampOrder() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            title: "Ordered"
+        )
+
+        // Three sentences inserted out of timestamp order so the
+        // assertion proves the descriptor sorted them, not insertion
+        // order.
+        let middle = Date(timeIntervalSince1970: 1_700_000_010)
+        let oldest = Date(timeIntervalSince1970: 1_700_000_000)
+        let newest = Date(timeIntervalSince1970: 1_700_000_020)
+
+        try await store.appendSentence(
+            meetingID: meetingID,
+            timestamp: middle,
+            sourceLanguage: "ja",
+            sourceText: "middle source",
+            translatedText: "middle translated",
+            sourceSegmentID: UUID()
+        )
+        try await store.appendSentence(
+            meetingID: meetingID,
+            timestamp: oldest,
+            sourceLanguage: "en",
+            sourceText: "oldest source",
+            translatedText: "oldest translated",
+            sourceSegmentID: UUID()
+        )
+        try await store.appendSentence(
+            meetingID: meetingID,
+            timestamp: newest,
+            sourceLanguage: "ja",
+            sourceText: "newest source",
+            translatedText: "newest translated",
+            sourceSegmentID: UUID()
+        )
+
+        let sentences = try await store.fetchSentences(meetingID: meetingID)
+        #expect(sentences.count == 3)
+        #expect(sentences.map(\.timestamp) == [oldest, middle, newest])
+        #expect(sentences.map(\.sourceText) == ["oldest source", "middle source", "newest source"])
+    }
+
+    /// **D9a-T-store-3** — `fetchSentences` against a deleted meeting
+    /// (stale `PersistentIdentifier`) returns an **empty array** rather
+    /// than throwing `meetingNotFound`. The read-path contract is
+    /// distinct from the write-path contract (`appendSentence`,
+    /// `updateTitle`, `endMeeting`, `deleteMeeting` all throw on stale
+    /// IDs). The doc-comment on ``MeetingStore/fetchSentences(meetingID:)``
+    /// documents this divergence.
+    @Test func fetchSentences_nonexistentMeetingID_returnsEmptyArray() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        // Real-but-stale identifier — start, capture id, delete. We
+        // cannot fabricate `PersistentIdentifier` values because the
+        // initializer is not public.
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(),
+            title: "Doomed"
+        )
+        try await store.deleteMeeting(meetingID: meetingID)
+
+        let sentences = try await store.fetchSentences(meetingID: meetingID)
+        #expect(sentences.isEmpty)
+    }
+
     /// **Concurrency violation test (per CLAUDE.md "Concurrency design
     /// discipline").** The doc-comment on ``MeetingStore`` declares the
     /// scheduling assumption that the actor serializes its work on its

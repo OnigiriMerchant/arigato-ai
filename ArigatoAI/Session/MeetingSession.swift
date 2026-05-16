@@ -69,6 +69,55 @@ final class MeetingSession {
     /// pump appends rather than replaces.
     private(set) var liveChunks: [UUID: String] = [:]
 
+    /// Optional callback invoked synchronously on the main actor after
+    /// every successful ``appendSentence(...)`` call inside
+    /// ``consumeTranslationEvents(_:)``'s `.completed` branch.
+    ///
+    /// ## Scheduling assumption (Concurrency design discipline)
+    ///
+    /// **Synchronous main-actor invocation. The receiver must not block.**
+    /// The callback fires inline from the translate-consumer task's
+    /// processing loop (a main-actor re-entrant context). Heavy work in
+    /// the receiver should dispatch its own `Task` to avoid stalling the
+    /// next iteration of the event pump. Setting this property to `nil`
+    /// cleanly unsubscribes; the next `.completed` event will not invoke
+    /// any callback.
+    ///
+    /// ## Violation of the assumption
+    ///
+    /// A blocking receiver (e.g., a `Thread.sleep` inside the callback or
+    /// a synchronous busy loop) would stall `consumeTranslationEvents`'s
+    /// next `for try await event in stream` iteration on the main actor.
+    /// Subsequent events would queue up in the stream's internal buffer
+    /// until the receiver returns. Production receivers should
+    /// `requestReload`-style trampoline to another Task — see
+    /// ``TranscriptSplitScreenViewModel/requestReload()`` for the
+    /// canonical pattern.
+    ///
+    /// ## Failure semantics
+    ///
+    /// The callback is **NOT** invoked when `appendSentence` throws
+    /// (transient store failure, stale `meetingID`, etc.). The contract
+    /// is "fired after every successful persist", not "fired after every
+    /// attempted persist."
+    ///
+    /// ## Named violation test
+    ///
+    /// `meetingSession_sentencesDidUpdateBlocks_doesNotStallEventPump`
+    /// in `MeetingSessionTests` registers a callback that sleeps ~50ms
+    /// per invocation and feeds the session a small burst; the test
+    /// asserts every burst sentence still lands in the store, proving
+    /// the consumer task is not deadlocked by the slow callback.
+    ///
+    /// ## Step 9a wiring
+    ///
+    /// ``ContentView`` constructs ``TranscriptSplitScreenViewModel`` and
+    /// installs `coordinator.session.sentencesDidUpdate = { [weak vm] in
+    /// vm?.requestReload() }`. The VM trampolines the reload into a
+    /// `.task(id:)` modifier in the view body for last-query-wins
+    /// semantics.
+    @MainActor var sentencesDidUpdate: (@MainActor () -> Void)?
+
     // MARK: - Dependencies
 
     private let store: MeetingStore
@@ -492,6 +541,13 @@ final class MeetingSession {
     /// persistence failures are surfaced via the inline marker pattern
     /// (decision #15) in a later UI-focused step. Step 3's contract is
     /// "best-effort persist on .completed".
+    ///
+    /// On successful persist, fires the ``sentencesDidUpdate`` callback
+    /// (Step 9a — `ContentView` wires this to
+    /// ``TranscriptSplitScreenViewModel/requestReload()``). The callback
+    /// is NOT invoked when the store call throws — see the
+    /// ``sentencesDidUpdate`` doc-comment for the full contract and named
+    /// violation test.
     private func persistCompleted(
         _ translated: TranslatedSegment,
         meetingID: PersistentIdentifier
@@ -506,10 +562,16 @@ final class MeetingSession {
                 translatedText: translated.translatedText,
                 sourceSegmentID: translated.sourceSegmentID
             )
+            // Synchronous main-actor callback. Receiver must not block —
+            // see `sentencesDidUpdate` doc-comment + named violation test
+            // `meetingSession_sentencesDidUpdateBlocks_doesNotStallEventPump`.
+            sentencesDidUpdate?()
         } catch {
             // Intentionally swallowed at the orchestrator layer for
             // Step 3. Future inline-marker integration will route this
             // through the UI per decision #15.
+            // Note: callback NOT fired on failure — see
+            // `sentencesDidUpdate` doc-comment.
         }
     }
 

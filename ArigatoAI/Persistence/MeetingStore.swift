@@ -183,6 +183,56 @@ actor MeetingStore {
         return try modelContext.fetch(descriptor).map { MeetingSummary(from: $0) }
     }
 
+    /// Returns all sentences for a meeting, projected to Sendable DTOs and
+    /// sorted ascending by ``Sentence/timestamp``.
+    ///
+    /// Step 9a read path for ``TranscriptSplitScreenView``. Symmetric with
+    /// ``fetchAllUnfiltered()`` (Step 6) — both use the
+    /// `FetchDescriptor` + `#Predicate` pattern per the V3 "SwiftData
+    /// `ModelContext` lookup primitive" entry (`6023f2a`) to avoid the
+    /// `model(for:)` / `registeredModel(for:)` pitfalls documented on
+    /// iOS 26.5.
+    ///
+    /// Returns DTOs (``MeetingDetail/SentenceProjection``), not `@Model`
+    /// instances — required by Swift 6 strict concurrency per
+    /// `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` DR-1 §2 (`@Model` is not
+    /// `Sendable`).
+    ///
+    /// ## "Meeting not found" contract
+    ///
+    /// When `meetingID` does not resolve to a `Meeting` in the actor's
+    /// context the method returns an **empty array** rather than throwing
+    /// ``MeetingStoreError/meetingNotFound(_:)``. This is parity with
+    /// ``fetchAllUnfiltered()``'s pattern (read paths never throw on
+    /// no-data) and matches the consumer contract in
+    /// ``TranscriptSplitScreenViewModel/reload()``, which treats absence
+    /// of rows as "nothing to display yet" rather than as an error. The
+    /// write paths (``appendSentence(...)``, ``updateTitle(...)``,
+    /// ``endMeeting(...)``, ``deleteMeeting(...)``) keep the
+    /// `meetingNotFound` throw because writes against a stale ID are a
+    /// programmer error worth surfacing.
+    ///
+    /// - Parameter meetingID: The owning meeting's `PersistentIdentifier`.
+    /// - Returns: All sentences in the meeting, oldest-first by timestamp.
+    ///   Empty when the meeting is absent or has no sentences yet.
+    /// - Throws: Re-throws any error raised by `ModelContext.fetch(_:)`.
+    func fetchSentences(meetingID: PersistentIdentifier) throws -> [MeetingDetail.SentenceProjection] {
+        let descriptor = FetchDescriptor<Sentence>(
+            predicate: #Predicate { $0.meeting?.persistentModelID == meetingID },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        return try modelContext.fetch(descriptor).map { sentence in
+            MeetingDetail.SentenceProjection(
+                id: sentence.persistentModelID,
+                timestamp: sentence.timestamp,
+                sourceLanguage: sentence.sourceLanguage,
+                sourceText: sentence.sourceText,
+                translatedText: sentence.translatedText,
+                sourceSegmentID: sentence.sourceSegmentID
+            )
+        }
+    }
+
     /// Deletes a meeting and (via cascade) its sentences.
     ///
     /// The cascade is declared on ``Meeting/sentences`` and is exercised

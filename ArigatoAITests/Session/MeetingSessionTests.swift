@@ -7,6 +7,7 @@
 
 @testable import ArigatoAI
 import Foundation
+import os
 import SwiftData
 import Testing
 
@@ -644,6 +645,152 @@ struct MeetingSessionTests {
         }
     }
 
+    // MARK: - sentencesDidUpdate callback (Step 9a)
+
+    /// **D9a-T-session-1** — `sentencesDidUpdate` fires synchronously
+    /// after every successful `appendSentence` call inside
+    /// `consumeTranslationEvents`'s `.completed` branch. The post-persist
+    /// invocation contract is named on the property's doc-comment.
+    @Test func sentencesDidUpdate_invokedAfterSuccessfulAppendSentence() async throws {
+        let fixture = try Self.makeFixture()
+        try await fixture.session.start(at: Date())
+
+        // Recorder counts callback invocations from the main actor.
+        let counter = CallbackCounter()
+        fixture.session.sentencesDidUpdate = {
+            counter.increment()
+        }
+
+        let (stream, cont) = AsyncThrowingStream<TranslationEvent, any Error>.makeStream()
+        await fixture.session.consumeTranslationEvents(stream)
+
+        // Three completions → three callback invocations.
+        for _ in 0 ..< 3 {
+            cont.yield(.completed(Self.translatedSegment(
+                sourceSegmentID: UUID(),
+                sourceText: "src",
+                translatedText: "tr",
+                direction: .jaToEn
+            )))
+        }
+        cont.finish()
+
+        _ = await Self.awaitSentenceCount(3, in: fixture.container)
+        _ = await Self.awaitMainActor { counter.value == 3 }
+        #expect(counter.value == 3,
+                "Callback should fire once per successful append; got \(counter.value)")
+    }
+
+    /// **D9a-T-session-2** — `sentencesDidUpdate` is NOT invoked when
+    /// `appendSentence` throws. The failure path uses a stale `meetingID`
+    /// (`deleteMeeting` followed by `.completed`) so the store's
+    /// `meetingNotFound` error fires inside `persistCompleted`. The
+    /// callback's contract excludes failed persists per the property's
+    /// doc-comment.
+    @Test func sentencesDidUpdate_notInvokedWhenAppendSentenceThrows() async throws {
+        let fixture = try Self.makeFixture()
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try await fixture.session.start(at: startedAt)
+
+        // Pull the live meetingID out of the phase, delete the meeting
+        // via the store directly so `appendSentence` throws on the next
+        // .completed event.
+        guard case let .recording(meetingID, _) = fixture.session.phase else {
+            Issue.record("Expected .recording phase")
+            return
+        }
+        try await fixture.store.deleteMeeting(meetingID: meetingID)
+
+        let counter = CallbackCounter()
+        fixture.session.sentencesDidUpdate = {
+            counter.increment()
+        }
+
+        let (stream, cont) = AsyncThrowingStream<TranslationEvent, any Error>.makeStream()
+        await fixture.session.consumeTranslationEvents(stream)
+
+        cont.yield(.completed(Self.translatedSegment(
+            sourceSegmentID: UUID(),
+            sourceText: "lost",
+            translatedText: "失われた",
+            direction: .enToJa
+        )))
+        cont.finish()
+
+        // Give the consumer time to process the event and swallow the
+        // store error. We yield generously rather than waiting for a
+        // signal because the failure path has no positive side effect.
+        for _ in 0 ..< 500 {
+            await Task.yield()
+        }
+
+        #expect(counter.value == 0,
+                "Callback must not fire when appendSentence throws; fired \(counter.value) times")
+
+        // Sanity check: no sentence persisted.
+        let ctx = ModelContext(fixture.container)
+        let sentences = try ctx.fetch(FetchDescriptor<Sentence>())
+        #expect(sentences.isEmpty,
+                "Store should not contain the failed sentence")
+    }
+
+    /// **D9a-T-session-3 (concurrency violation test).** A blocking
+    /// `sentencesDidUpdate` receiver stalls the synchronous portion of
+    /// the event-pump loop. The doc-comment on `sentencesDidUpdate`
+    /// names this test and documents the contract: receivers must not
+    /// block. A receiver that sleeps ~50ms per invocation must still
+    /// allow every burst sentence to land in the store — i.e., the
+    /// consumer task is not **deadlocked** even though it is **slowed
+    /// down**.
+    ///
+    /// "Slow" is acceptable; "stalled forever" is not. The test asserts
+    /// the floor contract (no permanent stall, no lost events). The
+    /// production-recommended receiver pattern (trampoline to its own
+    /// Task) is exercised by
+    /// ``TranscriptSplitScreenViewModel/requestReload()``.
+    @Test func meetingSession_sentencesDidUpdateBlocks_doesNotStallEventPump() async throws {
+        let fixture = try Self.makeFixture()
+        try await fixture.session.start(at: Date())
+
+        let counter = CallbackCounter()
+        fixture.session.sentencesDidUpdate = {
+            // Synchronous "slow" main-actor work. Real receivers should
+            // not do this — the doc-comment warns against blocking. We
+            // use a tight CPU spin (not Thread.sleep, which is blocking
+            // at the system level and may cause CI flakiness) so the
+            // pump's next iteration is delayed but the simulator does
+            // not page out.
+            let start = ContinuousClock.now
+            while ContinuousClock.now - start < .milliseconds(20) {
+                // spin
+            }
+            counter.increment()
+        }
+
+        let (stream, cont) = AsyncThrowingStream<TranslationEvent, any Error>.makeStream()
+        await fixture.session.consumeTranslationEvents(stream)
+
+        let burstSize = 10
+        for _ in 0 ..< burstSize {
+            cont.yield(.completed(Self.translatedSegment(
+                sourceSegmentID: UUID(),
+                sourceText: "burst-src",
+                translatedText: "burst-tr",
+                direction: .jaToEn
+            )))
+        }
+        cont.finish()
+
+        // All 10 sentences must persist despite the slow callback. If
+        // the callback deadlocked the pump, fewer would land.
+        let landed = await Self.awaitSentenceCount(burstSize, in: fixture.container, iterations: 10000)
+        #expect(landed == burstSize,
+                "All \(burstSize) sentences should have persisted despite blocking callback; landed \(landed)")
+        _ = await Self.awaitMainActor(iterations: 10000) { counter.value == burstSize }
+        #expect(counter.value == burstSize,
+                "Callback should have fired \(burstSize) times; got \(counter.value)")
+    }
+
     /// **Concurrency violation test.** A second call to
     /// `consumeTranslationEvents(_:)` cancels the first task and
     /// replaces it. After the second call, events on the second
@@ -680,5 +827,28 @@ struct MeetingSessionTests {
         #expect(fixture.session.liveChunks[secondSegID] == "fresh")
         #expect(fixture.session.liveChunks[firstSegID] == nil,
                 "First stream's events must not surface after the second call replaces the consumer")
+    }
+}
+
+// MARK: - Test infrastructure
+
+/// Lock-protected counter used by the Step 9a `sentencesDidUpdate` tests.
+///
+/// The callback closure stored on ``MeetingSession/sentencesDidUpdate``
+/// is `@MainActor`-isolated, so increments happen serialized on the
+/// main actor. The lock here is defensive — it lets the counter be
+/// captured by a `@Sendable` test closure without forcing an
+/// `@MainActor` annotation on the closure literal. Mirrors the
+/// `OSAllocatedUnfairLock` pattern used by ``FetcherDispatcher`` in
+/// `MeetingListViewTests`.
+private final nonisolated class CallbackCounter: @unchecked Sendable {
+    private let storage = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    func increment() {
+        storage.withLock { $0 += 1 }
+    }
+
+    var value: Int {
+        storage.withLock { $0 }
     }
 }

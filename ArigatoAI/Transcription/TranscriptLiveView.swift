@@ -14,14 +14,18 @@ import SwiftUI
 ///    ``LanguageRouter/currentLanguage`` (the *authoritative* signal,
 ///    chosen for stability over momentary noise). Also surfaces the
 ///    Whisper warmup pill bound to ``AppBootstrapper/loaderState``.
-/// 2. **Middle — scrollable transcript list.** Iterates
-///    ``LanguageRouter/routedHistory`` and renders each row through
-///    ``TranscriptRowDisplay``. Per-row badges read
-///    ``RoutedTranscript/detectedLanguage`` (the *honest* per-window
-///    signal). When ``RoutedTranscript/detectedLanguage`` differs from
-///    ``RoutedTranscript/authoritativeLanguage`` (a SEAM-2 divergence
-///    window) the row shows a small fallback marker — that one-window
-///    mismatch is information, not noise.
+/// 2. **Middle — split-screen transcript.** Step 9a swapped the
+///    Phase-4 single-list `LanguageRouter/routedHistory`-driven
+///    middle region for a dedicated ``TranscriptSplitScreenView`` per
+///    UI decisions #1 (split JA top / EN bottom with timestamp
+///    correlation) and #2 (auto-follow scroll + unified return arrow).
+///    Data flows through ``MeetingStore/fetchSentences(meetingID:)``
+///    rather than through ``LanguageRouter/routedHistory`` — the
+///    router's history is consumed only for the chrome's
+///    ``LanguageRouter/currentLanguage`` binding after Step 9a. The
+///    host view ships a placeholder VM by default; ``ContentView``
+///    constructs a real ``TranscriptSplitScreenViewModel`` once the
+///    bootstrapper's coordinator + meeting ID are available.
 /// 3. **Bottom — meeting controls surface.** A ``MeetingControlsView``
 ///    bound to a ``MeetingControlsViewModel``. Step 7 swapped the prior
 ///    `RecordControl` / `RecordButton` / `VUMeter` cluster for this new
@@ -72,19 +76,51 @@ struct TranscriptLiveView: View {
     /// ``MeetingControlsViewModel/wiring(coordinator:now:)``.
     let controlsModel: MeetingControlsViewModel
 
+    /// Split-screen transcript VM for the middle region (Step 9a).
+    ///
+    /// Optional because the host has multiple legitimate states in which
+    /// no VM is available:
+    ///   - SwiftUI previews + the Phase-4 regression suite (where the
+    ///     bootstrapper's coordinator has never published).
+    ///   - First-launch / warmup window before
+    ///     ``AppBootstrapper/coordinator`` lands.
+    ///   - ``MeetingSessionPhase/idle`` (no active meeting → no
+    ///     meetingID → ``ContentView`` does not construct a VM).
+    ///
+    /// When `nil`, the middle region renders the same empty-state
+    /// placeholder used pre-Step-9a so the surface still shows a "no
+    /// data yet" affordance rather than a blank rectangle.
+    let transcriptModel: TranscriptSplitScreenViewModel?
+
     /// Default initializer — ships a disabled placeholder VM for the
     /// controls surface so historical call sites (previews, the Phase-4
-    /// `RecordControl` regression suite) compile unchanged.
+    /// `RecordControl` regression suite) compile unchanged. The
+    /// transcript VM is nil here too, which preserves the pre-Step-9a
+    /// empty-state behaviour for those call sites.
     init() {
         controlsModel = MeetingControlsViewModel.disabled()
+        transcriptModel = nil
     }
 
-    /// Override initializer — accepts a pre-built controls VM.
-    /// ``ContentView`` calls this to inject the
-    /// ``MeetingControlsViewModel/disabled()`` placeholder explicitly so
-    /// the Step 8 swap site is single-line.
-    init(controlsModel: MeetingControlsViewModel) {
+    /// Override initializer — accepts a pre-built controls VM and an
+    /// optional transcript VM.
+    ///
+    /// ``ContentView`` calls this each render: it always passes a
+    /// controls VM (either `.disabled()` or `.wiring(coordinator:)`) and
+    /// passes a transcript VM only when both
+    /// ``AppBootstrapper/coordinator`` and an active meeting ID are
+    /// available.
+    ///
+    /// - Parameters:
+    ///   - controlsModel: VM driving the bottom controls surface.
+    ///   - transcriptModel: Optional VM driving the middle split-screen
+    ///     transcript. `nil` falls back to the empty-state placeholder.
+    init(
+        controlsModel: MeetingControlsViewModel,
+        transcriptModel: TranscriptSplitScreenViewModel? = nil
+    ) {
         self.controlsModel = controlsModel
+        self.transcriptModel = transcriptModel
     }
 
     // MARK: - Empty-state copy (Concern 6 regression boundary)
@@ -189,25 +225,26 @@ struct TranscriptLiveView: View {
 
     // MARK: - Transcript list
 
-    /// Middle region: scrollable transcript log or empty-state placeholder.
+    /// Middle region: split-screen transcript (Step 9a) or empty-state
+    /// placeholder.
+    ///
+    /// Step 9a swapped the prior `LanguageRouter.routedHistory`-driven
+    /// `List` for ``TranscriptSplitScreenView`` per UI decisions #1 + #2.
+    /// When ``transcriptModel`` is `nil` (previews, idle phase, or the
+    /// pre-coordinator warmup window) the host falls back to the
+    /// pre-Step-9a empty-state placeholder so the layout still has a
+    /// "no data yet" affordance.
+    ///
+    /// `LanguageRouter.routedHistory` is no longer rendered in the
+    /// middle region; the chrome's `currentLanguage` binding above is
+    /// its remaining consumer.
     @ViewBuilder
     private var transcriptList: some View {
-        if bootstrapper.router.routedHistory.isEmpty {
-            emptyState
+        if let transcriptModel {
+            TranscriptSplitScreenView(viewModel: transcriptModel)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            // V3 #40 concern 4 (Step 9b): match the 20pt horizontal
-            // inset that the chrome and footer carry so right-edge
-            // row badges line up with the chrome's language badge
-            // rather than running edge-to-edge.
-            List(bootstrapper.router.routedHistory) { routed in
-                TranscriptRow(display: TranscriptRowDisplay(routed: routed))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .padding(.horizontal, 20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            emptyState
         }
     }
 
