@@ -816,3 +816,19 @@ Cost estimate: ~15 min.
 - **Trigger:** Step 9 dispatch. Pass this entry to the @feature-planner refresh so the design-language work includes Step 7's consumers in its scope.
 - **Action when triggered:** during Step 9 design-language pass, reconsider both the surviving Phase-4 token uses AND `MeetingControlsView`'s token uses. Either: (a) replace all with new design-system tokens, (b) refactor tokens to be design-system-derived, (c) some other unification approach. Decision belongs to Step 9 planner.
 - **Cost estimate:** folds into Step 9's existing scope; ~no incremental cost beyond what V3 #22 already estimated.
+
+### Cumulative-load timing race in cancellation-ordering tests — consolidation
+
+- **What:** Two cancellation-ordering tests have shown intermittent first-run flakes during multi-step verification runs in Group D:
+  - `TranslationProtocolTests.translate_burstThenCancelFinishesStreamWithoutError` (Group C origin, V3 #16)
+  - `MeetingPipelineTests.pipeline_stop_awaitsRouterCancelThenTranslatorCancel_inOrder` (Group D origin, Step 4)
+  Both pass on re-run. Both exercise cancellation propagation across actor + AsyncStream boundaries (`TranslationActor` + `MeetingPipeline`). Visible in verification logs across Steps 2, 7, 8.
+- **Why this is V3 consolidation (not separate entries):** same root-cause class — timing race between cancellation propagation and downstream observation. Treating them as separate V3 entries misses the pattern. Consolidating makes end-of-Group-D review face the full picture.
+- **Suspected root cause:** test infrastructure (`FakeTranslator`'s post-cancel reusability semantics) rather than production code. Production cancellation propagation is verified by the violation tests that DO pass consistently (e.g., `pipeline_secondStart_cancelsFirstAndReplacesCleanly`). The flaky tests share infrastructure (`FakeTranslator` + AsyncStream bridging) that the consistent tests don't.
+- **Trigger to revisit:** pre-MVP-1 hardening bundle (where #16 already lives). Bundle with #16's fix rather than separate work.
+- **Action when triggered:** investigate `FakeTranslator`'s post-cancel state machine; determine whether the race is in the fake's continuation handling or in the test assertion's timing. Both tests should fix together since they share the infrastructure.
+- **Cost estimate:** ~1–2 hours of focused investigation. Risk: low (tests are flaky, not failing; production behavior is sound).
+- **Cross-references:**
+  - V3 #16 (`TranslationProtocolTests.translate_burstThenCancel`)
+  - Step 4 verification run logs
+  - Step 8 verification run logs
