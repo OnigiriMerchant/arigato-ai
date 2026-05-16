@@ -1024,3 +1024,33 @@ Cost estimate: ~15 min.
   - V3 entry "Agent verification rigor" (`66d08b0`) — related but distinct (rigor entry covers same-dispatch warning reporting; this entry covers cross-dispatch continuation discipline).
   - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
 - **Cost estimate:** ~10 min to draft the CLAUDE.md clauses. Bundle with the workflow automation work.
+
+### Claude Code feature adoption: evaluate /goal, /ultrareview, xhigh effort, claude agents for project workflow
+
+- **What:** four Claude Code features (released by May 2026) are candidates for adoption in the Arigato AI two-surface workflow:
+  1. **`/goal` (Goal Setting):** agent works across turns until completion conditions are met. Built-in retry/continuation logic. Potentially mitigates the Step 9a-style timeout recovery pattern by giving the agent native multi-turn continuation. Does NOT eliminate per-dispatch budget limits, but reduces the "agent times out mid-task, human dispatches continuation" cost.
+  2. **`/ultrareview` (multi-agent parallel review):** parallelizes review across multiple agents on branch/PR work. Directly applicable to the end-of-Group-D three-reviewer gate (@code-reviewer + @ui-reviewer + @git-historian) which is currently planned to run sequentially.
+  3. **`xhigh` effort tier for Opus 4.7 (via `/effort`):** higher reasoning effort tier for the planner. Use cases: heavy feature-planner refreshes (Step 9-style scope where the planner must surface 5+ decisions and reflect 10+ V3 entries). Trade-off: expensive in time and tokens; not appropriate as a default.
+  4. **`claude agents` (Agent View dashboard):** unified dashboard for all sessions. Observability across subagent dispatches — useful for the long multi-step sessions like tonight's Steps 8 → 9b → 9a → 10-closure run. Helps track concurrent dispatches, debug recovery scenarios, and audit the workflow over time.
+- **Why this is V3 and not immediate adoption:**
+  - `/goal` workflow adoption requires updating CLAUDE.md's dispatch protocol and the feature-planner / swift-implementer agent prompts. The existing audit-first continuation protocol (V3 commit `6cd0f7f`) is the manual equivalent; replacing it with `/goal` is a workflow architecture change, not a one-off command swap.
+  - `/ultrareview` adoption requires the three reviewer subagents to be compatible with parallel execution. Current architecture assumes sequential review. Verify subagent state isolation before swapping in.
+  - `xhigh` effort tier is opt-in per-dispatch; lowest-friction adoption. No CLAUDE.md change needed.
+  - `claude agents` is observational, not architectural. Adoption cost is essentially zero (run the command, look at the dashboard, decide if it provides workflow value). Lowest-friction adoption of the four.
+- **Trigger to evaluate:**
+  - `claude agents`: anytime. Pure observability tool. Try it during Step 12–15 dispatches and see if the dashboard provides workflow value.
+  - `/goal`: before Step 12 dispatch (next planner-heavy step with FTS5 evaluation). Try it on Step 12 as a pilot.
+  - `/ultrareview`: end-of-Group-D three-reviewer pass. Compare sequential vs parallel review on real reviewer work.
+  - `xhigh`: try on Step 12 planner refresh (FTS5 has real ambiguity surface re: SQLite extension availability + Step 1's `searchableText` design).
+- **Action when triggered:**
+  - `claude agents`: just run it during the next multi-dispatch session. Bookmark the dashboard if it's useful, ignore it if it's not. No commitment.
+  - `/goal` pilot: pick a Step 12-equivalent dispatch with clear completion conditions. Compare against this session's manual continuation discipline.
+  - `/ultrareview` pilot: at end-of-Group-D reviewer gate, run reviewers in parallel via `/ultrareview` and compare wall-clock + output quality vs sequential.
+  - `xhigh` pilot: apply to a single planner refresh and observe whether the additional decisions surfaced justify the cost.
+- **Cost estimate:**
+  - `claude agents`: ~5 min to evaluate. No integration cost.
+  - `/goal`, `/ultrareview`, `xhigh`: ~30 min each to evaluate as pilots. Workflow integration if adopted: 1–2h per feature for CLAUDE.md updates and subagent prompt adjustments.
+- **Cross-references:**
+  - V3 entry "Audit-first continuation protocol" (commit `6cd0f7f`) — `/goal` is the natural automation candidate for this manual pattern.
+  - V3 entries #41 / #42 / #43 / #44 (workflow automation bundle) — bundle Claude Code feature adoption with these.
+  - Claude Code changelog: https://code.claude.com/docs/en/changelog.md
