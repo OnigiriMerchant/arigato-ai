@@ -131,7 +131,7 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 3a SHIPPED** (checkpoint, no
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: 9 ahead, 0 behind — Step 1 checkpoint + Step 1 docs + Step 2 checkpoint + Step 2 docs + Step 2 V3 entry + Step 3 checkpoint + Step 3 docs + Step 3 V3 precedence entry + Step 3a checkpoint not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D).
+- Origin/main: 11 ahead, 0 behind — Step 1 checkpoint + Step 1 docs + Step 2 checkpoint + Step 2 docs + Step 2 V3 entry + Step 3 checkpoint + Step 3 docs + Step 3 V3 precedence entry + Step 3a checkpoint + Step 3a SHA-stamp docs follow-up + Step 3a working-tree-count sync not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D). Step 3a produced three commits instead of the brief's projected single commit because the in-doc "Most recent commit" SHA reference triggered a self-referential amend chain; flagged as a brief deviation in the implementer report (brief projected 9 ahead, actual is 11). The three-reviewer gate may squash the three Step 3a commits into one at end-of-Group-D per CLAUDE.md.
 
 ## Local-only artifacts
 - Tag pre-recovery-snapshot/group-c → 4a57d30 (forensic snapshot of pre-recovery Group C Phase 4 state — local only, not pushed)
