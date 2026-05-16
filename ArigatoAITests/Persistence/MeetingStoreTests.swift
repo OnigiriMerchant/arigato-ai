@@ -213,6 +213,44 @@ struct MeetingStoreTests {
         #expect(try postContext.fetch(FetchDescriptor<Sentence>()).isEmpty)
     }
 
+    /// **D6-T-8** — `fetchAllUnfiltered` returns an empty array when no
+    /// meetings exist in the store. Step 6's MeetingListView empty-state
+    /// branch keys off this contract (model.meetings.isEmpty +
+    /// loadError == nil).
+    @Test func meetingStoreTests_fetchAllUnfiltered_returnsEmptyArrayWhenNoMeetings() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let summaries = try await store.fetchAllUnfiltered()
+
+        #expect(summaries.isEmpty)
+    }
+
+    /// **D6-T-9** — `fetchAllUnfiltered` returns all meetings sorted
+    /// **newest-first** by ``Meeting/startedAt``. Insert order is
+    /// intentionally NOT chronological so the assertion proves the sort
+    /// is the descriptor's, not the insertion order's. UI decision #13
+    /// pins newest-first as the history view contract.
+    @Test func meetingStoreTests_fetchAllUnfiltered_returnsAllMeetingsNewestFirst() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        // Three meetings inserted out of order.
+        let middle = Date(timeIntervalSince1970: 1_700_001_000)
+        let oldest = Date(timeIntervalSince1970: 1_700_000_000)
+        let newest = Date(timeIntervalSince1970: 1_700_002_000)
+
+        _ = try await store.startMeeting(startedAt: middle, title: "Middle")
+        _ = try await store.startMeeting(startedAt: oldest, title: "Oldest")
+        _ = try await store.startMeeting(startedAt: newest, title: "Newest")
+
+        let summaries = try await store.fetchAllUnfiltered()
+
+        #expect(summaries.count == 3)
+        #expect(summaries.map(\.title) == ["Newest", "Middle", "Oldest"])
+        #expect(summaries.map(\.startedAt) == [newest, middle, oldest])
+    }
+
     /// **Concurrency violation test (per CLAUDE.md "Concurrency design
     /// discipline").** The doc-comment on ``MeetingStore`` declares the
     /// scheduling assumption that the actor serializes its work on its

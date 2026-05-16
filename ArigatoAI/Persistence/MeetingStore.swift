@@ -164,6 +164,25 @@ actor MeetingStore {
         try modelContext.save()
     }
 
+    /// Returns all meetings as Summary DTOs, sorted newest-first by
+    /// ``Meeting/startedAt``.
+    ///
+    /// Step 6 read pattern. Step 12 evolves this into
+    /// `fetchAll(searchText:)` per Amendment 2 (flat ``Sentence`` fetch +
+    /// Swift-side group-by-meeting). Until then, this method is the sole
+    /// read entry point for ``MeetingListView``. Caller:
+    /// ``MeetingListView/reload()``.
+    ///
+    /// - Returns: All meetings projected to ``MeetingSummary`` DTOs,
+    ///   ordered descending by `startedAt`.
+    /// - Throws: Re-throws any error raised by `ModelContext.fetch(_:)`.
+    func fetchAllUnfiltered() throws -> [MeetingSummary] {
+        let descriptor = FetchDescriptor<Meeting>(
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor).map { MeetingSummary(from: $0) }
+    }
+
     /// Deletes a meeting and (via cascade) its sentences.
     ///
     /// The cascade is declared on ``Meeting/sentences`` and is exercised
