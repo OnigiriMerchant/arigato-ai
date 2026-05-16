@@ -20,6 +20,15 @@ import SwiftData
 ///
 /// Step 2 defines the shape; Step 12 produces these from
 /// `MeetingStore.fetchAll(searchText:)`.
+///
+/// ## Step 12 addition — `firstMatchSnippet`
+/// Step 12 adds the optional ``firstMatchSnippet`` projection. The store
+/// populates this with the first body-matched sentence's
+/// ``Sentence/translatedText`` when ``MeetingStore/fetchAll(searchText:)``
+/// has a non-empty needle and the meeting matched via body (not title).
+/// Title-only matches and the empty-needle path leave it `nil`. The view
+/// row formatter (``MeetingListRowFormatter/snippet(_:maxLength:)``)
+/// owns ellipsis / truncation; the DTO carries the raw matching sentence.
 struct MeetingSummary: Equatable {
     /// Stable persistent identifier — the only safe cross-actor handle
     /// to the underlying `Meeting`.
@@ -32,17 +41,55 @@ struct MeetingSummary: Equatable {
     let title: String
     /// Number of sentences captured in this meeting.
     let sentenceCount: Int
+    /// First body-matched sentence's translated text when this summary was
+    /// produced by ``MeetingStore/fetchAll(searchText:)`` with a non-empty
+    /// needle and the match qualified via the sentence body (not via the
+    /// title). `nil` otherwise — including for title-only matches, the
+    /// empty-needle path, and any caller that goes through the
+    /// no-snippet ``init(from:)`` overload.
+    let firstMatchSnippet: String?
 
-    /// Builds a `MeetingSummary` from a live `Meeting` model.
+    /// Builds a `MeetingSummary` from a live `Meeting` model with no
+    /// snippet attached (the Step 6 empty-needle / Step 11 detail path).
     ///
     /// Must be called from within ``MeetingStore``'s isolation context
     /// because `Meeting.sentences` is a SwiftData relationship and is
     /// not safe to touch across actor boundaries.
     init(from meeting: Meeting) {
+        self.init(from: meeting, firstMatchSnippet: nil)
+    }
+
+    /// Builds a `MeetingSummary` from a live `Meeting` model with an
+    /// optional body-match snippet. Step 12's search path uses this
+    /// overload; the no-snippet ``init(from:)`` is the convenience that
+    /// passes `nil`.
+    ///
+    /// Must be called from within ``MeetingStore``'s isolation context
+    /// because `Meeting.sentences` is a SwiftData relationship and is
+    /// not safe to touch across actor boundaries.
+    ///
+    /// Marked `nonisolated` so the nonisolated ``MeetingStore`` `@ModelActor`
+    /// can construct these projections without crossing an actor boundary.
+    /// All stored properties are `Sendable`; the `@Model` read against
+    /// `meeting` itself is the caller's responsibility (the store calls
+    /// this only from within its own isolation context). The Step-6
+    /// counterpart ``init(from:)`` remains MainActor-isolated — that
+    /// pre-existing warning is V3-tracked (V3 entry "Swift 6 mode build
+    /// warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel"
+    /// item 1); Step 12 deliberately scopes the fix to its own new init
+    /// to avoid scope drift.
+    ///
+    /// - Parameters:
+    ///   - meeting: Live model — read on the actor's isolation context.
+    ///   - firstMatchSnippet: First body-matched sentence's translated
+    ///     text, or `nil` for title-only / empty-needle / Step-6 / Step-11
+    ///     callers.
+    nonisolated init(from meeting: Meeting, firstMatchSnippet: String?) {
         id = meeting.persistentModelID
         startedAt = meeting.startedAt
         endedAt = meeting.endedAt
         title = meeting.title
         sentenceCount = meeting.sentences.count
+        self.firstMatchSnippet = firstMatchSnippet
     }
 }

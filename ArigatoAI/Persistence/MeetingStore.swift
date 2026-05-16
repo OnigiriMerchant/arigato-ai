@@ -167,20 +167,167 @@ actor MeetingStore {
     /// Returns all meetings as Summary DTOs, sorted newest-first by
     /// ``Meeting/startedAt``.
     ///
-    /// Step 6 read pattern. Step 12 evolves this into
-    /// `fetchAll(searchText:)` per Amendment 2 (flat ``Sentence`` fetch +
-    /// Swift-side group-by-meeting). Until then, this method is the sole
-    /// read entry point for ``MeetingListView``. Caller:
-    /// ``MeetingListView/reload()``.
+    /// **Visibility (Step 12)**: narrowed to `internal` and re-purposed as
+    /// the empty-needle code path of ``fetchAll(searchText:)``. Step 6
+    /// callers (``MeetingListView``) now route through `fetchAll(searchText:)`
+    /// with the current search text; this method is preserved as the
+    /// single-source-of-truth "no filter" implementation and is called
+    /// from `fetchAll(searchText:)` when the trimmed needle is empty.
+    /// Tests retain direct access to this method by virtue of the same
+    /// module boundary (`@testable import ArigatoAI`).
     ///
     /// - Returns: All meetings projected to ``MeetingSummary`` DTOs,
-    ///   ordered descending by `startedAt`.
+    ///   ordered descending by `startedAt`. `firstMatchSnippet` is `nil`
+    ///   on every projection (the empty-needle contract per D12-3).
     /// - Throws: Re-throws any error raised by `ModelContext.fetch(_:)`.
     func fetchAllUnfiltered() throws -> [MeetingSummary] {
         let descriptor = FetchDescriptor<Meeting>(
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         )
         return try modelContext.fetch(descriptor).map { MeetingSummary(from: $0) }
+    }
+
+    /// Returns meetings matching `searchText`, newest-first, projected to
+    /// ``MeetingSummary`` DTOs.
+    ///
+    /// ## Empty-query semantics (D12-3)
+    /// An empty or whitespace-only `searchText` (after trim) returns every
+    /// meeting, newest-first, with ``MeetingSummary/firstMatchSnippet`` set
+    /// to `nil`. Delegates to ``fetchAllUnfiltered()``.
+    ///
+    /// ## Match semantics
+    /// 1. **Title match**: `meeting.title.localizedStandardContains(rawNeedle)` —
+    ///    case + diacritic insensitive, locale-aware, raw needle (NOT folded).
+    /// 2. **Body match**: `sentence.searchableText.contains(foldedNeedle)`
+    ///    against the pre-normalized field populated by
+    ///    ``SearchTextNormalizer/normalize(_:)`` at insert time. Query is
+    ///    folded via the same normalizer to match the equivalence classes
+    ///    (hiragana ↔ katakana, diacritic / case / width).
+    ///
+    /// Either match qualifies a meeting. The snippet projection is
+    /// driven by the body-match map: any meeting that surfaces a body
+    /// match (whether it also surfaces a title match or not) carries
+    /// the earliest matching sentence's ``Sentence/translatedText`` as
+    /// its ``MeetingSummary/firstMatchSnippet``. A meeting matched by
+    /// title only (no body match) carries `nil`. The empty-needle path
+    /// returns `nil` for every projection (D12-3).
+    /// No truncation here — ``MeetingListRow`` handles ellipsis via
+    /// ``MeetingListRowFormatter/snippet(_:maxLength:)``.
+    ///
+    /// ## Architecture (Amendment 2)
+    /// Two-phase fetch:
+    /// 1. Flat ``Sentence`` fetch with body predicate against the
+    ///    pre-folded ``Sentence/searchableText`` field.
+    /// 2. Separate ``Meeting`` fetch with title predicate.
+    /// 3. Swift-side union by `PersistentIdentifier`, project to
+    ///    ``MeetingSummary``, sort newest-first.
+    ///
+    /// To-many `contains-where` predicates are **not** used — DR-3 §B
+    /// documents runtime failures on iOS 26.x (Apple Developer Forums
+    /// 731609, 747226, 758449).
+    ///
+    /// Per V3 lookup-primitive entry (`6023f2a`): uses `FetchDescriptor` +
+    /// `#Predicate` only. NO `model(for:)` / `registeredModel(for:)`.
+    ///
+    /// ## D12-1 (evaluate-and-defer FTS5)
+    /// This is a substring scan over a pre-folded field. SQLite's B-tree
+    /// indexes can't accelerate `%term%` substring scans (DR-3 §C). FTS5
+    /// migration is V3-tracked under "Migrate history search to SQLite
+    /// FTS5"; the trigger is on-device latency > 200ms at 15K sentences,
+    /// or transcript volume > 50K sentences. See
+    /// `meetingListSearch_15kRows_searchLatencyUnder200ms` for the
+    /// benchmark.
+    ///
+    /// ## Scheduling assumption
+    /// This actor's `@ModelActor` macro serializes concurrent calls onto a
+    /// single executor. Two callers issuing
+    /// `await store.fetchAll(searchText:)` simultaneously will be
+    /// processed sequentially — no interleaving of `modelContext.fetch`
+    /// reads, no shared mutable state. Each call computes its result
+    /// independently and returns. Named violation test:
+    /// ``meetingStore_fetchAll_concurrentCalls_serializedAndCorrect``
+    /// (10 concurrent calls with 10 different queries — each must return
+    /// its correct filtered set).
+    ///
+    /// - Parameter searchText: Raw user-typed needle. Trimmed of
+    ///   surrounding whitespace before the emptiness check.
+    /// - Returns: Newest-first array of ``MeetingSummary``. Empty when no
+    ///   meeting matches (the view's
+    ///   `ContentUnavailableView.search` branch renders that state).
+    /// - Throws: Re-throws any error raised by `ModelContext.fetch(_:)`.
+    func fetchAll(searchText: String) throws -> [MeetingSummary] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return try fetchAllUnfiltered()
+        }
+
+        let foldedNeedle = SearchTextNormalizer.normalize(trimmed)
+        let rawNeedle = trimmed
+
+        // Phase 1: title match (raw needle, localizedStandardContains).
+        let titleDescriptor = FetchDescriptor<Meeting>(
+            predicate: #Predicate<Meeting> { meeting in
+                meeting.title.localizedStandardContains(rawNeedle)
+            },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        let titleMatched = try modelContext.fetch(titleDescriptor)
+
+        // Phase 2: body match (folded needle, flat Sentence fetch).
+        // Per Amendment 2: avoid to-many `contains-where` on Meeting; fetch
+        // Sentence rows directly and group up to the parent in Swift.
+        let bodyDescriptor = FetchDescriptor<Sentence>(
+            predicate: #Predicate<Sentence> { sentence in
+                sentence.searchableText.contains(foldedNeedle)
+            },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        let bodyMatched = try modelContext.fetch(bodyDescriptor)
+
+        // Group sentences by meeting; pick the first matching sentence per
+        // meeting (earliest by timestamp because the fetch is sorted
+        // ascending) for the snippet projection.
+        var snippetByMeetingID: [PersistentIdentifier: String] = [:]
+        var bodyMatchedMeetings: [Meeting] = []
+        for sentence in bodyMatched {
+            // To-one traversal `sentence.meeting` is allowed and is the
+            // pattern DR-3 §B blesses (the documented failures are
+            // to-many `contains-where`, not to-one navigation).
+            guard let meeting = sentence.meeting else { continue }
+            if snippetByMeetingID[meeting.persistentModelID] == nil {
+                snippetByMeetingID[meeting.persistentModelID] = sentence.translatedText
+                bodyMatchedMeetings.append(meeting)
+            }
+        }
+
+        // Union by persistentModelID. Title-matched meetings are appended
+        // first so their order (newest-first by startedAt) seeds the
+        // collection; body-only meetings then fill in. The final sort
+        // below re-imposes newest-first across the union, so order at
+        // this stage is for de-dup correctness only.
+        var seen: Set<PersistentIdentifier> = []
+        var union: [Meeting] = []
+        for meeting in titleMatched {
+            if seen.insert(meeting.persistentModelID).inserted {
+                union.append(meeting)
+            }
+        }
+        for meeting in bodyMatchedMeetings {
+            if seen.insert(meeting.persistentModelID).inserted {
+                union.append(meeting)
+            }
+        }
+
+        // Final sort: newest-first by startedAt (idempotent for the
+        // title-matched prefix, sorts in the body-only suffix).
+        union.sort { $0.startedAt > $1.startedAt }
+
+        return union.map { meeting in
+            MeetingSummary(
+                from: meeting,
+                firstMatchSnippet: snippetByMeetingID[meeting.persistentModelID]
+            )
+        }
     }
 
     /// Returns all sentences for a meeting, projected to Sendable DTOs and

@@ -16,6 +16,12 @@ import SwiftUI
 /// - Date + time in short style.
 /// - Duration in whole minutes (e.g., `"50 min"`) when ``MeetingSummary/endedAt``
 ///   is non-nil; an em-dash (`"—"`) when the meeting is still active.
+/// - Step 12: when ``MeetingSummary/firstMatchSnippet`` is non-nil, a third
+///   line below the date/duration HStack displays the matching sentence
+///   truncated to ~80 characters via
+///   ``MeetingListRowFormatter/snippet(_:maxLength:)``. The snippet is
+///   muted-secondary styled and serves as inline visual feedback that the
+///   match came from sentence content rather than the title.
 ///
 /// Date formatting uses `Locale(identifier: "en_US_POSIX")` for
 /// deterministic test output — the date string the view emits is the same
@@ -43,6 +49,18 @@ struct MeetingListRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            // Step 12: body-match snippet. Rendered when the store
+            // populated `firstMatchSnippet` (body match, not title match;
+            // non-empty needle). Pure stock SwiftUI styling — semantic
+            // `.secondary` color per UI #17 to keep the row's visual
+            // hierarchy (title > date/duration > snippet).
+            if let snippet = summary.firstMatchSnippet {
+                Text(MeetingListRowFormatter.snippet(snippet))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 }
@@ -74,5 +92,31 @@ enum MeetingListRowFormatter {
         let seconds = endedAt.timeIntervalSince(startedAt)
         let minutes = max(0, Int(seconds / 60))
         return "\(minutes) min"
+    }
+
+    /// Truncates a body-match snippet to `maxLength` characters and
+    /// appends a horizontal-ellipsis suffix when truncated. Short snippets
+    /// (at or below `maxLength`) are returned unchanged.
+    ///
+    /// Operates on `Character` count (grapheme clusters), so emoji and
+    /// CJK characters count as 1 each — the visible-length contract
+    /// matches user perception rather than UTF-16 code-unit count.
+    ///
+    /// Step 12: called from ``MeetingListRow`` when
+    /// ``MeetingSummary/firstMatchSnippet`` is non-nil.
+    ///
+    /// - Parameters:
+    ///   - text: Raw snippet (typically a ``Sentence/translatedText``
+    ///     value forwarded by ``MeetingStore/fetchAll(searchText:)``).
+    ///   - maxLength: Inclusive character cap. Defaults to 80.
+    /// - Returns: `text` unchanged when its character count is at most
+    ///   `maxLength`; otherwise the first `maxLength` characters plus
+    ///   `"…"`.
+    static func snippet(_ text: String, maxLength: Int = 80) -> String {
+        if text.count <= maxLength {
+            return text
+        }
+        let prefix = text.prefix(maxLength)
+        return "\(prefix)…"
     }
 }

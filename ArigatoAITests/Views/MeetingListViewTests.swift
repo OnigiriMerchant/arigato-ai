@@ -47,7 +47,10 @@ struct MeetingListViewTests {
     /// ``loadError`` nil. The view body's empty-state branch is the
     /// branch SwiftUI will pick under that state.
     @Test func meetingListView_whenStoreIsEmpty_rendersEmptyState() async {
-        let model = MeetingListViewModel(fetcher: { [] })
+        // Step 12: fetcher signature is `(String) async throws -> [MeetingSummary]`.
+        // The Step-6 contract is unaffected by the parameter — return-shape
+        // remains the same — so existing tests adapt with a `_` wrapper.
+        let model = MeetingListViewModel(fetcher: { _ in [] })
         await model.reload()
         #expect(model.meetings.isEmpty)
         #expect(model.loadError == nil)
@@ -67,7 +70,7 @@ struct MeetingListViewTests {
             title: "Only one"
         )
 
-        let model = MeetingListViewModel(fetcher: { try await store.fetchAllUnfiltered() })
+        let model = MeetingListViewModel(fetcher: { _ in try await store.fetchAllUnfiltered() })
         await model.reload()
 
         #expect(model.meetings.count == 1)
@@ -95,7 +98,7 @@ struct MeetingListViewTests {
         _ = try await store.startMeeting(startedAt: oldestDate, title: "Oldest")
         _ = try await store.startMeeting(startedAt: newestDate, title: "Newest")
 
-        let model = MeetingListViewModel(fetcher: { try await store.fetchAllUnfiltered() })
+        let model = MeetingListViewModel(fetcher: { _ in try await store.fetchAllUnfiltered() })
         await model.reload()
 
         #expect(model.meetings.map(\.title) == ["Newest", "Middle", "Oldest"])
@@ -154,7 +157,7 @@ struct MeetingListViewTests {
     /// meetings — the type-level "errors surface inline" contract.
     @Test func meetingListView_storeFailureDuringReload_setsLoadError() async {
         struct Boom: Error, Equatable {}
-        let model = MeetingListViewModel(fetcher: {
+        let model = MeetingListViewModel(fetcher: { _ in
             throw Boom()
         })
 
@@ -246,9 +249,10 @@ struct MeetingListViewTests {
         await model.reload()
 
         // The second call's payload is the one that landed; the first
-        // call (cancelled) never wrote to `meetings`. `loadError` was
-        // set to `CancellationError` by the first call, then cleared by
-        // the second call's success path.
+        // call (cancelled) never wrote to `meetings`. Step 12 silently
+        // swallows `CancellationError`, so the cancelled first call did
+        // not set `loadError`, and the second call's success path leaves
+        // it `nil`.
         #expect(model.meetings.map(\.title) == ["Second-call (last query wins)"])
         #expect(model.loadError == nil)
     }
@@ -276,8 +280,12 @@ private final nonisolated class FetcherDispatcher: @unchecked Sendable {
     /// Returns the fetcher closure to hand into ``MeetingListViewModel``.
     /// First invocation sleeps then returns `slow`; subsequent
     /// invocations return `fast` immediately.
-    func makeFetcher() -> @Sendable () async throws -> [MeetingSummary] {
-        { [self] in
+    ///
+    /// Step 12: closure signature takes a `String` (search text) but the
+    /// Step-6 violation test ignores it — the dispatch shape depends on
+    /// call ordering, not on the needle.
+    func makeFetcher() -> @Sendable (String) async throws -> [MeetingSummary] {
+        { [self] _ in
             let isFirstCall = callCount.withLock { count -> Bool in
                 count += 1
                 return count == 1
@@ -286,8 +294,12 @@ private final nonisolated class FetcherDispatcher: @unchecked Sendable {
                 // Sleep is cancellable — the test cancels the spawning
                 // task before this elapses, so the sleep throws
                 // `CancellationError`. We never reach the `return slow`
-                // line; the model captures the error into `loadError`
-                // and leaves `meetings` untouched on the first call.
+                // line; the model leaves `meetings` untouched on the
+                // first call. Step 12 silently swallows
+                // `CancellationError` (debounce/auto-cancel paths reuse
+                // the same `reload()`), so `loadError` stays `nil`
+                // through both calls; the post-second `loadError == nil`
+                // assertion below verifies the steady state.
                 try await Task.sleep(nanoseconds: 200_000_000)
                 return slow
             }

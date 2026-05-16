@@ -34,14 +34,30 @@ import SwiftUI
 /// fetcher whose first call sleeps, asserting only the second call's
 /// result lands.
 ///
+/// ## Step 12 — search
+///
+/// Step 12 adds a `.searchable` modifier two-way-bound to
+/// ``MeetingListViewModel/searchText``. The view model's `didSet` on
+/// `searchText` schedules a 300ms debounce that bumps
+/// ``MeetingListViewModel/searchTrigger``. A second `.task(id:)` modifier
+/// observes the search trigger and re-fires ``MeetingListViewModel/reload()``.
+/// The reload reads the **current** `searchText` regardless of which
+/// trigger source (auto-save → `refreshTrigger`, debounce → `searchTrigger`)
+/// produced the bump, so filter state survives auto-save reloads. The
+/// `ContentUnavailableView.search` branch renders when the user has typed
+/// a query that produced zero matches; the original Step 6 empty-state
+/// renders only when there are zero meetings AND no active search.
+///
 /// ## Read path
 ///
-/// All reads go through ``MeetingStore/fetchAllUnfiltered()`` which is
-/// the sole read entry point until Step 12 introduces
-/// `fetchAll(searchText:)`. The `@Query` macro is intentionally **not**
-/// used here — preserving the `@ModelActor` seam is a Group D contract
-/// (decision D6-1 option (a)) so cross-actor reads stay routed through
-/// the actor rather than through the SwiftUI environment's model context.
+/// Reads route through ``MeetingStore/fetchAll(searchText:)``. The Step-6
+/// ``MeetingStore/fetchAllUnfiltered()`` method is preserved as the
+/// empty-needle code path of the new method, called internally when the
+/// trimmed needle is empty (D12-3 — empty/whitespace contract). The
+/// `@Query` macro is intentionally **not** used here — preserving the
+/// `@ModelActor` seam is a Group D contract (decision D6-1 option (a)) so
+/// cross-actor reads stay routed through the actor rather than through
+/// the SwiftUI environment's model context.
 ///
 /// ## Styling
 ///
@@ -69,10 +85,13 @@ struct MeetingListView: View {
     ///   `Task.detached` init pattern (Amendment 3). Retained for Step
     ///   11's row-tap navigation: the destination passes this same
     ///   store through to ``MeetingDetailView``.
+    ///
+    /// Step 12 changes the fetcher signature to take a `String` search
+    /// text and trampoline to ``MeetingStore/fetchAll(searchText:)``.
     init(store: MeetingStore) {
         self.store = store
         _model = State(wrappedValue: MeetingListViewModel(
-            fetcher: { try await store.fetchAllUnfiltered() }
+            fetcher: { needle in try await store.fetchAll(searchText: needle) }
         ))
     }
 
@@ -87,12 +106,41 @@ struct MeetingListView: View {
     var body: some View {
         Group {
             if model.meetings.isEmpty && model.loadError == nil {
-                emptyState
+                // Step 12: when the user has typed a query that produced
+                // zero results, the native iOS pattern is
+                // `ContentUnavailableView.search`. Step 6's "No meetings yet"
+                // empty state wins only when there are no meetings AND no
+                // active search. `searchText` is the trimmed-untrimmed raw
+                // bind value; the contract here is "user has typed
+                // anything" so the raw isEmpty check is correct (not the
+                // post-trim emptiness used by the store).
+                if model.searchText.isEmpty {
+                    emptyState
+                } else {
+                    ContentUnavailableView.search(text: model.searchText)
+                }
             } else {
                 listContent
             }
         }
         .navigationTitle("History")
+        // Step 12: native iOS search bar two-way-bound to the VM's
+        // `searchText`. Mutations there schedule a 300ms debounce that
+        // ultimately bumps `searchTrigger`; SwiftUI's `.task(id:)` below
+        // re-fires reload with the current search text.
+        .searchable(
+            text: $model.searchText,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: "Search meetings"
+        )
+        // Two `.task(id:)` modifiers, both calling reload(). SwiftUI manages
+        // lifecycle per trigger; reload() reads the CURRENT `searchText`
+        // regardless of which trigger fired, so auto-save reloads during
+        // an active search keep the filter (see Assumption 2 violation
+        // test `meetingListSearch_autoSaveReloadDuringActiveSearch_keepsFilter`).
+        .task(id: model.searchTrigger) {
+            await model.reload()
+        }
         .task(id: model.refreshTrigger) {
             await model.reload()
         }
@@ -178,6 +226,10 @@ extension MeetingSummary: Hashable {
         hasher.combine(endedAt)
         hasher.combine(title)
         hasher.combine(sentenceCount)
+        // Step 12: include the body-match snippet so two summaries that
+        // differ only in snippet don't collide in SwiftUI's value-based
+        // navigation. Title-only / empty-needle paths leave this `nil`.
+        hasher.combine(firstMatchSnippet)
     }
 }
 
@@ -189,11 +241,22 @@ extension MeetingSummary: Hashable {
 /// ``reload()``, and inspect the published ``meetings``, ``loadError``,
 /// and ``refreshTrigger`` properties.
 ///
-/// `@MainActor` because all three published properties mutate from
+/// `@MainActor` because all four published properties mutate from
 /// SwiftUI's render context. The fetcher closure itself crosses to the
 /// store's actor; the post-await assignment back to ``meetings`` /
 /// ``loadError`` hops back to the main actor by virtue of the model's
 /// isolation.
+///
+/// ## Step 12 — search additions
+/// - ``searchText`` is two-way bound by `.searchable` in the view. Its
+///   `didSet` schedules a 300ms debounce.
+/// - ``searchTrigger`` is bumped by the debounce task once the quiet
+///   window elapses. SwiftUI's `.task(id:)` on the view observes it and
+///   re-fires ``reload()``.
+/// - ``reload()``'s fetcher signature now takes `String` (the current
+///   `searchText`). Both auto-save (``requestReload()``) and debounce
+///   trigger sources flow through the same `reload()` method, so an
+///   auto-save reload during an active search preserves the filter.
 @MainActor
 @Observable
 final class MeetingListViewModel {
@@ -207,40 +270,74 @@ final class MeetingListViewModel {
     /// ``reload()``. Rapid mutations are serialized last-query-wins by
     /// SwiftUI's task-cancellation behavior (Step 11+ wiring uses this
     /// after auto-save deltas; Step 6 only mutates on first view appear).
+    ///
+    /// Step 12: this is the **auto-save** trigger. The **search** trigger
+    /// is ``searchTrigger``. Both call into the same ``reload()``.
     private(set) var refreshTrigger: UUID = .init()
 
+    /// Two-way bound by `.searchable` in ``MeetingListView``. Each
+    /// mutation schedules a 300ms debounce that bumps ``searchTrigger``.
+    /// `reload()` reads this value at call time.
+    var searchText: String = "" {
+        didSet { scheduleSearchReload() }
+    }
+
+    /// Bumped by the debounce task once the 300ms quiet window elapses.
+    /// SwiftUI's `.task(id: searchTrigger)` on the view observes it and
+    /// re-fires ``reload()``.
+    private(set) var searchTrigger: UUID = .init()
+
     /// The async fetcher reload calls. Stored as a Sendable closure so
-    /// production can trampoline to ``MeetingStore/fetchAllUnfiltered()``
+    /// production can trampoline to ``MeetingStore/fetchAll(searchText:)``
     /// while tests inject ad-hoc closures (success / throw / sleep).
-    private let fetcher: @Sendable () async throws -> [MeetingSummary]
+    /// Step 12: signature changed from `() async throws ...` to
+    /// `(String) async throws ...` so the fetcher receives the current
+    /// search text on every call.
+    private let fetcher: @Sendable (String) async throws -> [MeetingSummary]
+
+    /// In-flight debounce task. Cancelled and replaced on every
+    /// `searchText` mutation.
+    private var pendingSearch: Task<Void, Never>?
 
     /// Designated initializer.
     ///
     /// - Parameter fetcher: The Sendable async closure called by
     ///   ``reload()``. Production wiring closes over the
-    ///   ``MeetingStore`` actor handle.
-    init(fetcher: @escaping @Sendable () async throws -> [MeetingSummary]) {
+    ///   ``MeetingStore`` actor handle (Step 12 wires
+    ///   ``MeetingStore/fetchAll(searchText:)``).
+    init(fetcher: @escaping @Sendable (String) async throws -> [MeetingSummary]) {
         self.fetcher = fetcher
     }
 
-    /// Pulls the latest summaries across the actor hop. Errors are
-    /// stored in ``loadError`` rather than thrown — SwiftUI views
-    /// cannot throw, and the contract routes failures through the
-    /// inline error state.
+    /// Pulls the latest summaries across the actor hop, passing the
+    /// current ``searchText``. Errors are stored in ``loadError`` rather
+    /// than thrown — SwiftUI views cannot throw, and the contract routes
+    /// failures through the inline error state.
     ///
-    /// Concurrent invocations are serialized last-query-wins by SwiftUI's
-    /// `.task(id:)` cancellation in production; tests exercise the same
-    /// semantics by awaiting two rapid invocations and asserting the
-    /// second one's result is what landed (see
-    /// `meetingListView_rapidRefreshTriggerChanges_lastQueryWins`).
+    /// ## Auto-save during active search
+    /// The auto-save subscriber bumps ``refreshTrigger`` (NOT
+    /// ``searchTrigger``) and this method then reads the **current**
+    /// ``searchText`` regardless of which trigger source fired. Filter
+    /// state therefore survives auto-save reloads. Named violation test:
+    /// ``meetingListSearch_autoSaveReloadDuringActiveSearch_keepsFilter``.
+    ///
+    /// ## Cancellation semantics
+    /// `CancellationError` is silently swallowed — debounce cancels are
+    /// intentional, not user-visible. Other errors are captured into
+    /// ``loadError`` and the prior ``meetings`` array is preserved
+    /// (Step-12 behavior; matches Step-6's "errors surface inline" promise).
     func reload() async {
         do {
-            let next = try await fetcher()
+            let next = try await fetcher(searchText)
             // After the await, isolation has hopped back to the main
             // actor (because Self is @MainActor-isolated). It is safe to
             // mutate the published properties here without a further hop.
             meetings = next
             loadError = nil
+        } catch is CancellationError {
+            // Intentional cancellation — leave state untouched. Debounce
+            // and `.task(id:)` reuse this path; user-visible state should
+            // not flicker when SwiftUI tears down a stale task.
         } catch {
             loadError = error
         }
@@ -250,7 +347,33 @@ final class MeetingListViewModel {
     /// `.task(id:)` to re-run ``reload()``. Exposed so callers (Step 11+
     /// auto-save subscriber and tests) can request a reload without
     /// owning the underlying state.
+    ///
+    /// Step 12: this bumps the auto-save trigger only — `searchText`
+    /// is not touched, so an in-flight search filter is preserved.
     func requestReload() {
         refreshTrigger = UUID()
+    }
+
+    /// Cancels the pending debounce task (if any) and schedules a new one
+    /// that will bump ``searchTrigger`` after 300ms of quiet. Invoked by
+    /// ``searchText``'s `didSet`.
+    ///
+    /// ## Scheduling assumption (Concurrency design discipline)
+    /// Rapid mutations of ``searchText`` cancel the previous pending task
+    /// before it can bump ``searchTrigger``, so only the **last**
+    /// `searchText` value produces a fetcher invocation. The
+    /// `try? await Task.sleep(...)` swallows the `CancellationError` and
+    /// the guard exits early. Named violation test:
+    /// ``meetingListSearch_rapidTyping_onlyLastQueryFires`` — drives 5
+    /// rapid `searchText` mutations within 100ms and asserts the fetcher
+    /// recorded exactly one invocation.
+    private func scheduleSearchReload() {
+        pendingSearch?.cancel()
+        pendingSearch = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            self.searchTrigger = UUID()
+        }
     }
 }
