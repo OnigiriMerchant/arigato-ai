@@ -700,6 +700,12 @@ Cost estimate: ~15 min.
 
 ## Documentation hygiene
 
+### CURRENT_STATE.md test-baseline drift — sync rule
+- **What:** During Group C closeout, the documented test baseline in `docs/CURRENT_STATE.md` was recorded as "204/204 tests passing (198 unit + 6 UI)". Group D Step 1 (2026-05-16) ran the suite empirically and observed 208 unit + 6 UI = 214 total *after* its +7 new tests, which means the real Group C baseline was 201 unit + 6 UI = 207 total — three unit tests had landed during Group C without the baseline figure being updated.
+- **Why it happened:** Group C produced 10 step-checkpoints + 3 fix commits. The test-count figure in CURRENT_STATE.md was written at end-of-group rather than refreshed at each checkpoint, and the closing pass either miscounted or missed late-landing tests. The doc never said anything *wrong* about correctness — all tests passed — but the count itself drifted.
+- **Trigger to revisit:** every checkpoint that adds or removes tests must update the CURRENT_STATE.md test-baseline figure in the same commit. @swift-implementer's commit step at end of every step is the natural enforcement point; @code-reviewer at the three-reviewer gate verifies the figure matches reality.
+- **Cost estimate:** zero ongoing cost if folded into checkpoint discipline. The cost of *not* doing it is one suite-run + doc-fix commit per group, which is what we paid here.
+
 ### `.claude/skills/leap-sdk/SKILL.md` — reconcile phantom v0.10.4.3 framing
 - **What:** SKILL.md currently contains phantom-version claims discovered during the Phase 5 kickoff version-pin cleanup pass (2026-05-12). Line 9: "Minimum target version: v0.10.4.3 (released 2026-05-07)" — the version tag does not exist in the public `Liquid4All/leap-ios` repo, and the release date is unverified. Line 11: "Avoid the older `KotlinUInt` wrapping pattern seen in pre-v0.10.4.3 tutorials" — same phantom-version premise.
 - **Why deferred:** not a simple string substitution. The v0.10.4.3 framing is load-bearing for the skill's guidance — the entire "Recent SDK changes (May 2026)" section (and possibly the `KotlinUInt` advice) is built on the assumption that a version newer than v0.9.4 exists with specific API improvements. Without verified evidence of what those changes actually are (or whether they exist at all), substituting v0.10.4.3 → v0.9.4 would silently propagate stale or fabricated guidance. The fix requires deciding what the file should actually say after verifying current LEAP SDK API surface against v0.9.4 source tree.

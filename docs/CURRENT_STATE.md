@@ -1,9 +1,9 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-16 — Phase 5 **Group D pre-flight COMPLETE**. Group D strategic walkthrough locked 20 UI decisions, @feature-planner returned a 15-step plan with 6 surfaced decisions (all approved), and 4 parallel @doc-researcher runs landed findings against Apple's docs + WWDC transcripts + Apple Developer Forums. Four plan amendments approved (driven by DR-1 + DR-3 findings — `@ModelActor` background-executor bug, hiragana↔katakana correctness gap in `localizedStandardContains`, documented to-many `contains-where` failures, B-tree index limits for substring search). Branch is in sync with origin/main (0/0). **Step 1 dispatch deferred to next session per Jose's instruction.**
+Last updated: 2026-05-16 — Phase 5 **Group D Step 1 SHIPPED** (checkpoint, not pushed). Meeting + Sentence @Model entities + SearchTextNormalizer landed in `ArigatoAI/Persistence/`. 7 new tests pass; full suite 214/214 (208 unit + 6 UI). Group D pre-flight remains complete: 20 UI decisions locked, 15-step plan approved with 6 surfaced decisions, 4 plan amendments approved (Amendments 1 + 4 implemented in Step 1). Branch is 1 ahead of origin/main (Step 1 checkpoint not pushed per protocol).
 
 ## Most recent commit
-- 5067613 docs(group-d): file pre-flight doc-researcher findings (DR-1 through DR-4)
+- 21dfb9d checkpoint(group-d-step-1): add Meeting/Sentence @Model entities + SearchTextNormalizer
 - Most recent production commit: 981c962 fix(group-c-step-10): capture sourceSegmentID once in startGeneration so partialChunk and completed agree
 
 ## Toolchain
@@ -11,7 +11,7 @@ Last updated: 2026-05-16 — Phase 5 **Group D pre-flight COMPLETE**. Group D st
 - **SDK**: iOS 26.5
 - **Swift**: 6.3.2
 - **Default simulator**: iPhone 17 Pro Max — UUID `930EC6EA-DA72-4A38-ABFF-583AD70B28D4`. XcodeBuildMCP resolves `useLatestOS: true` against installed sim runtimes.
-- **End-of-Group-C verification (2026-05-16)**: 204/204 tests passing (198 unit + 6 UI) in 63s with `-parallel-testing-enabled NO`, TPC + MTC enabled at default. 0 errors, 0 warnings.
+- **End-of-Group-C verification (2026-05-16)**: 207/207 tests passing (201 unit + 6 UI) in 63s with `-parallel-testing-enabled NO`, TPC + MTC enabled at default. 0 errors, 0 warnings. (Corrected 2026-05-16 from initially-documented 204/204 — three unit tests had landed during Group C closeout without the baseline figure being updated; see V3 backlog "Documentation hygiene" → CURRENT_STATE.md test-baseline drift entry.)
 
 ## Phase status
 - Phase 4 (WhisperKit/ArgmaxOSS streaming transcription): ✅ **SHIPPED in full**.
@@ -34,11 +34,16 @@ Last updated: 2026-05-16 — Phase 5 **Group D pre-flight COMPLETE**. Group D st
     - Amendment 2 (Step 12): restructure `MeetingStore.fetchAll(searchText:)` to flat `Sentence` fetch + Swift-side group-by-meeting (avoids documented to-many `contains-where` failures). On-device 15K-row benchmark gates Decision #14.
     - Amendment 3 (Step 8): initialize `MeetingStore` via `Task.detached { ... }` per FB13399899 workaround. New violation test asserts main-thread responsiveness under 100-call `appendSentence` burst.
     - Amendment 4 (Step 1): cascade-delete regression test exercising FB13640004 failure mode (explicit pre-delete save).
-- 204/204 tests passing. 0 errors, 0 warnings. All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
+- **Phase 5 Group D Step 1 (shipped 2026-05-16)**: ✅ checkpoint `21dfb9d` landed locally on main — 214/214 tests passing (208 unit + 6 UI). Not pushed per protocol.
+  - New files: `ArigatoAI/Persistence/Meeting.swift`, `ArigatoAI/Persistence/Sentence.swift`, `ArigatoAI/Persistence/SearchTextNormalizer.swift`, `ArigatoAITests/Persistence/MeetingEntityTests.swift`, `ArigatoAITests/Persistence/SearchTextNormalizerTests.swift`.
+  - Implements UI decision #20 schema + Amendment 1 (`Sentence.searchableText` + `SearchTextNormalizer` with hiragana→katakana transform + diacritic/case/width folding) + Amendment 4 (FB13640004 cascade-delete regression test cites "FB13640004 / Apple Developer Forums 740649" by doc-comment).
+  - No `@Attribute(.spotlight)` / `#Index` on `searchableText` per DR-3 (B-tree indexes can't accelerate `%term%` substring scans; FTS5 is the real fix, V3-tracked under decision #14).
+  - pbxproj untouched — project uses `PBXFileSystemSynchronizedRootGroup`, new files auto-pick-up.
+- 214/214 tests passing. 0 errors, 0 warnings. All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
 
 ## Next planned action
-- **Group D Step 1 dispatch — in a fresh session tomorrow.** Jose explicitly deferred dispatch tonight. Resume by reading: `docs/GROUP_D_UI_DECISIONS.md` (20 locked decisions), `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` (findings + 4 approved amendments), and the feature-planner's plan in conversation history (or re-dispatch a brief @feature-planner refresher if context is cold).
-- **Step 1 absolute scope**: NEW `ArigatoAI/Persistence/Meeting.swift` + `ArigatoAI/Persistence/Sentence.swift`. Includes `Sentence.searchableText` field per Amendment 1. Tests include FB13640004 cascade-delete regression per Amendment 4. Test seam: in-memory `ModelContainer`.
+- **Group D Step 2 dispatch — next session.** Step 1 shipped (checkpoint `21dfb9d` local-only). Resume by reading: `docs/GROUP_D_UI_DECISIONS.md` (20 locked decisions), `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` (findings + 4 approved amendments, especially DR-1 for Step 2's `@ModelActor` work and Amendment 3 for Step 8's `Task.detached` workaround), and the feature-planner's plan in conversation history.
+- **Step 2 will introduce**: `MeetingStore` (`@ModelActor`), `MeetingSummary` / `MeetingDetail` DTOs, `appendSentence` populates `Sentence.searchableText` via `SearchTextNormalizer`. Concurrency design discipline applies — `MeetingStore` is the first `@ModelActor`; scheduling assumptions + violation test required.
 - **Plan structure**: Phase 1 (persistence + session core, Steps 1–5) → Phase 2 (UI shell + transcript view, Steps 6–10) → Phase 3 (history/search/export/onboarding/settings, Steps 11–15) → three-reviewer gate. Checkpoint commits per step per "Rollback safety."
 - **Group D queued V3 entries (file at execution time, not pre-emptively)**:
   - "Migrate meeting title generation from first-sentence to Foundation Models summarization" — files when Step 3 lands (decision #12).
@@ -95,9 +100,9 @@ Last updated: 2026-05-16 — Phase 5 **Group D pre-flight COMPLETE**. Group D st
 - Test seams `#if DEBUG`-gated up-front (Group C convention): `pendingSentenceCount()`, `droppedNewestCount()`, `awaitUpstreamDrained()` on `TranslationActor` all wrapped in `#if DEBUG`. TranscriptionActor backport pending. Step 7 will add `TranslationEvent.queueOverflow(sourceSegmentID:)` — a new event, not a `#if DEBUG` seam.
 
 ## Working tree
-- Clean post-push.
+- Clean.
 - Branch: main
-- Origin/main: 0 ahead, 0 behind — synced.
+- Origin/main: 1 ahead, 0 behind — Step 1 checkpoint `21dfb9d` not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D).
 
 ## Local-only artifacts
 - Tag pre-recovery-snapshot/group-c → 4a57d30 (forensic snapshot of pre-recovery Group C Phase 4 state — local only, not pushed)
