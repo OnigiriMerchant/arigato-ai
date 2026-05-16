@@ -13,9 +13,10 @@ import SwiftUI
 /// icon on the active-meeting view (Group D UI decision #11).
 ///
 /// Renders a list of past meetings sorted newest-first, each row drawn by
-/// ``MeetingListRow`` against a ``MeetingSummary`` DTO. Tapping a row has
-/// no effect in Step 6 — single-tap navigation to a detail screen lands
-/// in Step 11; swipe actions land in Step 13.
+/// ``MeetingListRow`` against a ``MeetingSummary`` DTO. Each row is wrapped
+/// in a `NavigationLink(value: summary)` that pushes ``MeetingDetailView``
+/// via the `.navigationDestination(for: MeetingSummary.self)` modifier
+/// attached to the list content (Step 11). Swipe actions land in Step 13.
 ///
 /// ## Scheduling assumption (Concurrency design discipline)
 ///
@@ -52,13 +53,24 @@ struct MeetingListView: View {
     /// Held as `@State` so SwiftUI retains it across re-renders.
     @State private var model: MeetingListViewModel
 
+    /// The actor-backed read source. Retained as a stored property so
+    /// the Step 11 `.navigationDestination(for: MeetingSummary.self)` can
+    /// hand it through to ``MeetingDetailView``'s production init.
+    /// Optional because the test-only `init(model:)` does not need a
+    /// live store — when `nil`, the destination resolves to an empty
+    /// view (tap-navigation is a render-time-only concern under tests).
+    private let store: MeetingStore?
+
     /// Production initializer — closes over the actor-backed store.
     ///
     /// - Parameter store: The actor-backed read source. Constructed
     ///   inline by ``ContentView`` for Step 6; lifted to
     ///   ``AppBootstrapper`` in Step 8 with the
-    ///   `Task.detached` init pattern (Amendment 3).
+    ///   `Task.detached` init pattern (Amendment 3). Retained for Step
+    ///   11's row-tap navigation: the destination passes this same
+    ///   store through to ``MeetingDetailView``.
     init(store: MeetingStore) {
+        self.store = store
         _model = State(wrappedValue: MeetingListViewModel(
             fetcher: { try await store.fetchAllUnfiltered() }
         ))
@@ -68,6 +80,7 @@ struct MeetingListView: View {
     /// so callers can drive success, failure, and ordering behavior
     /// without owning a real `MeetingStore` actor.
     init(model: MeetingListViewModel) {
+        store = nil
         _model = State(wrappedValue: model)
     }
 
@@ -103,14 +116,68 @@ struct MeetingListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Main list content. No tap action (Step 11), no swipe actions
-    /// (Step 13) per the locked plan.
+    /// Main list content. Each row is a `NavigationLink(value:)` that
+    /// pushes ``MeetingDetailView`` via the
+    /// `.navigationDestination(for: MeetingSummary.self)` modifier
+    /// attached below — the iOS 16+ "attach close to source" idiom keeps
+    /// the destination resolution inside this view rather than at the
+    /// `NavigationStack` root in ``ContentView`` (see
+    /// ``ContentView`` for the stack root). Swipe actions land in
+    /// Step 13.
     private var listContent: some View {
         List {
             ForEach(model.meetings, id: \.id) { summary in
-                MeetingListRow(summary: summary)
+                // Step 11: row-tap pushes the detail destination. The
+                // value-based form (over the closure-label form) lets
+                // SwiftUI route the value through `.navigationDestination`
+                // below so destination construction is centralized.
+                NavigationLink(value: summary) {
+                    MeetingListRow(summary: summary)
+                }
             }
         }
+        // Step 11: the destination is attached inside ``MeetingListView``
+        // (not on the ``NavigationStack`` in ``ContentView``) per the iOS
+        // 16+ idiom — keeping the destination close to the source view
+        // simplifies reasoning and avoids polluting the root with every
+        // possible destination type. ``ContentView`` houses the stack
+        // root only (cross-ref ``ContentView``).
+        .navigationDestination(for: MeetingSummary.self) { summary in
+            if let store {
+                MeetingDetailView(summary: summary, store: store)
+            } else {
+                // Render-time fallback for the test-only `init(model:)`
+                // path. Tests do not exercise navigation push; this
+                // branch keeps the type system happy without forcing a
+                // STOP on the test-only init shape.
+                EmptyView()
+            }
+        }
+    }
+}
+
+/// `Hashable` conformance for ``MeetingSummary``, required by
+/// `NavigationLink(value:)` (Step 11). Declared in this file rather
+/// than alongside the DTO definition because Step 11's MAY-NOT-modify
+/// scope covers ``MeetingSummary`` itself; the extension lives at the
+/// consumer site.
+///
+/// `hash(into:)` is implemented explicitly because cross-file
+/// extensions of `Hashable` cannot trigger Swift's automatic synthesis
+/// (the compiler requires the conformance and stored properties to be
+/// visible together). All hashed fields are themselves `Hashable`
+/// value types; ``MeetingSummary/id`` (a `PersistentIdentifier`) is
+/// sufficient for uniqueness in the navigation context, but we hash
+/// the full DTO shape so two distinct summaries that happen to share
+/// an identifier (a programmer error caught nowhere else) remain
+/// distinguishable to SwiftUI's value-based navigation.
+extension MeetingSummary: Hashable {
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(startedAt)
+        hasher.combine(endedAt)
+        hasher.combine(title)
+        hasher.combine(sentenceCount)
     }
 }
 
