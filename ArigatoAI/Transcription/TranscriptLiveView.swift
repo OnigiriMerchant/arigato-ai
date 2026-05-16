@@ -22,14 +22,17 @@ import SwiftUI
 ///    ``RoutedTranscript/authoritativeLanguage`` (a SEAM-2 divergence
 ///    window) the row shows a small fallback marker — that one-window
 ///    mismatch is information, not noise.
-/// 3. **Bottom — record control.** A private ``RecordControl`` subview
-///    holds its own ``AudioCaptureViewModel`` constructed with
-///    `router: bootstrapper.router`, so audio frames captured by the
-///    engine flow through ``LanguageRouter/transcribe(frames:)`` and
-///    routed transcripts populate the bootstrapper-owned router's
-///    ``LanguageRouter/routedHistory`` — which the middle region renders
-///    above. Activated in Step 5; superseded the Phase-3 `router: nil`
-///    fallback that Step 4 shipped.
+/// 3. **Bottom — meeting controls surface.** A ``MeetingControlsView``
+///    bound to a ``MeetingControlsViewModel``. Step 7 swapped the prior
+///    `RecordControl` / `RecordButton` / `VUMeter` cluster for this new
+///    surface (D7-2 option a — surgical swap). The host view ships a
+///    `.disabled()` placeholder VM by default; ``ContentView`` overrides
+///    it with `MeetingControlsViewModel.disabled()` until Step 8 swaps
+///    in `MeetingControlsViewModel.wiring(coordinator:)`. The previous
+///    audio-capture wiring through `AudioCaptureViewModel.router` is
+///    dormant under Group D's design (tracked in the V3 dead-router-
+///    drain entry); the live meeting pipeline reaches the router via
+///    ``MeetingPipeline`` from Step 4.
 ///
 /// ## Binding contract (locked)
 ///
@@ -61,6 +64,29 @@ struct TranscriptLiveView: View {
     /// pre-configured fake.
     @Environment(AppBootstrapper.self) private var bootstrapper
 
+    /// Meeting controls VM for the bottom region. Defaults to the no-op
+    /// ``MeetingControlsViewModel/disabled()`` placeholder so previews
+    /// and tests that don't care about the controls surface continue to
+    /// build. Production callers (``ContentView``) pass a non-default
+    /// VM. Step 8 swaps the placeholder for
+    /// ``MeetingControlsViewModel/wiring(coordinator:now:)``.
+    let controlsModel: MeetingControlsViewModel
+
+    /// Default initializer — ships a disabled placeholder VM for the
+    /// controls surface so historical call sites (previews, the Phase-4
+    /// `RecordControl` regression suite) compile unchanged.
+    init() {
+        controlsModel = MeetingControlsViewModel.disabled()
+    }
+
+    /// Override initializer — accepts a pre-built controls VM.
+    /// ``ContentView`` calls this to inject the
+    /// ``MeetingControlsViewModel/disabled()`` placeholder explicitly so
+    /// the Step 8 swap site is single-line.
+    init(controlsModel: MeetingControlsViewModel) {
+        self.controlsModel = controlsModel
+    }
+
     // MARK: - Empty-state copy (Concern 6 regression boundary)
 
     /// Primary "we're waiting" copy. Owned by the middle-region empty
@@ -83,12 +109,9 @@ struct TranscriptLiveView: View {
 
             transcriptList
 
-            RecordControl(
-                loaderState: bootstrapper.loaderState,
-                router: bootstrapper.router
-            )
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            MeetingControlsView(model: controlsModel)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
 
             footer
                 .padding(.horizontal, 20)
@@ -374,206 +397,15 @@ struct IndicatorChromeDisplay: Equatable {
     }
 }
 
-// MARK: - Record control
-
-/// Bottom region: VU meter + record button. Owns an
-/// ``AudioCaptureViewModel`` via `@State` constructed with
-/// `router: bootstrapper.router` so audio frames flow through
-/// ``LanguageRouter/transcribe(frames:)`` and populate
-/// ``LanguageRouter/routedHistory`` — which the parent
-/// ``TranscriptLiveView`` renders. The view model's lifecycle is tied
-/// to this view's lifetime via `@State`; the bootstrapper-owned router
-/// survives across view re-creations, so routed history persists even
-/// when this subview rebuilds.
-///
-/// The router is forwarded in via init rather than read from the
-/// SwiftUI environment because `@State` initial values run before
-/// `@Environment` is available, so the parent ``TranscriptLiveView``
-/// (which has the bootstrapper in scope) is responsible for passing
-/// `bootstrapper.router` down.
-///
-/// The router-injected drain path itself is locked by
-/// ``AudioCaptureViewModelTests`` test **D3-T1**
-/// (`startRecording_withRouter_drainsSegmentStream`), which constructs
-/// a router-backed view model, drives one window of frames, and
-/// asserts the router's ``LanguageRouter/routedHistory`` accumulates
-/// the routed transcript with the expected detected and authoritative
-/// languages.
-private struct RecordControl: View {
-    /// Read at view-build time so the record button can disable itself
-    /// when the Whisper loader has failed.
-    let loaderState: LoaderState
-
-    /// Shared ``LanguageRouter`` from ``AppBootstrapper``. Captured by
-    /// the `@State` initializer below so the view model drains through
-    /// the production router rather than the Phase-3 fallback.
-    let router: LanguageRouter
-
-    @State private var viewModel: AudioCaptureViewModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    init(loaderState: LoaderState, router: LanguageRouter) {
-        self.loaderState = loaderState
-        self.router = router
-        _viewModel = State(wrappedValue: AudioCaptureViewModel(router: router))
-    }
-
-    var body: some View {
-        VStack(spacing: 16) {
-            switch viewModel.permissionStatus {
-            case .notDetermined:
-                notDeterminedContent
-            case .granted:
-                grantedContent
-            case .denied:
-                deniedContent
-            case .restricted:
-                restrictedContent
-            }
-        }
-        .task {
-            await viewModel.onAppear()
-        }
-    }
-
-    private var notDeterminedContent: some View {
-        VStack(spacing: 12) {
-            Text("Microphone access")
-                .font(.headline)
-            Text("Arigato AI uses your microphone to transcribe and translate meeting audio entirely on your device.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Allow microphone") {
-                Task { await viewModel.toggleRecording() }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isRecordButtonDisabled)
-        }
-    }
-
-    private var grantedContent: some View {
-        VStack(spacing: 12) {
-            VUMeter(level: viewModel.level)
-                .frame(height: 10)
-                .padding(.horizontal, 4)
-
-            RecordButton(
-                isRecording: viewModel.isRecording,
-                disabled: isRecordButtonDisabled,
-                reduceMotion: reduceMotion
-            ) {
-                Task { await viewModel.toggleRecording() }
-            }
-
-            if let message = viewModel.errorMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 8)
-            }
-        }
-    }
-
-    private var deniedContent: some View {
-        VStack(spacing: 8) {
-            Text("Microphone access denied")
-                .font(.subheadline.weight(.semibold))
-            Text("Enable microphone access in Settings to start a meeting.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Open Settings") {
-                viewModel.openSettings()
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
-    private var restrictedContent: some View {
-        VStack(spacing: 8) {
-            Text("Microphone unavailable")
-                .font(.subheadline.weight(.semibold))
-            Text("Microphone access is restricted on this device. Check Screen Time or device-management settings.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-    }
-
-    private var isRecordButtonDisabled: Bool {
-        if case .failed = loaderState { return true }
-        return false
-    }
-}
-
-// MARK: - Record button
-
-private struct RecordButton: View {
-    let isRecording: Bool
-    let disabled: Bool
-    let reduceMotion: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(isRecording ? Color.recordingActive : Color.meterTrack)
-                    .frame(
-                        width: isRecording ? 80 : 64,
-                        height: isRecording ? 80 : 64
-                    )
-
-                Image(systemName: isRecording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: isRecording ? 28 : 24, weight: .semibold))
-                    .foregroundStyle(isRecording ? Color.white : Color.primary)
-                    .symbolEffect(.pulse, options: .repeating, isActive: shouldPulse)
-            }
-        }
-        .buttonStyle(.plain)
-        .contentShape(Circle())
-        .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
-        .accessibilityLabel(accessibilityLabelText)
-        .accessibilityAddTraits(.isButton)
-    }
-
-    private var shouldPulse: Bool {
-        isRecording && !reduceMotion
-    }
-
-    private var accessibilityLabelText: String {
-        if disabled {
-            return "Record button unavailable: Whisper failed to load"
-        }
-        return isRecording ? "Stop recording" : "Start recording"
-    }
-}
-
-// MARK: - VU meter
-
-private struct VUMeter: View {
-    let level: Float
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.meterTrack)
-                Capsule()
-                    .fill(Color.recordingActive.opacity(0.85))
-                    .frame(width: max(0, CGFloat(level) * proxy.size.width))
-                    .animation(.easeOut(duration: 0.08), value: level)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Input level")
-        .accessibilityValue("\(Int((level * 100).rounded())) percent")
-    }
-}
+// Step 7 (2026-05-16) — Surgical D7-2 swap. `RecordControl`,
+// `RecordButton`, and `VUMeter` were deleted here; the bottom region
+// now hosts ``MeetingControlsView`` driven by a
+// ``MeetingControlsViewModel`` injected via ``TranscriptLiveView/init``.
+// The deleted controls were the Phase-3 single-button capture surface;
+// the new surface morphs through five meeting states per UI #3 + #4.
+// The `RecordControl` was the only call site for
+// `AudioCaptureViewModel(router:)`'s drain path — that path is dormant
+// under Group D and tracked by the V3 "dead router-drain" entry.
 
 // MARK: - Preview support
 

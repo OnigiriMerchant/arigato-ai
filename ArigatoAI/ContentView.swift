@@ -35,6 +35,20 @@ import SwiftUI
 /// in dispatch-brief STOP #1's "Specifically allowed alternative" path
 /// is taken — the coordinator and its audio/router/translator deps stay
 /// on the Step 8 dispatch, not this one.
+///
+/// ## Group D Step 7 — meeting controls placeholder VM
+///
+/// ``ContentView`` constructs a ``MeetingControlsViewModel/disabled()``
+/// placeholder and threads it through ``TranscriptLiveView`` as the
+/// bottom-region controls VM. This is a no-op stand-in — every action
+/// closure is empty and the surface stays in the `.notDetermined`
+/// permission state so taps don't actually drive a meeting.
+///
+/// **Step 8 swap site**: replace `MeetingControlsViewModel.disabled()`
+/// here with `MeetingControlsViewModel.wiring(coordinator: ...)` once
+/// ``AppBootstrapper`` constructs the live ``MeetingCoordinator``.
+/// That is the single line that turns the controls surface live —
+/// every other piece of plumbing is already in place.
 struct ContentView: View {
     /// The SwiftData context plumbed in by ``ArigatoAIApp`` via the
     /// `.modelContainer(...)` modifier. The container is fished out of
@@ -43,7 +57,9 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            TranscriptLiveView()
+            // Step 7: placeholder controls VM. Step 8 swap site —
+            // replace `.disabled()` with `.wiring(coordinator: ...)`.
+            TranscriptLiveView(controlsModel: MeetingControlsViewModel.disabled())
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
