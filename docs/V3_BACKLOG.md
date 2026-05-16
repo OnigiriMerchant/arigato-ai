@@ -1054,3 +1054,19 @@ Cost estimate: ~15 min.
   - V3 entry "Audit-first continuation protocol" (commit `6cd0f7f`) — `/goal` is the natural automation candidate for this manual pattern.
   - V3 entries #41 / #42 / #43 / #44 (workflow automation bundle) — bundle Claude Code feature adoption with these.
   - Claude Code changelog: https://code.claude.com/docs/en/changelog.md
+
+### Migrate history search to SQLite FTS5
+
+- **What:** Step 12 ships history search via Amendment 2 flat-`Sentence` fetch + `String.contains(foldedNeedle)` on pre-normalized `searchableText`. The architectural cost of introducing FTS5 (parallel SQLite-extension table + write-path hook + tokenizer reconciliation with `SearchTextNormalizer`'s hiragana fold) was rejected per D12-1 evaluate-and-defer. Current latency: **27.78ms at 15K-row synthetic seed on simulator** (100 meetings × 150 sentences = 15,000 sentence rows, mixed JA/EN content, `"tokyo"` query) — well under the 200ms target and the 500ms STOP threshold. Measured via `ContinuousClock.now` deltas in `meetingListSearch_15kRows_searchLatencyUnder200ms`.
+- **Why this is V3 and not Step 12 scope:** FTS5 is a structural-cost-vs-hypothetical-performance trade-off. The benchmark + transcript-volume gate provides the empirical resolution. Pre-emptive FTS5 violates YAGNI; deferred FTS5 risks shipping with unusable search at scale. The trigger condition makes the decision mechanical. Simulator reading is informative — the device variant of the benchmark is what gates the trigger; simulator timings are typically optimistic vs real iPhone 17 Pro Max.
+- **Trigger to revisit (D12-1):**
+  - On-device benchmark on iPhone 17 Pro Max shows search latency >200ms at 15K sentences, OR
+  - Real-world transcript volume exceeds 50K sentences (~330 meetings × 150 sentences/meeting).
+- **Action when triggered:** introduce SQLite FTS5 contentless virtual table sibling to `Sentence`. Write-path hook in `MeetingStore.appendSentence` synchronizes the row. Search-path uses `MATCH` syntax. Reconcile tokenization with `SearchTextNormalizer`'s hiragana fold (custom tokenizer required to preserve the katakana-fold equivalence classes the rest of the system relies on).
+- **Cost estimate:** ~1.5–2 days. Includes schema change, write-path hook, search-path refactor, custom tokenizer, regression tests against the existing 18 Step-12 tests in `MeetingListSearchTests.swift`. The 7 store-level tests and the latency benchmark are the highest-value regression suite — they pin the contract that FTS5 must continue to satisfy.
+- **Cross-references:**
+  - Amendment 2 in `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md`
+  - V3 SwiftData lookup-primitive entry (`6023f2a`) — same architectural family (SwiftData / iOS 26 SQLite gotchas)
+  - V3 #911 "Swift 6 mode build warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel" — relevant because the existing `MeetingStore.swift:187` warning ties into the broader Step-2/Step-12 actor-isolation surface.
+  - Step 12 commits: production checkpoint `ac87ec4` + docs commit (this commit)
+  - Step 12 perf test `meetingListSearch_15kRows_searchLatencyUnder200ms` and its device-variant counterpart (device variant TBD per Decision #14 trigger).
