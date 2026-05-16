@@ -885,3 +885,44 @@ Cost estimate: ~15 min.
   - V3 #45 LFM2 model monitoring
   - User decision noted: Path 3 selected (defer fix; address before MVP-1 ship)
   - `StartupErrorView` surfacing path (Phase 5 Group B) — error handling working correctly
+
+### Swift 6 mode build warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel
+
+- **What:** Five build warnings discovered during Step 9b verification, in files Step 9b did NOT touch:
+  1. `MeetingStore.swift:183` — main-actor-isolated init called from nonisolated context.
+  2. `AppBootstrapper.swift:463` — no 'async' operations in 'await' expression.
+  3. `AppBootstrapper.swift:472` — captured `var 'self'` in concurrent code. **Swift 6 language mode error.**
+  4. `AppBootstrapper.swift:494` — captured `var 'self'` in concurrent code. **Swift 6 language mode error.**
+  5. `MeetingControlsViewModel.ActionKind` — main-actor-isolated `Equatable` conformance in nonisolated context. **Swift 6 language mode error.**
+- **Why this is V3 and not Step 9b scope:** the warnings predate Step 9b. Three are explicit Swift 6 language mode errors — the language mode isn't currently strict-enforced for these constructs but will be when the build settings tighten or a toolchain update narrows the gap. Tests pass and build succeeds today, so no immediate blocker.
+- **Suspected origin (per Step 9b agent's diagnosis):**
+  - Warnings 1, 3, 4 likely from Step 8's Amendment 3 `Task.detached` `MeetingStore` init pattern (FB13399899 workaround surface area).
+  - Warning 2 likely from Step 8's `AppBootstrapper` detached `startPrewarm` chain extension.
+  - Warning 5 likely from Step 7's `MeetingControlsViewModel.ActionKind` enum, which is implicitly `@MainActor` via its parent class.
+- **Trigger to fix:**
+  - Hard trigger: BEFORE the project tightens to full Swift 6 strict mode (current build settings allow these as warnings).
+  - Soft trigger: pre-MVP-1 hardening bundle, alongside V3 #16 (`TranslationProtocolTests` cancel-test timing race) and the consolidated timing-race entry.
+  - Or: if a future Xcode/toolchain update auto-enforces these stricter rules.
+- **Investigation steps when triggered:**
+  1. For each warning, determine whether it represents a genuine race / undefined behavior OR just an annotation gap (likely the latter for warnings 1 and 5; warnings 3 and 4 are stricter and may indicate real `var` capture issues).
+  2. For warnings 3 + 4 (`captured var 'self' in concurrent code`): inspect the closure structure in `AppBootstrapper.swift:472` + `:494`. The Step 8 amendment used `[container]` capture lists deliberately — verify whether `self` ended up being captured elsewhere and needs explicit `[weak self]` or `nonisolated(unsafe)` per Apple's documented pattern for `@ModelActor` detached init.
+  3. For warning 1 (`MeetingStore.swift:183` main-actor-isolated init from nonisolated context): this is exactly the FB13399899 territory — verify whether the warning is from the call site that Amendment 3 was supposed to address. If yes, the `Task.detached` pattern may need a tighter form (e.g., `nonisolated init` on `MeetingStore`).
+  4. For warning 2 (`AppBootstrapper.swift:463` no async operations in await): investigate whether the `await` is decorative or genuinely needed. Often signals an API surface change since the code was written.
+  5. For warning 5 (`MeetingControlsViewModel.ActionKind` `Equatable` in nonisolated context): add `nonisolated` to the enum declaration, OR add an explicit `extension MeetingControlsViewModel.ActionKind: @unchecked Sendable` if the actor-isolation analysis is incorrect.
+- **Cost estimate:** ~30 min per warning, ~2.5 hours total. Likely shorter if warnings 1 + 5 turn out to be annotation gaps (10–15 min each).
+- **Cross-references:**
+  - V3 #16 (`TranslationProtocolTests` cancel-test timing race) — bundle in pre-MVP-1 hardening
+  - Consolidated timing-race V3 entry (commit `395e104`)
+  - Amendment 3 (Step 8 `Task.detached` `MeetingStore` init per FB13399899) — directly relevant to warnings 1, 3, 4
+  - DR-1 §1c (FB13399899 background executor inheritance) — diagnostic reference
+
+### Agent verification rigor — zero-warnings claim should include MAY-NOT-touch file scope
+
+- **What:** Step 9b verification surfaced 5 build warnings in files Step 9b did NOT touch. Steps 7 and 8 both reported "0 warnings" in their verification but did not explicitly verify whether files outside their MAY-NOT-modify scope were warning-clean. The Step 9b agent's diff-narrow build comparison was the mechanism that surfaced these — a check pattern not used by prior agents.
+- **Why this is V3 and not just a one-off note:** the verification pattern matters across every future Group D step + Phase 6+ work. "0 warnings" reported by an agent verifying its own diff doesn't mean "the whole project compiles warning-clean" — it means "my changes didn't add warnings I observed." That's a meaningfully weaker guarantee than "the full build is warning-clean."
+- **Trigger to update:** before the next group's first dispatch OR during the next workflow automation pass, whichever fires first.
+- **Action when triggered:** update CLAUDE.md's "swift-implementer scope-and-decision discipline" section, AND the code-reviewer concurrency design discipline section. Add a clause: *"When reporting 'N warnings' in step verification, the count must reflect the full `xcodebuild` output, not just the diff against changed files. If pre-existing warnings exist in untouched files, surface them explicitly as 'N new warnings, M pre-existing warnings in untouched files (filed as V3)' rather than reporting them as zero."*
+- **Cost estimate:** ~15 min to draft the CLAUDE.md clauses + add to the next workflow automation bundle.
+- **Cross-references:**
+  - Swift 6 mode build warnings entry above — the finding that prompted this entry
+  - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update
