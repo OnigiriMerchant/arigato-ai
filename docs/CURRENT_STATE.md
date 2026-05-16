@@ -1,9 +1,10 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-16 — Phase 5 **Group D Step 1 SHIPPED** (checkpoint, not pushed). Meeting + Sentence @Model entities + SearchTextNormalizer landed in `ArigatoAI/Persistence/`. 7 new tests pass; full suite 214/214 (208 unit + 6 UI). Group D pre-flight remains complete: 20 UI decisions locked, 15-step plan approved with 6 surfaced decisions, 4 plan amendments approved (Amendments 1 + 4 implemented in Step 1). Branch is 1 ahead of origin/main (Step 1 checkpoint not pushed per protocol).
+Last updated: 2026-05-16 — Phase 5 **Group D Step 2 SHIPPED** (checkpoint, not pushed). MeetingStore @ModelActor + MeetingSummary / MeetingDetail Sendable DTOs landed in `ArigatoAI/Persistence/`. 6 new tests pass; full suite 220/220 (214 unit + 6 UI). Group D pre-flight remains complete; Amendments 1 + 2 + 4 implemented (Amendment 3 still gated on Step 8).
 
 ## Most recent commit
-- 21dfb9d checkpoint(group-d-step-1): add Meeting/Sentence @Model entities + SearchTextNormalizer
+- 281fe5e checkpoint(group-d-step-2): MeetingStore @ModelActor + DTOs
+- Previous commits: 45a3198 docs(group-d-step-1) test-baseline + Step 1 results, 21dfb9d checkpoint(group-d-step-1): add Meeting/Sentence @Model entities + SearchTextNormalizer
 - Most recent production commit: 981c962 fix(group-c-step-10): capture sourceSegmentID once in startGeneration so partialChunk and completed agree
 
 ## Toolchain
@@ -39,11 +40,20 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 1 SHIPPED** (checkpoint, not
   - Implements UI decision #20 schema + Amendment 1 (`Sentence.searchableText` + `SearchTextNormalizer` with hiragana→katakana transform + diacritic/case/width folding) + Amendment 4 (FB13640004 cascade-delete regression test cites "FB13640004 / Apple Developer Forums 740649" by doc-comment).
   - No `@Attribute(.spotlight)` / `#Index` on `searchableText` per DR-3 (B-tree indexes can't accelerate `%term%` substring scans; FTS5 is the real fix, V3-tracked under decision #14).
   - pbxproj untouched — project uses `PBXFileSystemSynchronizedRootGroup`, new files auto-pick-up.
-- 214/214 tests passing. 0 errors, 0 warnings. All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
+- **Phase 5 Group D Step 2 (shipped 2026-05-16)**: ✅ checkpoint `281fe5e` landed locally — 220/220 tests passing (214 unit + 6 UI). Not pushed per protocol.
+  - New files: `ArigatoAI/Persistence/MeetingStore.swift`, `ArigatoAI/Persistence/MeetingSummary.swift`, `ArigatoAI/Persistence/MeetingDetail.swift`, `ArigatoAITests/Persistence/MeetingStoreTests.swift`.
+  - Implements DR-1 §2 — DTOs are Sendable structs, never `@Model` instances cross-actor.
+  - Scheduling-assumption doc-comment on `MeetingStore`; main-thread violation test deferred to Step 8 per Amendment 3.
+  - No `fetchAll(searchText:)` — deferred to Step 12 per plan.
+  - `searchableText` populated in `appendSentence` via `SearchTextNormalizer.normalize(source + ' ' + translation)`.
+  - Lookup uses `FetchDescriptor<Meeting>` + `#Predicate` on `persistentModelID`. `model(for:)` rejected (crashes on stale IDs); `registeredModel(for:)` rejected (post-save eviction).
+  - `nonisolated` added to `SearchTextNormalizer.normalize` so off-main `@ModelActor` can call without a main-actor hop — a Swift-6 fix surfaced and approved mid-Step-2.
+  - pbxproj untouched — `PBXFileSystemSynchronizedRootGroup` auto-pickup.
+- 220/220 tests passing. 0 errors, 0 warnings. All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
 
 ## Next planned action
-- **Group D Step 2 dispatch — next session.** Step 1 shipped (checkpoint `21dfb9d` local-only). Resume by reading: `docs/GROUP_D_UI_DECISIONS.md` (20 locked decisions), `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` (findings + 4 approved amendments, especially DR-1 for Step 2's `@ModelActor` work and Amendment 3 for Step 8's `Task.detached` workaround), and the feature-planner's plan in conversation history.
-- **Step 2 will introduce**: `MeetingStore` (`@ModelActor`), `MeetingSummary` / `MeetingDetail` DTOs, `appendSentence` populates `Sentence.searchableText` via `SearchTextNormalizer`. Concurrency design discipline applies — `MeetingStore` is the first `@ModelActor`; scheduling assumptions + violation test required.
+- **Group D Step 3 dispatch — next session.** Step 2 shipped (checkpoint `281fe5e` local-only). Resume by reading: `docs/GROUP_D_UI_DECISIONS.md` (20 locked decisions), `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` (findings + 4 approved amendments, especially Amendment 3 for the eventual Step 8 `Task.detached` workaround), and the feature-planner's plan in conversation history.
+- **Step 3 will introduce**: `MeetingSession` — the @Observable orchestrator that owns an active meeting's lifecycle (start / append / end / cancel-with-undo-window) and routes Whisper segments through the existing Group A↔C pipeline into `MeetingStore`. Concurrency design discipline applies; scheduling assumptions + violation test required.
 - **Plan structure**: Phase 1 (persistence + session core, Steps 1–5) → Phase 2 (UI shell + transcript view, Steps 6–10) → Phase 3 (history/search/export/onboarding/settings, Steps 11–15) → three-reviewer gate. Checkpoint commits per step per "Rollback safety."
 - **Group D queued V3 entries (file at execution time, not pre-emptively)**:
   - "Migrate meeting title generation from first-sentence to Foundation Models summarization" — files when Step 3 lands (decision #12).
@@ -102,7 +112,7 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 1 SHIPPED** (checkpoint, not
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: 1 ahead, 0 behind — Step 1 checkpoint `21dfb9d` not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D).
+- Origin/main: 4 ahead, 0 behind — Step 1 checkpoint + Step 1 docs + Step 2 checkpoint + Step 2 docs not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D).
 
 ## Local-only artifacts
 - Tag pre-recovery-snapshot/group-c → 4a57d30 (forensic snapshot of pre-recovery Group C Phase 4 state — local only, not pushed)
