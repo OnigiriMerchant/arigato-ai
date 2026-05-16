@@ -20,53 +20,53 @@ import SwiftUI
 /// ``MeetingListView`` as a destination. This honors UI decision #11 —
 /// active-meeting view is root; history is pushable, never reversed.
 ///
-/// ## Group D Step 6 — temporary inline store construction
+/// ## Group D Step 8 — bootstrapper-driven optional-coordinator ladder
 ///
-/// `ContentView` constructs a ``MeetingStore`` inline from the
-/// SwiftUI-environment `ModelContext`'s container. This is temporary
-/// scaffolding for Step 6 only — Step 8 lifts the store (and the rest of
-/// the coordinator wiring) into ``AppBootstrapper`` using the
-/// `Task.detached` init pattern (Amendment 3) so the `@ModelActor`'s
-/// executor does not inherit the main thread.
+/// Step 6's inline ``MeetingStore`` construction and Step 7's
+/// ``MeetingControlsViewModel/disabled()`` placeholder are both lifted in
+/// Step 8 — both surfaces now read from the shared ``AppBootstrapper``.
 ///
-/// The inline construction satisfies Group D's locked decision D6-2
-/// option a-inline. ``MeetingListView`` only needs the store (not the
-/// full ``MeetingCoordinator``), so the lighter-weight wiring described
-/// in dispatch-brief STOP #1's "Specifically allowed alternative" path
-/// is taken — the coordinator and its audio/router/translator deps stay
-/// on the Step 8 dispatch, not this one.
+/// **Controls surface (D8-2 option a).** The view derives the controls
+/// VM each render: `bootstrapper.coordinator.map { .wiring(coordinator: $0) } ?? .disabled()`.
+/// Until ``AppBootstrapper/coordinator`` is published, the controls
+/// surface falls back to ``MeetingControlsViewModel/disabled()`` — a no-op
+/// stand-in whose action closures are all empty. Once
+/// ``AppBootstrapper/startPrewarm(variant:)`` finishes warmup and
+/// publishes the coordinator, SwiftUI re-renders against
+/// ``MeetingControlsViewModel/wiring(coordinator:)``. The window is
+/// sub-50ms in production (detached ``MeetingStore`` init + a single
+/// main-actor hop per Amendment 3 / FB13399899).
 ///
-/// ## Group D Step 7 — meeting controls placeholder VM
-///
-/// ``ContentView`` constructs a ``MeetingControlsViewModel/disabled()``
-/// placeholder and threads it through ``TranscriptLiveView`` as the
-/// bottom-region controls VM. This is a no-op stand-in — every action
-/// closure is empty and the surface stays in the `.notDetermined`
-/// permission state so taps don't actually drive a meeting.
-///
-/// **Step 8 swap site**: replace `MeetingControlsViewModel.disabled()`
-/// here with `MeetingControlsViewModel.wiring(coordinator: ...)` once
-/// ``AppBootstrapper`` constructs the live ``MeetingCoordinator``.
-/// That is the single line that turns the controls surface live —
-/// every other piece of plumbing is already in place.
+/// **History destination.** The toolbar history icon is rendered only
+/// when ``AppBootstrapper/meetingStore`` is non-nil. The detached-init
+/// window is imperceptible because the idle-phase active-meeting view
+/// has no transcript content to navigate away from yet.
 struct ContentView: View {
-    /// The SwiftData context plumbed in by ``ArigatoAIApp`` via the
-    /// `.modelContainer(...)` modifier. The container is fished out of
-    /// the context to build the per-view ``MeetingStore`` actor handle.
-    @Environment(\.modelContext) private var modelContext
+    /// The shared bootstrapper threaded in from ``ArigatoAIApp`` via
+    /// the SwiftUI environment. ``AppBootstrapper/coordinator`` drives
+    /// the optional-coordinator ladder for the controls surface and
+    /// ``AppBootstrapper/meetingStore`` gates the history toolbar item.
+    @Environment(AppBootstrapper.self) private var bootstrapper
 
     var body: some View {
+        // D8-2 option (a): derive the wired VM each render. SwiftUI
+        // re-renders against `wiring(coordinator:)` once the
+        // bootstrapper publishes the coordinator.
+        let controlsModel = bootstrapper.coordinator.map {
+            MeetingControlsViewModel.wiring(coordinator: $0)
+        } ?? MeetingControlsViewModel.disabled()
+
         NavigationStack {
-            // Step 7: placeholder controls VM. Step 8 swap site —
-            // replace `.disabled()` with `.wiring(coordinator: ...)`.
-            TranscriptLiveView(controlsModel: MeetingControlsViewModel.disabled())
+            TranscriptLiveView(controlsModel: controlsModel)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            MeetingListView(store: MeetingStore(modelContainer: modelContext.container))
-                        } label: {
-                            Image(systemName: "clock")
-                                .accessibilityLabel("History")
+                    if let store = bootstrapper.meetingStore {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            NavigationLink {
+                                MeetingListView(store: store)
+                            } label: {
+                                Image(systemName: "clock")
+                                    .accessibilityLabel("History")
+                            }
                         }
                     }
                 }

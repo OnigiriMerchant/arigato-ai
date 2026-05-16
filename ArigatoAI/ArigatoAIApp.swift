@@ -32,12 +32,18 @@ struct ArigatoAIApp: App {
         }
         sharedModelContainer = container
 
-        // Construct the bootstrapper with the container error pre-seeded
-        // (or nil on success), then assign through `_bootstrapper` to
-        // honour the `@State` storage contract. The direct-mutation
-        // pattern fails compilation here because `self` is not yet fully
-        // initialized before `sharedModelContainer` is assigned.
-        let boot = AppBootstrapper(containerError: containerError)
+        // Construct the bootstrapper with the container (forwarded so
+        // Step 8 wiring can construct MeetingStore + MeetingCoordinator
+        // off-main per Amendment 3 / FB13399899) and the container
+        // error pre-seeded (or nil on success). The direct-mutation
+        // pattern fails compilation here because `self` is not yet
+        // fully initialized before `sharedModelContainer` is assigned,
+        // so we assign through `_bootstrapper` to honour the `@State`
+        // storage contract.
+        let boot = AppBootstrapper(
+            container: container,
+            containerError: containerError
+        )
         _bootstrapper = State(wrappedValue: boot)
 
         // Kick off Whisper pre-warm regardless of container outcome. If

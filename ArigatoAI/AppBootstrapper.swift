@@ -7,6 +7,7 @@
 
 import Foundation
 import os
+import SwiftData
 import SwiftUI
 
 /// Owns app-launch warmup work and surfaces lifecycle state to SwiftUI.
@@ -114,6 +115,90 @@ final class AppBootstrapper {
     /// owns one window-stream session at a time.
     let router: LanguageRouter
 
+    /// The SwiftData ``ModelContainer`` the app's persistence stack runs
+    /// against. `nil` only when ``ArigatoAIApp/init()`` was unable to
+    /// construct one (in which case ``containerError`` is non-nil and
+    /// ``StartupErrorView`` renders instead of the meeting surface).
+    ///
+    /// Held privately because the only consumer outside this type is
+    /// ``startPrewarm(variant:)``'s Step 8 extension, which uses the
+    /// container to construct ``meetingStore`` off the main actor.
+    private let container: ModelContainer?
+
+    /// Shared ``MeetingStore`` for the app's lifetime. `nil` until the
+    /// detached portion of ``startPrewarm(variant:)`` finishes Whisper
+    /// + LFM2 warmup and constructs the store; thereafter non-nil for
+    /// the remainder of the process.
+    ///
+    /// ## Off-main initialization (Amendment 3 — FB13399899)
+    ///
+    /// `@ModelActor`'s synthesized `init(modelContainer:)` constructs a
+    /// `DefaultSerialModelExecutor`. When the synthesized init runs on
+    /// the main actor, the executor binds to the main thread rather
+    /// than a background queue, causing SwiftData writes to block the
+    /// UI. **FB13399899 / Apple Developer Forums 736226** documents
+    /// this; no iOS 26 fix has been confirmed by Apple.
+    ///
+    /// To work around this, ``startPrewarm(variant:)`` constructs the
+    /// store **inside its detached task** (not inside `MainActor.run`),
+    /// so the synthesized init runs off-main and the executor binds to
+    /// a background queue. Only the `meetingStore = store` publication
+    /// hops back to the main actor.
+    ///
+    /// ## Scheduling assumption
+    ///
+    /// Once published, `meetingStore`'s `appendSentence` and other
+    /// write paths must not block the main thread under sustained
+    /// load. Named violation test:
+    /// `meetingStoreWrites_doNotBlockMainThread_under100SentenceBurst`
+    /// (in `AppBootstrapperMeetingWiringTests`) fires 100 writes and
+    /// asserts a main-actor `Task.yield()` heartbeat keeps advancing.
+    private(set) var meetingStore: MeetingStore?
+
+    /// Eagerly-constructed audio capture conformer driven directly by
+    /// ``MeetingCoordinator``. Production wires this to
+    /// ``AudioCaptureActor``; tests inject a fake via the `capture:`
+    /// parameter on ``init(loader:lfm2Loader:lfm2Factory:container:containerError:capture:transcriberFactory:routerFactory:)``.
+    let capture: any AudioCapturing
+
+    /// Eagerly-constructed audio capture view model, kept alongside
+    /// ``capture`` for UI bindings only —
+    /// ``AudioCaptureViewModel/permissionStatus`` and
+    /// ``AudioCaptureViewModel/level``. The VM is built with
+    /// `router: nil` per Group D's locked decision D5-A revised: the
+    /// router-drain path stays dormant under Group D's wiring (the
+    /// pipeline drives the router directly via ``MeetingPipeline``).
+    /// The same instance is shared with ``coordinator`` so object
+    /// identity is preserved across UI bindings.
+    let captureViewModel: AudioCaptureViewModel
+
+    /// Shared ``MeetingCoordinator`` for the app's lifetime. `nil`
+    /// until the detached portion of ``startPrewarm(variant:)``
+    /// publishes both ``meetingStore`` and the coordinator atomically
+    /// on the main actor; thereafter non-nil for the remainder of the
+    /// process.
+    ///
+    /// ## Single-instance invariant
+    ///
+    /// At most one coordinator is constructed for the app's lifetime.
+    /// ``startPrewarm(variant:)``'s tail guard short-circuits on a
+    /// second invocation so the live coordinator instance is **not**
+    /// replaced — UI bindings and any in-flight session state remain
+    /// attached to the original instance. Named violation test:
+    /// `startPrewarm_secondInvocation_doesNotOverwriteLiveCoordinator`
+    /// (in `AppBootstrapperMeetingWiringTests`).
+    ///
+    /// ## ContentView optional-ladder fallback (D8-1 option b)
+    ///
+    /// While `coordinator == nil`, ``ContentView`` falls back to
+    /// ``MeetingControlsViewModel/disabled()`` — the controls surface
+    /// is rendered but every action closure is empty. Once
+    /// ``startPrewarm(variant:)`` publishes the coordinator, SwiftUI
+    /// re-renders against ``MeetingControlsViewModel/wiring(coordinator:)``.
+    /// The window is sub-50ms in production (detached store init +
+    /// main-actor hop).
+    private(set) var coordinator: MeetingCoordinator?
+
     /// Designated initializer.
     ///
     /// - Parameters:
@@ -132,10 +217,23 @@ final class AppBootstrapper {
     ///     Tests pass a factory that fires progress synthetically and
     ///     returns a fake engine, so V7 can exercise the production
     ///     trampoline path without hitting the LEAP SDK.
+    ///   - container: The SwiftData ``ModelContainer`` the app owns.
+    ///     Defaults to `nil`. ``ArigatoAIApp/init()`` forwards
+    ///     ``ArigatoAIApp/sharedModelContainer`` here; tests construct
+    ///     in-memory containers and forward them. When `nil`,
+    ///     ``startPrewarm(variant:)`` short-circuits before
+    ///     constructing ``meetingStore`` / ``coordinator`` — both
+    ///     remain `nil` and the UI renders ``StartupErrorView`` from
+    ///     ``containerError``.
     ///   - containerError: Optional pre-seeded container error. Defaults
     ///     to `nil`. Production code uses ``recordContainerFailure(_:)``
     ///     instead; the parameter exists for tests that want to assert
     ///     the error-rendering branch in isolation.
+    ///   - capture: Test-only override for the ``AudioCapturing``
+    ///     conformer. Defaults to `nil`, in which case production
+    ///     wiring constructs a fresh ``AudioCaptureActor``. The
+    ///     resolved value is shared with both ``coordinator`` and
+    ///     ``captureViewModel`` so object identity is stable.
     ///   - transcriberFactory: Test-only override for the
     ///     ``TranscriptionActor`` construction step. Defaults to `nil`,
     ///     in which case production wiring
@@ -151,11 +249,14 @@ final class AppBootstrapper {
         loader: WhisperModelLoader = WhisperModelLoader(),
         lfm2Loader: LFM2ModelLoader? = nil,
         lfm2Factory: LFM2EngineFactory? = nil,
+        container: ModelContainer? = nil,
         containerError: Error? = nil,
+        capture: (any AudioCapturing)? = nil,
         transcriberFactory: ((WhisperModelLoader) -> TranscriptionActor)? = nil,
         routerFactory: (@MainActor (TranscriptionActor) -> LanguageRouter)? = nil
     ) {
         self.loader = loader
+        self.container = container
         self.containerError = containerError
         let resolvedTranscriber: TranscriptionActor
         if let transcriberFactory {
@@ -169,6 +270,18 @@ final class AppBootstrapper {
         } else {
             router = LanguageRouter(transcriber: resolvedTranscriber)
         }
+        // Eagerly construct the audio-capture pair so the shared
+        // instance survives across renders (test #2 asserts object
+        // identity between `bootstrapper.captureViewModel` and the
+        // coordinator's `captureViewModel`).
+        let resolvedCapture: any AudioCapturing = capture ?? AudioCaptureActor()
+        self.capture = resolvedCapture
+        // `router: nil` per D5-A revised — the VM's drain path is
+        // dormant under Group D's wiring (V3 cleanup deferred).
+        captureViewModel = AudioCaptureViewModel(
+            capture: resolvedCapture,
+            router: nil
+        )
         if let lfm2Loader {
             self.lfm2Loader = lfm2Loader
         } else {
@@ -265,6 +378,27 @@ final class AppBootstrapper {
     /// the post-handoff design wants a clean Whisper-first observation
     /// for diagnostic clarity.
     ///
+    /// **Meeting wiring ordering (Step 8 — Amendment 3).** After LFM2
+    /// reaches ``LFM2LoaderState/ready``, the detached task short-circuits
+    /// if ``container`` is `nil` (no persistence stack means no meeting
+    /// surface). Otherwise an idempotency guard checks that
+    /// ``coordinator`` has not already been published — a second call to
+    /// `startPrewarm` after the first has reached this point is a no-op,
+    /// preserving the live coordinator instance and any in-flight UI
+    /// bindings. If both gates pass, the detached task constructs
+    /// ``MeetingStore`` **inline (not inside `MainActor.run`)** so the
+    /// `@ModelActor`'s synthesized `DefaultSerialModelExecutor` binds
+    /// to a background queue per the Amendment 3 contract documented
+    /// on ``meetingStore`` — see FB13399899 / Apple Developer Forums
+    /// 736226. Both ``meetingStore`` and ``coordinator`` are then
+    /// published atomically on a single main-actor hop.
+    ///
+    /// Sequential ordering (Whisper → LFM2 → meeting wiring) is
+    /// enforced by Swift's async/await linearization within the
+    /// detached task; no `async let` is used and no runtime violation
+    /// test is needed for the ordering itself (the type system enforces
+    /// it).
+    ///
     /// - Parameter variant: The Whisper model variant to request.
     ///   Defaulted to ``WhisperModelVariant/default``.
     func startPrewarm(variant: WhisperModelVariant = .default) {
@@ -313,11 +447,86 @@ final class AppBootstrapper {
                 await self?.setLFM2LoaderState(.ready)
             } catch let error as TranslationError {
                 await self?.setLFM2LoaderState(.failed(error))
+                return
             } catch {
                 let wrapped = TranslationError.warmupFailed(error.localizedDescription)
                 await self?.setLFM2LoaderState(.failed(wrapped))
+                return
+            }
+
+            // ─── Step 8 — Meeting wiring (Amendment 3 / FB13399899) ───
+            //
+            // Step 9: short-circuit if no SwiftData container exists.
+            // Without persistence the meeting surface cannot run, and
+            // the UI is routed to StartupErrorView via containerError
+            // instead.
+            guard let container = await self?.container else { return }
+
+            // Step 10: idempotency guard. A second invocation of
+            // startPrewarm after the first has published coordinator
+            // MUST NOT overwrite the live instance — see the
+            // `coordinator` property's "Single-instance invariant"
+            // note and the named violation test
+            // `startPrewarm_secondInvocation_doesNotOverwriteLiveCoordinator`.
+            let alreadyPublished = await MainActor.run {
+                self?.coordinator != nil
+            }
+            if alreadyPublished == true { return }
+
+            // Step 11: construct MeetingStore here on the **detached
+            // task's executor**, NOT inside MainActor.run. The
+            // @ModelActor-synthesized DefaultSerialModelExecutor binds
+            // to the executor that runs its init; running this line
+            // off-main is the FB13399899 / Apple Developer Forums
+            // 736226 workaround. See the `meetingStore` property's
+            // doc-comment for the full rationale + named violation
+            // test `meetingStoreWrites_doNotBlockMainThread_under100SentenceBurst`.
+            let store = MeetingStore(modelContainer: container)
+
+            // Step 12: publish both atomically on the main actor.
+            // Re-check the idempotency guard inside MainActor.run to
+            // close the (vanishingly small) window between the
+            // pre-construct check above and this hop — without this,
+            // two concurrent `startPrewarm()` invocations could both
+            // observe `coordinator == nil` and both proceed to
+            // construct a store + coordinator.
+            await MainActor.run {
+                guard let strong = self, strong.coordinator == nil else { return }
+                strong.meetingStore = store
+                strong.coordinator = strong.makeCoordinator(store: store)
             }
         }
+    }
+
+    /// Builds a wired ``MeetingCoordinator`` against the supplied
+    /// ``MeetingStore`` and the bootstrapper's shared dependencies.
+    ///
+    /// Invoked inside the `MainActor.run` block at the tail of
+    /// ``startPrewarm(variant:)``. The helper exists so the
+    /// detached-task body stays readable and the
+    /// `MeetingSession` / `TranslationActor` / `MeetingPipeline` /
+    /// `MeetingCoordinator` construction chain is documented in one
+    /// place.
+    ///
+    /// - Precondition: ``lfm2Loader`` must be non-nil (warmup having
+    ///   completed implies this; if reached otherwise the call is a
+    ///   sequencing bug in the warmup chain).
+    /// - Parameter store: The persistence actor returned by Step 11.
+    /// - Returns: A coordinator with `session.phase == .idle`.
+    private func makeCoordinator(store: MeetingStore) -> MeetingCoordinator {
+        let session = MeetingSession(store: store)
+        let translator = TranslationActor(loader: lfm2Loader)
+        let pipeline = MeetingPipeline(
+            router: router,
+            translator: translator,
+            session: session
+        )
+        return MeetingCoordinator(
+            session: session,
+            capture: capture,
+            captureViewModel: captureViewModel,
+            pipeline: pipeline
+        )
     }
 
     /// MainActor-isolated setter used by the detached pre-warm task to
