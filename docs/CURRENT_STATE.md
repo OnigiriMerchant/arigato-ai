@@ -118,6 +118,7 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 3 SHIPPED** (checkpoint, not
 - Checkpoint discipline: every step that builds + tests clean commits as `checkpoint(group-N-step-M)` before next dispatch. Group C produced 10 checkpoints + 3 fix commits + 1 docs commit; Group D plan calls for ~15 checkpoints.
 - Concurrency design discipline: explicit scheduling assumptions in doc-comments + at least one violation test per actor/AsyncStream/Task-spawning design. Group D's concurrency table maps each new actor/Task to its scheduling assumption + named violation test (see plan: `MeetingStore` burst test, `MeetingAutoSaver` greedy-producer test, `MeetingSession` undo-race test, debounced-search rapid-typing test, bridge router-throws test).
 - Test seams `#if DEBUG`-gated up-front (Group C convention): `pendingSentenceCount()`, `droppedNewestCount()`, `awaitUpstreamDrained()` on `TranslationActor` all wrapped in `#if DEBUG`. TranscriptionActor backport pending. Step 7 will add `TranslationEvent.queueOverflow(sourceSegmentID:)` — a new event, not a `#if DEBUG` seam.
+- Process finding from Step 3: dispatch brief STOP rules vs session-level decisiveness — see V3 backlog "Phase 5 Group D follow-ups" → "Dispatch brief STOP rules supersede session-level 'make the reasonable call' system-reminder" for precedence work. Revisit before Step 4 dispatch.
 
 ## Working tree
 - Clean.
