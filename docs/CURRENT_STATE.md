@@ -3,7 +3,7 @@
 Last updated: 2026-05-16 — Phase 5 **Group D Step 3a SHIPPED** (checkpoint, not pushed). `MeetingStore.updateTitle` landed; `MeetingSession.finalizeStop` deferred title-rewrite block restored; `firstEnglishSentence_capturedOnFirstCompleted_usedInFinalizeStopTitleRewrite` assertion flipped back to original contract. Full suite 245/245 (239 unit + 6 UI). Step 3's pre-authorized STOP closed via the V3 precedence rule (commit `e8472a6`).
 
 ## Most recent commit
-- 2889a4a checkpoint(group-d-step-3a): wire MeetingStore.updateTitle + restore deferred title rewrite
+- f2885fc checkpoint(group-d-step-3a): wire MeetingStore.updateTitle + restore deferred title rewrite
 - Previous commits: e8472a6 docs(group-d-step-3): file V3 entry for dispatch STOP rule precedence, c806f82 docs(group-d-step-3): record Step 3 results, 4db5e61 checkpoint(group-d-step-3): MeetingSession orchestrator + phase state machine, 6023f2a docs(group-d-step-2): file V3 entry for SwiftData ModelContext lookup primitive workaround, c43c938 docs(group-d-step-2): record Step 2 results, 281fe5e checkpoint(group-d-step-2): MeetingStore @ModelActor + DTOs, 45a3198 docs(group-d-step-1) test-baseline + Step 1 results, 21dfb9d checkpoint(group-d-step-1): add Meeting/Sentence @Model entities + SearchTextNormalizer
 - Most recent production commit: 981c962 fix(group-c-step-10): capture sourceSegmentID once in startGeneration so partialChunk and completed agree
 
