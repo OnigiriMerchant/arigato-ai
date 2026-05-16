@@ -1,6 +1,8 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-16 — Phase 5 **Group D Step 9a SHIPPED** (checkpoint, not pushed). Split-screen `TranscriptLiveView` refactor landed: JA top + EN bottom + unified return arrow per UI #1 + #2 via iOS 18 `ScrollPosition` + `onScrollGeometryChange` APIs (DR-4). New `MeetingStore.fetchSentences` + `MeetingSession.sentencesDidUpdate` callback wire the data flow. Phase-2 trio pattern (view + view-model + formatter) now load-bearing across `MeetingListView`, `MeetingControlsView`, `TranscriptSplitScreenView`. Suite 321/321 (315 unit + 6 UI). Decisions: D9-3 (b)+callback, D9-4 (a) trio.
+Last updated: 2026-05-16 — Phase 5 **Group D Phase 2 substantively COMPLETE at Step 9a** (commits `d3b827a` + `985aef6`). Split-screen `TranscriptLiveView` refactor landed: JA top + EN bottom + unified return arrow per UI #1 + #2 via iOS 18 `ScrollPosition` + `onScrollGeometryChange` APIs (DR-4). New `MeetingStore.fetchSentences` + `MeetingSession.sentencesDidUpdate` callback wire the data flow. Phase-2 trio pattern (view + view-model + formatter) now load-bearing across `MeetingListView`, `MeetingControlsView`, `TranscriptSplitScreenView`. Suite 321/321 (315 unit + 6 UI). Decisions: D9-3 (b)+callback, D9-4 (a) trio.
+
+**Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
 - d3b827a checkpoint(group-d-step-9a): split-screen TranscriptLiveView refactor
@@ -231,7 +233,18 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 9a SHIPPED** (checkpoint, no
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: 33 ahead, 0 behind — Step 1 checkpoint + Step 1 docs + Step 2 checkpoint + Step 2 docs + Step 2 V3 entry + Step 3 checkpoint + Step 3 docs + Step 3 V3 precedence entry + Step 3a checkpoint + Step 3a SHA-stamp docs follow-up + Step 3a working-tree-count sync + Step 4 checkpoint + Step 4 docs + Step 5 checkpoint + Step 5 docs + Step 6 checkpoint + Step 6 docs + Step 7 checkpoint + Step 7 docs + Step 8 checkpoint + Step 8 docs + Step 9b checkpoint + Step 9b docs + (chat-migration continuity docs) + Step 9a checkpoint + Step 9a docs not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D). The prior "29 ahead" figure in the previous CURRENT_STATE.md preceded the chat-migration continuity refresh + Step 9a's two-commit cluster. Steps 4, 5, 6, 7, 8, 9b, and 9a all used the established two-commit pattern (production+tests checkpoint then docs) per V3 precedence amendment `1e002b3` — avoided the Step 3a SHA-self-reference improvise. The three-reviewer gate may squash the multi-commit checkpoint chain into a smaller set at end-of-Group-D per CLAUDE.md.
+- Origin/main: 35 ahead, 0 behind — full Group D checkpoint + docs trail across Steps 1–9a + V3 entries (Step 2 lookup-primitive, Step 3 STOP-precedence + commit-shape amendment, Step 3a wiring, Steps 4–8 checkpoint/docs pairs, Step 8's LFM2 + flake-consolidation + verification-rigor V3 entries, Step 9b DesignSystem + 9b V3 entries, Step 9a checkpoint/docs + Step 9a V3 entries + audit-first continuation V3 entry, plus this Step-10-closure commit). Not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D). Steps 4, 5, 6, 7, 8, 9b, 9a all used the established two-commit pattern (production+tests checkpoint then docs) per V3 precedence amendment `1e002b3` — avoided the Step 3a SHA-self-reference improvise. The three-reviewer gate may squash the multi-commit checkpoint chain into a smaller set at end-of-Group-D per CLAUDE.md.
 
 ## Local-only artifacts
 - Tag pre-recovery-snapshot/group-c → 4a57d30 (forensic snapshot of pre-recovery Group C Phase 4 state — local only, not pushed)
+
+## End-of-Group-D reviewer-gate items
+
+Artifacts and triage tasks queued for the three-reviewer pass at end-of-Group-D (after Step 15 lands). Reviewer's call per CLAUDE.md Rollback safety on which of these to act on vs. defer.
+
+- **State-machine audit table** — map each `MeetingSessionPhase` case × UI surface (controls badge / controls primary button / controls secondary button / split-screen rendering / history rendering). Verify no silent gaps in the meeting lifecycle. Docs-only artifact; expected to live in this file's "Phase status" section as a sub-bullet OR in `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` as a new appendix.
+- **LFM2 V3 entry amendment trail squash candidate** — 4 amendments (`b851dad` + `7b31aea` + `8ccf6b9` + `44d3fa8`) could squash into a single "LFM2 download failure" entry. Reviewer's call.
+- **Step 8 docs trail squash candidate** — 4 commits including original LFM2 entry + amendments + flake-consolidation + docs-stamp. Reviewer's call.
+- **V3 hygiene pass** — 10+ V3 entries accumulated since Step 8. Worth grouping by trigger (pre-MVP-1 hardening, Phase 7 polish, workflow automation, post-Group-D cleanup) for easier triage at the reviewer gate.
+- **CURRENT_STATE.md test-baseline + working-tree drift** — multiple instances during Group D where the test count or "X ahead" line lagged reality by 1–4 commits. Each was caught at the next dispatch. Worth a final reconciliation pass at the reviewer gate.
+- **Group D V3 follow-ups grouping** — by current count, the "Phase 5 Group D follow-ups" section in `docs/V3_BACKLOG.md` has 12+ entries. Reviewer pass to re-order or sub-group by trigger phase (pre-MVP-1 hardening / Phase 7 polish / post-Group-D cleanup / workflow automation) would improve scan-ability.

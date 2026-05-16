@@ -998,6 +998,7 @@ Cost estimate: ~15 min.
   - `MeetingSession.liveChunks` (Step 3)
   - `TranscriptSplitScreenViewModel` — currently consumes only `sentences`
   - Step 9a recovery dispatch documentation in CURRENT_STATE.md
+- **Step 10 disposition (2026-05-16):** Step 10 declined absorbing this entry. Live-chunk display remains deferred. Re-evaluate during Phase 3 detail-view work (Step 11) OR Phase 7 polish, whichever fires first.
 
 ### Continuation dispatch pattern after agent timeout — audit-first protocol validated
 
