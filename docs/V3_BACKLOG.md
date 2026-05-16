@@ -765,3 +765,19 @@ Cost estimate: ~15 min.
 - **Trigger to revisit**: when test-suite reliability becomes a CI blocker (currently no CI), OR pre-MVP-1 hardening, OR when test-flake detection rate becomes high enough to be annoying in normal local dev. Currently the flake fires roughly 1 in 5 full-suite runs on iPhone 17 Pro Max sim.
 - **Action**: inspect `FakeTranslator.cancel()` / `setConfiguredFailure(_:)` ordering; introduce a synchronization barrier or explicit "session done" signal. Could mirror Group C's `awaitUpstreamDrained` pattern.
 - **Cost estimate**: ~30 min to diagnose + ~30 min to fix + verify.
+
+---
+
+## Phase 5 Group D follow-ups (filed 2026-05-16 at end-of-step gate)
+
+### SwiftData ModelContext lookup primitive — model(for:) crashes, registeredModel(for:) evicts post-save
+
+- **What:** During Group D Step 2 (MeetingStore `@ModelActor`, see `ArigatoAI/Persistence/MeetingStore.swift`), the documented Apple pattern `ModelContext.model(for: PersistentIdentifier)` crashed on iOS 26.5 when called against an identifier from a prior actor turn. `ModelContext.registeredModel(for:)` returned `nil` after `save()` boundaries (post-save eviction from the context's identity map). The empirical workaround that worked: `FetchDescriptor<Meeting>` + `#Predicate { $0.persistentModelID == meetingID }`. Documented in the `MeetingStore` doc-comment and the `checkpoint(group-d-step-2)` commit body (`281fe5e`).
+- **Why this is V3 and not just a doc-comment:** the finding generalizes to ANY future `@ModelActor` in this codebase. Future agents touching SwiftData persistence will innocently reach for the documented Apple pattern and hit the same trap. V3 makes it discoverable; the `MeetingStore` doc-comment only helps people already reading `MeetingStore`.
+- **Trade-off of the current workaround:** every lookup is now an indexed fetch (B-tree on `persistentModelID`) instead of a hash-map lookup in the context's identity map. At meeting volume (~150 sentences/hour → ~150 `appendSentence` calls/hour, each doing one lookup), this is almost certainly negligible. Phase 6 diagnostics should measure the actual cost to confirm.
+- **Trigger to revisit:**
+  - Apple iOS release notes mention SwiftData `ModelContext` fixes — re-test `model(for:)` against current API.
+  - Phase 6 diagnostics show measurable perf cost from `FetchDescriptor` lookups in `appendSentence`.
+  - Any new `@ModelActor` work — author should be aware of the trap before reaching for `model(for:)`.
+- **Action when triggered:** re-test `model(for:)` and `registeredModel(for:)` against a `MeetingStoreTests`-style scenario (insert → save → lookup-by-id in a fresh actor turn). If either works, replace the `FetchDescriptor` workaround in `MeetingStore.swift` and any other `@ModelActor`s. Update this entry.
+- **Cost estimate:** ~15 min to re-test, ~10 min per `@ModelActor` to swap the lookup primitive if Apple fixes it.
