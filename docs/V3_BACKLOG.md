@@ -998,3 +998,28 @@ Cost estimate: ~15 min.
   - `MeetingSession.liveChunks` (Step 3)
   - `TranscriptSplitScreenViewModel` — currently consumes only `sentences`
   - Step 9a recovery dispatch documentation in CURRENT_STATE.md
+
+### Continuation dispatch pattern after agent timeout — audit-first protocol validated
+
+- **What:** when an `@swift-implementer` agent dispatch times out mid-execution with partial work on disk but no commits, a fresh continuation dispatch must NOT immediately fill the gaps. Instead, it must follow a three-phase protocol:
+  1. **Phase 1: substantive audit** — read every modified and new file currently on disk; verify against the original brief's API contracts, constraints, MAY-NOT-modify scope, and acceptance criteria. Each file audited gets explicit PASS / FAIL / STOP-required output. ANY failing audit STOPs the dispatch immediately — gaps are not filled on top of broken partial code.
+  2. **Phase 2: close gaps** — only after audit passes, write missing files, complete wiring, etc.
+  3. **Phase 3: verify + commit** — full build + test run, two-commit pattern.
+- **Why this is V3 and not a one-off note:** Step 9a's audit caught a real bug (`TranscriptLiveView` partial-swap — doc-comment had been updated to describe the swap but the `transcriptList` var still rendered `bootstrapper.router.routedHistory`) that would have shipped invisibly. The pattern is generalizable — any continuation dispatch where partial work might be subtly incorrect benefits from explicit audit-first discipline. Without this, continuation dispatches inherit the failure mode of "agent A wrote partially-wrong code, agent B trusted it and built on top."
+- **When to apply:**
+  - swift-implementer dispatch timed out with files modified but no commits.
+  - swift-implementer dispatch returned with build / test failures after partial work — when the natural instinct is "agent B picks up where A left off."
+  - Any dispatch where the previous agent's verification phase did not complete cleanly.
+- **When NOT to apply:**
+  - Clean re-dispatch on a fresh task (no partial work to audit).
+  - Pure docs-only continuations (less risk of broken intermediate state).
+- **Action when triggered:** update CLAUDE.md's "swift-implementer scope-and-decision discipline" section to reference this protocol as the default continuation pattern. The continuation brief should:
+  1. Enumerate the verified disk state up-front (untracked files + modified files).
+  2. Require the agent to audit each file with explicit PASS / FAIL / STOP-required output BEFORE writing new code.
+  3. Pre-authorize STOP on any audit failure — gaps are NOT filled on top of broken partial code.
+  4. Specify the three phases (audit → close gaps → verify + commit) explicitly.
+- **Cross-references:**
+  - Step 9a recovery dispatch (`d3b827a` + `985aef6`) — the canonical example.
+  - V3 entry "Agent verification rigor" (`66d08b0`) — related but distinct (rigor entry covers same-dispatch warning reporting; this entry covers cross-dispatch continuation discipline).
+  - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
+- **Cost estimate:** ~10 min to draft the CLAUDE.md clauses. Bundle with the workflow automation work.
