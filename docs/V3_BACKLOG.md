@@ -511,15 +511,17 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 
 ### Group D UI deferred concerns — Phase 7 polish
 
+**Partial closure (Step 9b, 2026-05-16, checkpoint `738c253`):** concerns 1, 2, and 4 closed by Step 9b's minimal design-language consolidation. Concerns 3, 5, 6, 7 remain deferred to Phase 7 polish per V3 #22 trigger.
+
 **What:** Group D end-of-group gate ui-review surfaced 8 visual concerns. Concern 6 (duplicate "listening…" hint) was fixed pre-push (commit `3b7c311`, locked by D4-T-concern6). The remaining 7 concerns are deferred to Phase 7 polish:
 
-1. **`Color.green` warmup-loaded fallback** (`TranscriptLiveView.swift:349`) — no "ready" semantic token in `DesignTokens.swift` yet. Phase 7 should re-token. Verify hue does not clash with `recordingActive` red.
+1. **`Color.green` warmup-loaded fallback** (`TranscriptLiveView.swift:349`) — no "ready" semantic token in `DesignTokens.swift` yet. Phase 7 should re-token. Verify hue does not clash with `recordingActive` red. **CLOSED Step 9b (2026-05-16, checkpoint `738c253`)**: `Color.green` replaced with `DesignSystem.Colors.recordingReady` (`Color(red: 0.26, green: 0.66, blue: 0.45)`); chromatic distance from `recordingActive` locked by `DesignSystemTests.recordingReady_hueDistinctFromRecordingActive`.
 
-2. **Failed-state error text + dot both render in `Color.recordingActive`** (`TranscriptLiveView.swift:141`) — two adjacent red elements may overload the chrome region and compete with captions for attention. Suggest error text uses `.secondary` foreground; let the dot alone carry the semantic-error color.
+2. **Failed-state error text + dot both render in `Color.recordingActive`** (`TranscriptLiveView.swift:141`) — two adjacent red elements may overload the chrome region and compete with captions for attention. Suggest error text uses `.secondary` foreground; let the dot alone carry the semantic-error color. **CLOSED Step 9b (2026-05-16, checkpoint `738c253`)**: error text foreground switched to `.secondary`; warmup dot continues to use `Color.recordingActive`; test seam added via new `IndicatorChromeDisplay.warmupErrorTextUsesSecondaryForeground` property; contract locked by `DesignSystemTests.transcriptLiveView_failedStateErrorText_usesSecondaryForeground`.
 
 3. **Footer placement under home indicator at large Dynamic Type** (`TranscriptLiveView.swift:80–82`) — at `.accessibility3` and above, "Audio never leaves your iPhone." footer may push under the home indicator on iPhone 17 Pro Max. Verify and adjust safe-area insets.
 
-4. **List rows edge-to-edge vs chrome 20pt inset → row badges misalign with chrome badge** (`TranscriptLiveView.swift:156–164`) — list does not apply horizontal padding while chrome and footer are inset 20pt. Right-edge JA/EN row badges do not line up with the chrome's JA/EN badge. Add matching horizontal padding to list rows.
+4. **List rows edge-to-edge vs chrome 20pt inset → row badges misalign with chrome badge** (`TranscriptLiveView.swift:156–164`) — list does not apply horizontal padding while chrome and footer are inset 20pt. Right-edge JA/EN row badges do not line up with the chrome's JA/EN badge. Add matching horizontal padding to list rows. **CLOSED Step 9b (2026-05-16, checkpoint `738c253`)**: `.padding(.horizontal, 20)` added to the `List` inside `transcriptList`, matching chrome and footer insets.
 
 5. **`arrow.triangle.2.circlepath` SF symbol semantically wrong** (`TranscriptLiveView.swift:267`) — semantically a "refresh" glyph, not a "fallback/divergence" glyph. Users familiar with SF Symbols may misread as "tap to retry." Candidates that read more honestly: `arrow.left.arrow.right` (lateral motion = swap), `questionmark.diamond`, or a custom mark. Phase 7 should pick a semantically honest glyph.
 
@@ -809,6 +811,8 @@ Cost estimate: ~15 min.
 - **Cost estimate:** ~1-2 hours to add the protocol surface + AVAudioEngine pause/resume logic + tests + thread through coordinator. The MVP 1 measurement that gates the trigger is ~30 min of on-device usage data collection.
 
 ### Step 7's MeetingControlsView consumes Phase-4 DesignTokens — fold into Step 9 design-language rebuild scope
+
+**Status (2026-05-16): PARTIALLY ADDRESSED by Step 9b (checkpoint `738c253`).** Step 9b's forwarder pattern (locked decision D9-2 option b) preserves existing consumption unchanged — `MeetingControlsView` still reads `Color.recordingActive` and `Color.meterTrack` via the now-thin top-level extensions, which forward to `DesignSystem.Colors.recordingActive` / `DesignSystem.Colors.meterTrack`. No call-site change required at `MeetingControlsView`. Full V3 #22 visual identity (particles, glassmorphism, monospace readouts) remains deferred to Phase 7 polish per V3 #22's locked trigger — Step 9b only took the minimal load-bearing slice (D9-1 option c).
 
 - **What:** Step 7's `MeetingControlsView` consumes `Color.recordingActive` and `Color.meterTrack` from `ArigatoAI/Design/DesignTokens.swift` (without modifying the file). This was technically compliant with the Step 7 dispatch brief's "DO NOT touch DesignTokens.swift" rule, but slightly off-spec with the spirit of V3 #22's deferral (which envisioned new Group D views using stock SwiftUI semantic colors until Step 9's design-language rebuild).
 - **Why the deviation was correct:** The agent's pragmatic call held. The surviving Phase-4 chrome (top language indicator, level meter) continues to use these same tokens. New views using pure stock SwiftUI semantic colors next to existing token-styled chrome would look visually disjointed during the Step 7 → Step 9 window. Consuming the existing tokens preserves visual consistency until the redesign holistically reconsiders all token usage.
