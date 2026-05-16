@@ -424,21 +424,10 @@ struct MeetingSessionTests {
         #expect(sentences.first?.sourceSegmentID == segID)
     }
 
-    /// First English `.completed` is captured for the eventual title
-    /// rewrite. Once the pre-authorized
-    /// `MeetingStore.updateTitle(meetingID:title:)` STOP point lands,
-    /// this test will assert the rewritten title contains the English
-    /// sentence; **for now** (Step 3) the title-rewrite path in
-    /// `finalizeStop(at:)` is deferred, so this test verifies the
-    /// observable contract that remains: meeting finalises cleanly
-    /// and the placeholder timestamp-only title is preserved while
-    /// the English-sentence capture continues to run inside the
-    /// orchestrator (verified indirectly by sentence persistence and
-    /// the no-crash contract).
-    ///
-    /// When the follow-up dispatch lands, swap the placeholder
-    /// assertion below for the title-contains-sentence assertion the
-    /// brief described.
+    /// Captures the first English `.completed` event's sourceText into
+    /// `firstEnglishSentence`, then verifies `finalizeStop` rewrites the
+    /// meeting's title via `MeetingTitleGenerator` to include that
+    /// sentence.
     @Test func firstEnglishSentence_capturedOnFirstCompleted_usedInFinalizeStopTitleRewrite() async throws {
         let fixture = try Self.makeFixture(undoWindow: .seconds(1))
         let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
@@ -476,12 +465,10 @@ struct MeetingSessionTests {
         let context = ModelContext(fixture.container)
         let meetings = try context.fetch(FetchDescriptor<Meeting>())
         let title = meetings.first?.title ?? ""
-        // Placeholder contract — title is the bare timestamp set at
-        // `start(at:)`. Title-rewrite path is deferred (see
-        // `MeetingSession.finalizeStop(at:)` in-source comment).
-        #expect(title.contains("First English sentence") == false,
-                "Until updateTitle is wired up, the title should remain the placeholder; got '\(title)'")
-        #expect(title.isEmpty == false, "Placeholder title should be set at start(at:)")
+        // Title rewrite at finalizeStop splices in the captured first
+        // English sentence via MeetingTitleGenerator.makeTitle.
+        #expect(title.contains("First English sentence"),
+                "Title should contain the captured first English sentence; got '\(title)'")
     }
 
     // MARK: - Invalid transitions

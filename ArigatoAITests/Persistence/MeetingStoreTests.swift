@@ -135,6 +135,48 @@ struct MeetingStoreTests {
         #expect(meetings.first?.endedAt == endedAt)
     }
 
+    /// `updateTitle` rewrites the existing meeting's title and saves.
+    /// Verified against a fresh `ModelContext` so we confirm the
+    /// actor's `save()` is durable rather than only context-visible.
+    @Test func updateTitle_existingMeeting_persistsNewTitle() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            title: "Placeholder"
+        )
+
+        try await store.updateTitle(meetingID: meetingID, title: "Renamed kickoff")
+
+        let context = ModelContext(container)
+        let meetings = try context.fetch(FetchDescriptor<Meeting>())
+        #expect(meetings.count == 1)
+        #expect(meetings.first?.title == "Renamed kickoff")
+    }
+
+    /// `updateTitle` against a deleted meeting must throw
+    /// ``MeetingStoreError/meetingNotFound(_:)``. Mirrors the stale-ID
+    /// pattern from
+    /// ``appendSentence_meetingNotFound_throwsMeetingStoreError`` —
+    /// start a meeting, capture its id, delete it, then call
+    /// `updateTitle`. We do not fabricate identifiers because
+    /// `PersistentIdentifier`'s internals are not public.
+    @Test func updateTitle_meetingNotFound_throwsMeetingStoreError() async throws {
+        let container = try Self.makeContainer()
+        let store = MeetingStore(modelContainer: container)
+
+        let meetingID = try await store.startMeeting(
+            startedAt: Date(),
+            title: "Doomed"
+        )
+        try await store.deleteMeeting(meetingID: meetingID)
+
+        await #expect(throws: MeetingStoreError.meetingNotFound(meetingID)) {
+            try await store.updateTitle(meetingID: meetingID, title: "won't land")
+        }
+    }
+
     /// `deleteMeeting` cascades through the `@Relationship(deleteRule:
     /// .cascade)` declared on `Meeting.sentences`. The cascade is
     /// already covered at the unit-entity level in

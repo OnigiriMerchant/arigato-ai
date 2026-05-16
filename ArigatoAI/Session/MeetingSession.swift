@@ -332,24 +332,12 @@ final class MeetingSession {
         undoTask?.cancel()
         undoTask = nil
         do {
+            let finalTitle = MeetingTitleGenerator.makeTitle(
+                startedAt: startedAt,
+                firstEnglishSentence: firstEnglishSentence
+            )
+            try await store.updateTitle(meetingID: meetingID, title: finalTitle)
             try await store.endMeeting(meetingID: meetingID, endedAt: endedAt)
-            // NOTE: Title rewrite using ``firstEnglishSentence`` is
-            // **deferred** pending the pre-authorized STOP point in
-            // the Step 3 dispatch brief. `MeetingStore` does not
-            // currently expose `updateTitle(meetingID:title:)`, and
-            // the brief requires surfacing-and-approval before adding
-            // that method (out-of-scope for Step 3 production scope).
-            // Until then, the placeholder timestamp-only title set at
-            // ``start(at:)`` is final. ``firstEnglishSentence`` is
-            // still captured by the event pump, so a follow-up
-            // dispatch can wire up the title rewrite by adding
-            // `MeetingStore.updateTitle` and calling it here:
-            //
-            //     let finalTitle = MeetingTitleGenerator.makeTitle(
-            //         startedAt: startedAt,
-            //         firstEnglishSentence: firstEnglishSentence
-            //     )
-            //     try await store.updateTitle(meetingID: meetingID, title: finalTitle)
         } catch {
             throw MeetingSessionError.storeFailure(underlying: error.localizedDescription)
         }

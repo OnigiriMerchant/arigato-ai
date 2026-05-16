@@ -138,6 +138,32 @@ actor MeetingStore {
         try modelContext.save()
     }
 
+    /// Rewrites the title of a meeting.
+    ///
+    /// Called from ``MeetingSession/finalizeStop(at:)`` to replace the
+    /// placeholder title (set at ``MeetingSession/start(at:)``) with the
+    /// auto-derived title from
+    /// ``MeetingTitleGenerator/makeTitle(startedAt:firstEnglishSentence:)``.
+    ///
+    /// - Parameters:
+    ///   - meetingID: The meeting to retitle.
+    ///   - title: The new display title.
+    /// - Throws: ``MeetingStoreError/meetingNotFound(_:)`` if the meeting
+    ///   is not in the store. Uses the same `FetchDescriptor` +
+    ///   `#Predicate` pattern as the other lookups per the V3 "SwiftData
+    ///   ModelContext lookup primitive" entry — `model(for:)` and
+    ///   `registeredModel(for:)` are unsafe on iOS 26.5.
+    func updateTitle(meetingID: PersistentIdentifier, title: String) throws {
+        let descriptor = FetchDescriptor<Meeting>(
+            predicate: #Predicate { $0.persistentModelID == meetingID }
+        )
+        guard let meeting = try modelContext.fetch(descriptor).first else {
+            throw MeetingStoreError.meetingNotFound(meetingID)
+        }
+        meeting.title = title
+        try modelContext.save()
+    }
+
     /// Deletes a meeting and (via cascade) its sentences.
     ///
     /// The cascade is declared on ``Meeting/sentences`` and is exercised

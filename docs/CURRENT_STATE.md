@@ -1,10 +1,10 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-16 — Phase 5 **Group D Step 3 SHIPPED** (checkpoint, not pushed). MeetingSession @MainActor @Observable orchestrator + phase state machine landed in `ArigatoAI/Session/`. 23 new tests pass; full suite 243/243 (237 unit + 6 UI). Amendment 3 compatibility preserved (all MeetingStore calls awaited; no @MainActor-on-store assumption). Title-rewrite path at `finalizeStop` deferred — pre-authorized STOP fired (see Step 3 phase status bullet below).
+Last updated: 2026-05-16 — Phase 5 **Group D Step 3a SHIPPED** (checkpoint, not pushed). `MeetingStore.updateTitle` landed; `MeetingSession.finalizeStop` deferred title-rewrite block restored; `firstEnglishSentence_capturedOnFirstCompleted_usedInFinalizeStopTitleRewrite` assertion flipped back to original contract. Full suite 245/245 (239 unit + 6 UI). Step 3's pre-authorized STOP closed via the V3 precedence rule (commit `e8472a6`).
 
 ## Most recent commit
-- 4db5e61 checkpoint(group-d-step-3): MeetingSession orchestrator + phase state machine
-- Previous commits: 281fe5e checkpoint(group-d-step-2): MeetingStore @ModelActor + DTOs, 45a3198 docs(group-d-step-1) test-baseline + Step 1 results, 21dfb9d checkpoint(group-d-step-1): add Meeting/Sentence @Model entities + SearchTextNormalizer
+- 2889a4a checkpoint(group-d-step-3a): wire MeetingStore.updateTitle + restore deferred title rewrite
+- Previous commits: e8472a6 docs(group-d-step-3): file V3 entry for dispatch STOP rule precedence, c806f82 docs(group-d-step-3): record Step 3 results, 4db5e61 checkpoint(group-d-step-3): MeetingSession orchestrator + phase state machine, 6023f2a docs(group-d-step-2): file V3 entry for SwiftData ModelContext lookup primitive workaround, c43c938 docs(group-d-step-2): record Step 2 results, 281fe5e checkpoint(group-d-step-2): MeetingStore @ModelActor + DTOs, 45a3198 docs(group-d-step-1) test-baseline + Step 1 results, 21dfb9d checkpoint(group-d-step-1): add Meeting/Sentence @Model entities + SearchTextNormalizer
 - Most recent production commit: 981c962 fix(group-c-step-10): capture sourceSegmentID once in startGeneration so partialChunk and completed agree
 
 ## Toolchain
@@ -58,12 +58,20 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 3 SHIPPED** (checkpoint, not
   - **Pre-authorized STOP fired**: title rewrite at `finalizeStop(at:)` deferred. `MeetingStore` has no `updateTitle(meetingID:title:)` method; the brief required surfacing before adding it. `MeetingSession.finalizeStop` calls `store.endMeeting` only and leaves a commented call-site showing the exact two-line addition needed once the method lands. `firstEnglishSentence` continues to be captured by the event pump so the follow-up dispatch is a surgical add (add `MeetingStore.updateTitle` + uncomment + flip one test assertion). The placeholder title set at `start(at:)` (bare timestamp via `MeetingTitleGenerator.makeTitle(startedAt:firstEnglishSentence: nil)`) is final under the current Step 3 contract.
   - Suite count exceeds brief minimum 241 by 2 (243 actual). 0 errors, 0 warnings.
   - pbxproj untouched.
-- 243/243 tests passing. 0 errors, 0 warnings. All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
+- **Phase 5 Group D Step 3a (shipped 2026-05-16)**: ✅ checkpoint landed locally — 245/245 tests passing (239 unit + 6 UI). Not pushed per protocol.
+  - Files modified: `ArigatoAI/Persistence/MeetingStore.swift`, `ArigatoAITests/Persistence/MeetingStoreTests.swift`, `ArigatoAI/Session/MeetingSession.swift`, `ArigatoAITests/Session/MeetingSessionTests.swift`.
+  - Adds `MeetingStore.updateTitle(meetingID:title:)` using the V3-blessed `FetchDescriptor` + `#Predicate` pattern.
+  - Restores the deferred title-rewrite block in `MeetingSession.finalizeStop` — calls `updateTitle` **before** `endMeeting` so a partial-failure leaves the meeting persisted with the placeholder title rather than a written `endedAt` + stale title.
+  - Flips `firstEnglishSentence_capturedOnFirstCompleted_usedInFinalizeStopTitleRewrite` assertion back to the originally-designed contract (`title.contains("First English sentence")`).
+  - +2 new `MeetingStoreTests` (existing meeting + meetingNotFound). +1 flipped `MeetingSessionTests` assertion (no test added/removed, just contract restored). Net delta: 243 → 245 unit-count rises by 2.
+  - Brief's projected count was 246 but caveat allowed for empirical drift; empirical answer is 245 because the test-inversion flip is a contract change, not an additional test.
+  - Closes Step 3's pre-authorized STOP via the V3 precedence rule filed in commit `e8472a6`.
+  - pbxproj untouched.
+- 245/245 tests passing. 0 errors, 0 warnings. All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
 
 ## Next planned action
-- **Group D Step 4 dispatch — next session.** Step 3 shipped (checkpoint `4db5e61` local-only). Resume by reading: `docs/GROUP_D_UI_DECISIONS.md` (20 locked decisions), `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` (findings + 4 approved amendments, especially Amendment 3 for the eventual Step 8 `Task.detached` workaround), and the feature-planner's plan in conversation history.
+- **Group D Step 4 dispatch — next session.** Step 3a closed Step 3's pre-authorized STOP; the title-rewrite path is now live. Resume by reading: `docs/GROUP_D_UI_DECISIONS.md` (20 locked decisions), `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` (findings + 4 approved amendments, especially Amendment 3 for the eventual Step 8 `Task.detached` workaround), and the feature-planner's plan in conversation history.
 - **Step 4 wires**: `TranscriptionActor` → `LanguageRouter` (Group A↔C bridge) → `TranslationActor` → `MeetingSession`. The orchestrator's `consumeTranslationEvents(_:)` accepts the `AsyncThrowingStream<TranslationEvent, any Error>` returned by `TranslationActor.translate(segments:direction:)`. Concurrency design discipline applies — scheduling assumptions + at least one violation test for the wiring.
-- **Pre-authorized STOP follow-up**: `MeetingStore.updateTitle(meetingID:title:)` lands as a small surgical addition before Step 4 starts, OR as part of Step 4's dispatch brief if the wiring naturally touches `MeetingStore`. Recommended signature in the in-source comment on `MeetingSession.finalizeStop(at:)`. Test impact: 1 happy-path + 1 not-found in `MeetingStoreTests`, plus uncomment + assertion flip in `MeetingSessionTests.firstEnglishSentence_capturedOnFirstCompleted_usedInFinalizeStopTitleRewrite` and `deadlineExpiry_fromStoppingWithUndoWindow_transitionsToEnded_andCallsStoreEndMeeting`.
 - **Plan structure**: Phase 1 (persistence + session core, Steps 1–5) → Phase 2 (UI shell + transcript view, Steps 6–10) → Phase 3 (history/search/export/onboarding/settings, Steps 11–15) → three-reviewer gate. Checkpoint commits per step per "Rollback safety."
 - **Group D queued V3 entries (file at execution time, not pre-emptively)**:
   - "Migrate meeting title generation from first-sentence to Foundation Models summarization" — fires when title-rewrite follow-up dispatch lands (decision #12).
@@ -123,7 +131,7 @@ Last updated: 2026-05-16 — Phase 5 **Group D Step 3 SHIPPED** (checkpoint, not
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: 7 ahead, 0 behind — Step 1 checkpoint + Step 1 docs + Step 2 checkpoint + Step 2 docs + Step 2 V3 entry + Step 3 checkpoint + Step 3 docs not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D).
+- Origin/main: 9 ahead, 0 behind — Step 1 checkpoint + Step 1 docs + Step 2 checkpoint + Step 2 docs + Step 2 V3 entry + Step 3 checkpoint + Step 3 docs + Step 3 V3 precedence entry + Step 3a checkpoint not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D).
 
 ## Local-only artifacts
 - Tag pre-recovery-snapshot/group-c → 4a57d30 (forensic snapshot of pre-recovery Group C Phase 4 state — local only, not pushed)
