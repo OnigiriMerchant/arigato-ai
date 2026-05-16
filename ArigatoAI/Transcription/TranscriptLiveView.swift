@@ -173,9 +173,14 @@ struct TranscriptLiveView: View {
         .accessibilityLabel(chrome.warmupAccessibilityLabel)
 
         if let errorText = chrome.warmupErrorText {
+            // V3 #40 concern 2 (Step 9b): error text uses semantic
+            // `.secondary` rather than `Color.recordingActive` so the
+            // red warmup dot alone carries the failed-state signal.
+            // Adjacent red dot + red text overloaded the chrome region
+            // and competed with captions for attention.
             Text(errorText)
                 .font(.caption2)
-                .foregroundStyle(Color.recordingActive)
+                .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .truncationMode(.tail)
                 .accessibilityLabel("Whisper load failed: \(errorText)")
@@ -190,6 +195,10 @@ struct TranscriptLiveView: View {
         if bootstrapper.router.routedHistory.isEmpty {
             emptyState
         } else {
+            // V3 #40 concern 4 (Step 9b): match the 20pt horizontal
+            // inset that the chrome and footer carry so right-edge
+            // row badges line up with the chrome's language badge
+            // rather than running edge-to-edge.
             List(bootstrapper.router.routedHistory) { routed in
                 TranscriptRow(display: TranscriptRowDisplay(routed: routed))
                     .listRowSeparator(.hidden)
@@ -197,6 +206,7 @@ struct TranscriptLiveView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .padding(.horizontal, 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -350,6 +360,15 @@ struct IndicatorChromeDisplay: Equatable {
     /// otherwise.
     let warmupErrorText: String?
 
+    /// `true` when the failed-state ``warmupErrorText`` region should
+    /// render with the semantic `.secondary` foreground rather than
+    /// the red ``Color/recordingActive`` token. Locked by V3 #40
+    /// concern 2 (Step 9b) — the red warmup dot alone carries the
+    /// failed semantic; doubling red on the adjacent text overloaded
+    /// the chrome region. The view body honors this flag by switching
+    /// `.foregroundStyle(.secondary)` for the error text when `true`.
+    let warmupErrorTextUsesSecondaryForeground: Bool
+
     /// `true` when the record control should be disabled (failed loader).
     let recordButtonDisabled: Bool
 
@@ -370,26 +389,31 @@ struct IndicatorChromeDisplay: Equatable {
             warmupColor = Color.recordingIdle
             warmupAccessibilityLabel = "Whisper warmup idle"
             warmupErrorText = nil
+            warmupErrorTextUsesSecondaryForeground = true
             recordButtonDisabled = false
         case .loading:
             warmupLabel = "warming…"
             warmupColor = Color.recordingActive
             warmupAccessibilityLabel = "Whisper warming up"
             warmupErrorText = nil
+            warmupErrorTextUsesSecondaryForeground = true
             recordButtonDisabled = false
         case .loaded:
             warmupLabel = "ready"
-            // Use a calm green-leaning hue from the system. There is no
-            // "ready" token in DesignTokens yet — Phase 7 will introduce
-            // typography and semantic tokens. Until then, use the tint
-            // color, which renders as the app's accent.
-            warmupColor = Color.green
+            // V3 #40 concern 1 (Step 9b): replaces the prior ad-hoc
+            // `Color.green` with the canonical `recordingReady` token
+            // (calm green at RGB 0.26, 0.66, 0.45 — chromatically
+            // distinct from `recordingActive`'s red, locked by
+            // `DesignSystemTests.recordingReady_hueDistinctFromRecordingActive`).
+            warmupColor = DesignSystem.Colors.recordingReady
             warmupAccessibilityLabel = "Whisper ready"
             warmupErrorText = nil
+            warmupErrorTextUsesSecondaryForeground = true
             recordButtonDisabled = false
         case let .failed(error):
             warmupLabel = "failed"
             warmupColor = Color.recordingActive
+            warmupErrorTextUsesSecondaryForeground = true
             warmupAccessibilityLabel = "Whisper warmup failed"
             warmupErrorText = error.errorDescription ?? "Unknown error"
             recordButtonDisabled = true

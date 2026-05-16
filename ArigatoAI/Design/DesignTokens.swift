@@ -8,27 +8,42 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Color tokens
+// MARK: - Color tokens (forwarders)
 
 //
-// Canonical color palette for Arigato AI. These values are defined by the
-// `swiftui-design` skill (see `.claude/skills/swiftui-design/SKILL.md`).
-// Views should reference these tokens rather than redeclaring colors locally.
+// Top-level `Color` extensions resolve through ``DesignSystem/Colors``
+// so the historical short-form spellings (`Color.recordingActive`,
+// etc.) continue to work unchanged at every call site.
+//
+// Group D Step 9b introduced the ``DesignSystem`` namespace; this file
+// kept its public surface as the original `Color.*` extensions so the
+// migration is source-compatible (locked decision D9-2 option b).
+// Every value here forwards to the canonical token without rewriting
+// the RGB — the namespace owns the values, this file owns the
+// short-form spellings.
 
 public extension Color {
-    /// Muted red used as the chromatic accent for an active recording session.
-    /// Source: `swiftui-design` skill, "Recording state" tokens.
-    static let recordingActive = Color(red: 0.94, green: 0.27, blue: 0.27)
+    /// Muted red used as the chromatic accent for an active recording
+    /// session. Forwards to ``DesignSystem/Colors/recordingActive``.
+    static var recordingActive: Color {
+        DesignSystem.Colors.recordingActive
+    }
 
-    /// Mid-gray used for the idle recording control. Source: `swiftui-design`
-    /// skill, "Recording state" tokens.
-    static let recordingIdle = Color(white: 0.5, opacity: 1.0)
+    /// Mid-gray used for the idle recording control. Forwards to
+    /// ``DesignSystem/Colors/recordingIdle``.
+    static var recordingIdle: Color {
+        DesignSystem.Colors.recordingIdle
+    }
 
-    /// Primary surface color matching the system background. Source:
-    /// `swiftui-design` skill, "Surfaces (Liquid Glass)" tokens.
-    static let surfaceBackground = Color(.systemBackground)
+    /// Primary surface color matching the system background. Forwards to
+    /// ``DesignSystem/Colors/surfaceBackground``.
+    static var surfaceBackground: Color {
+        DesignSystem.Colors.surfaceBackground
+    }
 
-    /// Track color for the VU meter capsule. Source: `swiftui-design` skill,
-    /// derived for component patterns (meter track on neutral surface).
-    static let meterTrack = Color(.tertiarySystemFill)
+    /// Track color for the VU meter capsule. Forwards to
+    /// ``DesignSystem/Colors/meterTrack``.
+    static var meterTrack: Color {
+        DesignSystem.Colors.meterTrack
+    }
 }
