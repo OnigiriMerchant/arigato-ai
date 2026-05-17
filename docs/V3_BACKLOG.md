@@ -1132,3 +1132,40 @@ Cost estimate: ~15 min.
   - V3 entry "LFM2 model download failing" (`b851dad`) — when this fix lands, the `.failed` branch goes cold automatically.
   - UI decision #16 (locked copy)
   - Step 14 dispatch brief LFM2-broken-handling section
+
+### Xcode 26.3 native agentic coding (`xcrun mcpbridge`) — evaluate for next project, not mid-Group-D
+
+- **What:** Xcode 26.3 (released February 3, 2026) ships native agentic coding via `xcrun mcpbridge` — Apple's MCP server exposing 20 tools for file operations, build/test execution, SwiftUI preview rendering, and documentation search. Setup is one command: `claude mcp add --transport stdio xcode -- xcrun mcpbridge`. Apple co-designed integrations with Anthropic and OpenAI, so Claude Code + Codex are tuned for it. Architecture: Agent → MCP Protocol → mcpbridge → XPC → Xcode (no cloud relay, no API keys for local connection).
+- **Why this is V3 and not immediate adoption:** four current limitations make mid-Group-D adoption a net negative:
+  1. **macOS Automation permission bug** (Claude Code issue #23550): build/test tools (`RenderPreview`, `BuildProject`, `ExecuteSnippet`, `GetTestList`, `RunSomeTests`) hang indefinitely because macOS cannot persist Automation permission for CLI tools without stable bundle identifiers. This affects exactly the value proposition (autonomous build/test loops).
+  2. **Xcode must stay open**: bridge requires a running Xcode instance. If Xcode crashes or closes, MCP calls fail. Less flexible than CLI-only workflows.
+  3. **No incremental build awareness**: `build_sim` runs full build every invocation. For 40+ commit projects, real per-iteration overhead.
+  4. **Apple documentation gap**: as of May 2026, no standalone published documentation for the MCP server. Community-derived tool lists may change without notice between Xcode releases.
+- **Trigger to evaluate:**
+  - Hard trigger: BEFORE next project (post-Arigato-AI). Evaluate at clean-slate boundary, not mid-project.
+  - Soft trigger: when GitHub issue `anthropics/claude-code#23550` (Automation permission persistence) is resolved.
+  - Soft trigger: when Apple publishes standalone MCP server documentation.
+  - Soft trigger: when XcodeBuildMCP (community-built, 82 tools, standalone — no running Xcode required) reaches maturity comparable to mcpbridge.
+- **Action when triggered:**
+  1. Read Apple's official documentation (when published) + community tooling docs (XcodeBuildMCP).
+  2. Compare three approaches: (a) current Claude Code CLI + Bash `xcodebuild` workflow, (b) Apple's `xcrun mcpbridge`, (c) XcodeBuildMCP standalone.
+  3. Pilot with a small project (NOT Arigato AI) — let it cook on a real toolchain before committing.
+  4. Update CLAUDE.md's two-surface workflow if adopting — currently the agent uses Bash for build/test, would shift to structured MCP tool calls.
+- **What this WOULD give us if mature:**
+  - Structured JSON build errors instead of parsing thousands of lines of `xcodebuild` output (cleaner agent reasoning).
+  - SwiftUI preview screenshots returned to the agent for visual verification.
+  - Documentation search via Apple's docc corpus directly.
+  - Swift REPL access for diagnostic snippets.
+- **What this WOULD NOT give us:**
+  - Solution to the per-dispatch budget limit (still a fundamental LLM constraint).
+  - Solution to the audit-first continuation pattern (still required for timeout recovery).
+  - Solution to the LFM2 download issue (orthogonal).
+- **Cost estimate:**
+  - Evaluation: ~2–4 hours (read docs, pilot small project, write up findings).
+  - Adoption if approved: ~1–2 hours (CLAUDE.md update + agent prompt adjustments + verify build/test workflows on real project).
+- **Cross-references:**
+  - V3 entry "Claude Code feature adoption: /goal, /ultrareview, xhigh, claude agents" (commits `50d8188` + `a0de9f0`) — related tooling-evaluation pattern.
+  - V3 entries #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update if adopted.
+  - GitHub issue: https://github.com/anthropics/claude-code/issues/23550 (Automation permission bug — track for resolution signal).
+  - XcodeBuildMCP project: https://github.com/cameroncooke/XcodeBuildMCP (alternative standalone option).
+  - Apple Xcode 26.3 release notes: https://developer.apple.com/documentation/xcode-release-notes/xcode-26_3-release-notes
