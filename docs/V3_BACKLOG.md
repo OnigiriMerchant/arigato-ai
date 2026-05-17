@@ -1169,3 +1169,38 @@ Cost estimate: ~15 min.
   - GitHub issue: https://github.com/anthropics/claude-code/issues/23550 (Automation permission bug — track for resolution signal).
   - XcodeBuildMCP project: https://github.com/cameroncooke/XcodeBuildMCP (alternative standalone option).
   - Apple Xcode 26.3 release notes: https://developer.apple.com/documentation/xcode-release-notes/xcode-26_3-release-notes
+
+### Pre-MVP-1 hardening bundle — LFM2 + Swift 6 + timing race + supporting items
+
+- **What:** three known shipping blockers + supporting items grouped as one dedicated workstream before MVP-1 device testing on iPhone 17 Pro Max.
+- **Items in the bundle:**
+  1. **LFM2 model download fix** (V3 commits `b851dad` + `7b31aea` + `8ccf6b9` + `44d3fa8`) — current portal-based loading is broken; implement Hugging Face direct download + local-path loading in `AppBootstrapper`. Hard MVP-1 blocker. Cost: 4–12 hours depending on SDK API surface.
+  2. **Swift 6 mode build warnings** (V3 commit `66d08b0`) — 5 warnings, 3 of which are explicit Swift 6 language mode errors. Will become hard errors when build settings tighten. Cost: ~2.5 hours.
+  3. **Cumulative-load timing race in cancellation-ordering tests** (V3 commit `395e104`) — `FakeTranslator` post-cancel state machine causes intermittent test flakes. Not production-affecting, but pollutes verification runs. Cost: ~1–2 hours.
+  4. **Pre-MVP-1 V3 review** (entry below) — runs BEFORE this hardening bundle starts, sets the priority list.
+- **Trigger:** AFTER end-of-Group-D three-reviewer gate, BEFORE any device testing of MVP-1.
+- **Sequencing within bundle:**
+  1. Pre-MVP-1 V3 review (~1 hour) — produces prioritized list.
+  2. LFM2 fix (4–12 hours) — biggest unknown, do first.
+  3. Swift 6 warnings (~2.5 hours) — fix while in concurrency-annotation mindset.
+  4. Timing race (~1–2 hours) — fix while in test-discipline mindset.
+- **Total estimate:** 8–17 hours focused work, 1–3 sessions.
+- **Cross-references:** all linked V3 entries above. End-of-Group-D reviewer gate (`docs/CURRENT_STATE.md`) is the trigger point.
+
+### Pre-MVP-1 V3 holistic review
+
+- **What:** before the pre-MVP-1 hardening bundle starts, run a holistic review of `docs/V3_BACKLOG.md` to produce a recommended fix-list AND a recommended feature-list (if any) for MVP-1 ship.
+- **Why:** V3 backlog has accumulated 20+ entries across Group D. Some are pre-MVP-1 must-fix, some are post-MVP-1 polish, some are Phase 7 visual identity. A holistic pass groups them correctly and surfaces anything missed.
+- **Inputs to the review:**
+  - All V3 entries in `docs/V3_BACKLOG.md`.
+  - End-of-Group-D reviewer gate findings (state-machine audit, smoke-test results, etc.).
+  - Original Group D scope (`CLAUDE.md`, `ROADMAP.md`, `GROUP_D_UI_DECISIONS.md`).
+  - Anything learned during Steps 1–15 that's worth carrying forward.
+- **Output of the review:** a markdown document grouping V3 entries into 4 buckets:
+  1. **MVP-1 ship blockers** — must fix before device testing.
+  2. **MVP-1 polish nice-to-haves** — improves device-testing experience but not blocking.
+  3. **Post-MVP-1 deferred** — explicit Phase 6+ scope.
+  4. **Closed / superseded** — entries that have been addressed implicitly and can be retired.
+- **Trigger:** at end-of-Group-D reviewer gate, BEFORE the hardening bundle dispatches.
+- **Cost:** ~1 hour. Read pass + categorization + write the recommendation document.
+- **Action:** the review document is presented to the user for approval; user picks which items make MVP-1 cut; hardening bundle dispatches against the approved list.
