@@ -1,59 +1,60 @@
 ---
 name: leap-sdk
-description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Use whenever adding, modifying, or debugging Japanese-English translation calls. Covers SDK setup, system prompt requirements, model bundle loading, async streaming, generation parameters.
+description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Use whenever adding, modifying, or debugging Japanese-English translation calls. Covers SDK setup, system prompt requirements, model loading, async streaming, and concurrency constraints.
 ---
 
-# LEAP iOS SDK — LFM2-350M-ENJP-MT integration
+<!-- Verified against: LEAP iOS SDK v0.9.4 (commit 72afe9bf4c2fae086fbced3b05995edaad2c6bf2). Reconcile date: 2026-05-17. Sources: .swiftinterface inspection (PHASE_5_GROUP_B_PRE_FLIGHT.md), github.com/Liquid4All/leap-ios tree, docs.liquid.ai model card. -->
 
-## Recent SDK changes (May 2026)
-- **Minimum target version: v0.10.4.3** (released 2026-05-07).
-- **New cache control API**: prefer the native Swift surface — `LiquidCacheOptions.enabled(path:)` factory plus `with(cacheOptions:)` builders on `LiquidInferenceEngineOptions` and `LiquidInferenceEngineManifestOptions`.
-- **Avoid the older `KotlinUInt` wrapping pattern** seen in pre-v0.10.4.3 tutorials — the new API takes native Swift types directly.
-- **LFM2-350M-ENJP-MT compatibility unchanged**: bundle format, runner API, and model loading signatures are stable.
-- Detected by doc-researcher investigation triggered by daily briefing issue #5.
+# LEAP iOS SDK — LFM2-350M-ENJP-MT integration
 
 ## Critical system prompt requirement
 LFM2-350M-ENJP-MT requires ONE of these EXACT system prompts. No variation, no rephrasing:
 - `"Translate to English."` — for Japanese → English
 - `"Translate to Japanese."` — for English → Japanese
 
-The user prompt is the text to translate. That's the entire interface.
+The user turn is the text to translate. Single-turn conversations only — do not accumulate history across translation calls.
 
-## Generation parameters (from official model card)
-```swift
-GenerationOptions(
-    temperature: 0.5,
-    topP: 1.0,
-    minP: 0.1,
-    repetitionPenalty: 1.05,
-    maxTokens: 512  // sentences are short; 512 is generous
-)
-```
+## Model loading pattern (v0.9.4)
+The locked GGUF path uses overload #3 from the `.swiftinterface`:
 
-## Bundle loading pattern
 ```swift
 import LeapSDK
 
-actor Translator {
-    private var runner: LeapRunner?
-    
-    func warmup() async throws {
+actor LFM2ModelLoader {
+    private(set) var runner: (any ModelRunner)?
+
+    func load() async throws {
         guard runner == nil else { return }
-        let bundleURL = Bundle.main.url(
-            forResource: "LFM2-350M-ENJP-MT-Q5_K_M",
-            withExtension: "bundle"
-        )!
-        runner = try await Leap.load(url: bundleURL)
-        // Pre-warm with dummy inference to avoid cold-start glitch
-        _ = try? await translate("おはようございます", direction: .jaToEn)
+        runner = try await Leap.load(
+            model: "lfm2-350m-enjp-mt",
+            quantization: "Q5_K_M",
+            options: nil,
+            downloadProgressHandler: nil
+        )
     }
 }
 ```
+
+`Leap.load(url:)` exists in v0.9.4 but is marked `@available(*, deprecated, message: "Use load(options:) instead")`. Do not use it in new code.
+
+## Conversation creation
+Use the factory on `ModelRunner` — cleaner than the `Conversation(modelRunner:history:)` initializer:
+
+```swift
+let conversation = runner.createConversation(systemPrompt: "Translate to English.")
+let stream = conversation.generateResponse(
+    message: ChatMessage(role: .user, content: [.text(inputText)]),
+    generationOptions: GenerationOptions(maxTokens: 256)
+)
+```
+
+`maxTokens: 256` is sourced from the official model card examples. Other `GenerationOptions` fields (`temperature`, `topP`, `minP`, `repetitionPenalty`) are available but their recommended values for this model are not confirmed by an allowed source — prefer the bundle manifest defaults (pass `nil` fields).
 
 ## Direction handling
 ```swift
 enum TranslationDirection {
     case jaToEn, enToJa
+
     var systemPrompt: String {
         switch self {
         case .jaToEn: return "Translate to English."
@@ -64,25 +65,29 @@ enum TranslationDirection {
 ```
 
 ## Cold-start mitigation
-First inference after model load can be slow or produce truncated output. ALWAYS pre-warm with a dummy translation at app launch. The user-facing impact of skipping this is broken first sentence in a meeting.
+No SDK-provided warmup primitive exists (`prewarm()`, `warmup()`, and `preload()` are absent from the v0.9.4 interface). Use a dummy inference at app launch — the dummy-inference pattern is the only path:
 
-## What this model is good at
-- 1-2 sentence business Japanese
-- Tone/politeness preservation (keigo)
-- News-article style content
+```swift
+_ = try? await translate("おはようございます", direction: .jaToEn)
+```
 
-## What it's NOT good at
-- Single words (<5 words) — model needs sentence context
+First inference after load can be slow. Pre-warm before the first meeting session.
+
+## What this model is good at (from model card)
+- Short-to-medium text (optimized for low latency at sentence scale)
+- Bidirectional Japanese ↔ English
+- Preserves tone in natural speech
+
+## What it's NOT good at (from model card)
 - Long-form (>3 paragraphs) — chunk first
-- Technical/domain jargon (medical, legal) — fine-tune for production accuracy
-- Novel proper nouns (product names introduced for first time)
+- Single-turn only — do not feed it multi-turn history
 
-## Latency expectations on iPhone 17 Pro Max
-- Q5_K_M quantization: ~150-400ms per sentence (warm)
-- Q8_0 quantization: ~250-600ms per sentence (warm)
-- Cold first inference: 1-3s
+## Concurrency constraints (v0.9.4 .swiftinterface)
+`ModelRunner` is a non-Sendable protocol. `Conversation` is a non-Sendable class. Neither crosses actor boundaries safely.
 
-## Common pitfalls
-- Loading model on the main actor — DON'T. Use a dedicated actor.
-- Calling translate() before warmup() completes — guard with `runner != nil`.
-- Feeding partial sentences from Whisper — wait for sentence-end via VAD before calling translate.
+- Do NOT hold `any ModelRunner` or `Conversation` as stored properties in a `Sendable` type without `nonisolated(unsafe)`.
+- Preferred pattern: keep both `ModelRunner` and `Conversation` inside one actor's isolation. Create `Conversation` via `runner.createConversation(systemPrompt:)` inside the actor that will consume it.
+- `GenerationHandler` is the only Sendable type in the relevant surface — use it for cancellation across boundaries.
+
+## KV cache (v0.9.4)
+`LiquidCacheOptions` is a plain struct: `LiquidCacheOptions(path: String, maxEntries: Int)`. Both fields are non-optional. There is no in-memory variant and no `.enabled(path:)` factory in v0.9.4. If omitting the cache entirely (`options: nil`), KV-cache acceleration is disabled. If enabling it, use `Library/Caches` (not `Documents`) to avoid iCloud backup. Cache strategy is a pending architectural decision (see V3 backlog, D4 collision).
