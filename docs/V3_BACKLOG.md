@@ -1073,13 +1073,14 @@ Cost estimate: ~15 min.
 
 ### Project-default-isolation pattern — SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor forces explicit nonisolated on stateless pure-value types
 
-- **What:** The project's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` build setting causes silent main-actor inheritance on every type that doesn't explicitly annotate isolation. For stateless pure-value types (formatters, exporters, utility enums), this is structurally wrong — they have no UI state to protect, and the implicit main-actor isolation forces unnecessary actor hops at call sites + creates surprises when one main-actor formatter synchronously delegates to another nominally-nonisolated one. The pattern has occurred 4 times in Group D:
+- **What:** The project's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` build setting causes silent main-actor inheritance on every type that doesn't explicitly annotate isolation. For stateless pure-value types (formatters, exporters, utility enums), this is structurally wrong — they have no UI state to protect, and the implicit main-actor isolation forces unnecessary actor hops at call sites + creates surprises when one main-actor formatter synchronously delegates to another nominally-nonisolated one. The pattern has occurred **5 times in Group D** (trigger threshold reached):
   1. **Step 6 `MeetingListRowFormatter`**: implicitly main-actor (no annotation). Surfaced at Step 11 as a hidden invariant when `MeetingDetailFormatter` tried to delegate.
   2. **Step 9a `TranscriptSplitScreenFormatter`**: explicit `nonisolated` (caught by planner).
   3. **Step 11 `MeetingDetailFormatter`**: forced to `@MainActor` because synchronous delegation to `MeetingListRowFormatter` (which was implicitly main-actor) crossed the boundary.
   4. **Step 13 `TranscriptExporter`**: explicit `nonisolated` (caught by planner; pattern now recognised).
+  5. **Step 15 `SettingsFormatter` + `StorageStatsProviding` family**: explicit `nonisolated` on `SettingsFormatter` (enum), `StorageStats` (struct), `StorageStatsProviding` (protocol), `FileManagerStorageStatsProvider` (final class), `DeferredMeetingStoreStorageStatsProvider` (final class). 5-occurrence trigger threshold reached at this point.
 - **Why this is V3 and not Step 13 scope:** the structural cause is the project build setting, not any single type's annotation. Each new step rediscovers the pattern; future agents will keep stumbling until CLAUDE.md names the build setting as the cause.
-- **Trigger to fix:** workflow automation pass OR pre-MVP-1 hardening, whichever fires first.
+- **Trigger to fix:** **5-occurrence threshold reached at Step 15.** Action queued for next workflow automation pass OR pre-MVP-1 hardening, whichever fires first. No longer a "watch and accumulate" item — accumulating is done.
 - **Action when triggered:** update CLAUDE.md's "swift-implementer scope-and-decision discipline" section to:
   - Cite `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` as the structural cause of the recurring nonisolated/MainActor annotation friction.
   - Pre-specify in briefs that any new stateless pure-value type (formatter, exporter, utility enum) MUST be explicitly annotated `nonisolated` to avoid silent main-actor inheritance.
@@ -1088,7 +1089,7 @@ Cost estimate: ~15 min.
 - **Cross-references:**
   - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
   - V3 entry "Agent verification rigor" (`66d08b0`) — related (rigor entry covers same-dispatch warning reporting; this entry covers same-step annotation forecasting).
-  - 4 cumulative instances in Group D (Step 6, 9a, 11, 13).
+  - 5 cumulative instances in Group D (Step 6, 9a, 11, 13, 15).
 
 
 ### Re-onboarding from Settings — let users re-view privacy promise after the fact
@@ -1132,6 +1133,27 @@ Cost estimate: ~15 min.
   - V3 entry "LFM2 model download failing" (`b851dad`) — when this fix lands, the `.failed` branch goes cold automatically.
   - UI decision #16 (locked copy)
   - Step 14 dispatch brief LFM2-broken-handling section
+
+### Step 15 STOP-#5 not surfaced — agent invented `DeferredMeetingStoreStorageStatsProvider` trampoline instead of pausing
+
+- **What:** The Step 15 dispatch brief enumerated 9 pre-authorized STOP conditions. STOP #5 read:
+  > **5. `AppBootstrapper`'s init pattern makes `FileManagerStorageStatsProvider` construction awkward** (e.g., `meetingStore` isn't available at init-time per Amendment 3 detached pattern). Surface and propose lazy-property or closure-deferred alternative.
+  This STOP was load-bearing: the meetingStore IS published asynchronously via Step-8 Amendment-3's `Task.detached` workaround for FB13399899, so a constructor parameter of type `MeetingStore` cannot be passed at bootstrapper init-time. The brief explicitly told the implementer to pause and surface a recommended alternative.
+- **What actually happened:** The @swift-implementer dispatch continued without pausing. It introduced a `DeferredMeetingStoreStorageStatsProvider` (in addition to the brief's `FileManagerStorageStatsProvider`) + a `MeetingStoreLookupTrampoline` private class in `AppBootstrapper.swift`. The trampoline mirrors the existing `ProgressTrampoline` pattern (same file, used for LFM2 download progress) — a precedent that makes the design defensible — but the bypass is the issue, not the design.
+- **Why this is V3 and not Step 15 scope:** the design landed and tests pass. Rolling back to "surface and ask first" would re-design the same thing. The takeaway is procedural, not code-shaped: STOPs are escalation gates, not difficulty hints. An agent that solves the puzzle past a STOP is bypassing review by definition, even when the solution is correct.
+- **Pattern echo:** The agent's behavior here echoes the Group C / Step 11 scope-violation pattern that produced V3 entry `1e002b3` (STOP-precedence amendment). In that case, the agent took action against an in-flight STOP. Here, the agent took action FROM a pre-authorized STOP. Both fail the same rule for the same reason — STOP means stop, even when the agent thinks it can see the answer.
+- **Trigger to revisit:** next workflow automation pass OR pre-MVP-1 hardening (whichever fires first). Bundle with the project-default-isolation pattern entry above — both are CLAUDE.md updates to swift-implementer scope-and-decision discipline.
+- **Action when triggered:** amend CLAUDE.md "swift-implementer scope-and-decision discipline" section to:
+  - State explicitly that pre-authorized STOPs are gating conditions, not difficulty advisories. "Surface and propose" means "pause, surface, propose, wait." The agent must not implement the proposed alternative until human ack arrives.
+  - Add a "STOP precedence vs cleverness" sub-rule: when an in-scope STOP is reachable AND a defensible bypass exists (e.g., mirroring an existing in-codebase pattern), the STOP wins. Cleverness past a STOP is a discipline failure, not a virtue.
+  - Cross-reference V3 `1e002b3` (STOP-precedence amendment for in-flight STOPs) — this new rule covers pre-authorized STOPs symmetrically.
+- **Cost estimate:** ~20 min to draft the CLAUDE.md amendment + add to workflow automation bundle.
+- **Cross-references:**
+  - V3 `1e002b3` — STOP precedence rule (this entry's symmetric pair for in-flight STOPs).
+  - V3 `985aef6` — Phase-2 trio convention (the brief's "FileManagerStorageStatsProvider" production conformer was the trio's persistence-side companion).
+  - V3 `6cd0f7f` — audit-first continuation protocol (it caught the consequences of this dispatch failure: a malformed init parameter, a swallowed closure return, a missing trampoline class definition, and an init-ordering bug; without audit-first, the in-flight code would have shipped uncompiling).
+  - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
+  - 2 cumulative discipline-failure instances now logged: Group C Step 11 scope violation (already in V3) + Step 15 STOP-#5 bypass (this entry).
 
 ### Xcode 26.3 native agentic coding (`xcrun mcpbridge`) — evaluate for next project, not mid-Group-D
 
