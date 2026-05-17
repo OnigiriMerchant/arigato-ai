@@ -1,10 +1,13 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-17 — Phase 5 **Group D Step 15 SHIPPED** (checkpoint, not pushed). **Group D 15-step plan COMPLETE.** SettingsView (About + Storage, minimal MVP 1) landed per UI #19. Suite 392 test runs / 0 failures (389 unique = 386 unit + 3 unique UI methods, 4 parametric testLaunch variants → 392 runs). Decisions: D15-1 prompt cache only, D15-2 StorageStatsProviding trio, D15-3 reuse fetchAllUnfiltered count. Next: end-of-Group-D three-reviewer gate.
+Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D three-reviewer gate COMPLETE** (push pending explicit authorization). All 3 reviewer passes returned 0 BLOCKING. Suite 392 test runs / 0 failures (389 unique = 386 unit + 3 unique UI methods, 4 parametric testLaunch variants → 392 runs). Decisions: D15-1 prompt cache only, D15-2 StorageStatsProviding trio, D15-3 reuse fetchAllUnfiltered count. Next: explicit push authorization → `git push origin main` → pre-MVP-1 V3 holistic review → pre-MVP-1 hardening sprint.
 
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
+- 823085a docs(group-d-reviewer-gate): file V3 batch for Pass 1 + Pass 2 findings + tooling adoption
+- de1778a docs(group-d-reviewer-gate): file state-machine audit table (Pass 1 deliverable)
+- 223318a docs(group-d-step-15): record Step 15 results + Group D 15-step COMPLETE + STOP-#5 V3 entry + project-default-isolation tally 4→5
 - 63b3fe6 checkpoint(group-d-step-15): SettingsView (About + Storage, minimal MVP 1)
 - 8e116ae checkpoint(group-d-step-14): first-launch onboarding flow
 - 4e333e1 checkpoint(group-d-step-13): introduce TranscriptExporter + ShareLink toolbar fill (UI #9 Context B + #10)
@@ -323,18 +326,40 @@ Last updated: 2026-05-17 — Phase 5 **Group D Step 15 SHIPPED** (checkpoint, no
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **49 ahead, 0 behind** — full Group D checkpoint + docs trail across Steps 1–15 + V3 entries (Step 2 lookup-primitive, Step 3 STOP-precedence + commit-shape amendment, Step 3a wiring, Steps 4–8 checkpoint/docs pairs, Step 8's LFM2 + flake-consolidation + verification-rigor V3 entries, Step 9b DesignSystem + 9b V3 entries, Step 9a checkpoint/docs + Step 9a V3 entries + audit-first continuation V3 entry, Step-10-closure commit, Step 11's checkpoint + docs pair, Step 12's checkpoint + docs pair with FTS5 V3 entry filed, Step 13's checkpoint + docs pair with project-default-isolation V3 entry filed, Step 14's checkpoint + docs pair with three new onboarding V3 entries filed, plus Step 15's checkpoint + docs pair with the STOP-#5 deviation V3 entry and the project-default-isolation occurrence-count update to 5). Not pushed per protocol (push gated on three-reviewer gate at end-of-Group-D). Steps 4, 5, 6, 7, 8, 9b, 9a, 11, 12, 13, 14, 15 all used the established two-commit pattern (production+tests checkpoint then docs) per V3 precedence amendment `1e002b3` — avoided the Step 3a SHA-self-reference improvise. The three-reviewer gate may squash the multi-commit checkpoint chain into a smaller set at end-of-Group-D per CLAUDE.md.
+- Origin/main: **52 ahead, 0 behind** — full Group D checkpoint + docs trail across Steps 1–15 + V3 entries (Step 2 lookup-primitive, Step 3 STOP-precedence + commit-shape amendment, Step 3a wiring, Steps 4–8 checkpoint/docs pairs, Step 8's LFM2 + flake-consolidation + verification-rigor V3 entries, Step 9b DesignSystem + 9b V3 entries, Step 9a checkpoint/docs + Step 9a V3 entries + audit-first continuation V3 entry, Step-10-closure commit, Step 11's checkpoint + docs pair, Step 12's checkpoint + docs pair with FTS5 V3 entry filed, Step 13's checkpoint + docs pair with project-default-isolation V3 entry filed, Step 14's checkpoint + docs pair with three new onboarding V3 entries filed, Step 15's checkpoint + docs pair with the STOP-#5 deviation V3 entry and the project-default-isolation occurrence-count update to 5, plus the end-of-Group-D three-reviewer gate trail: Pass 1 STATE_MACHINE_AUDIT.md commit `de1778a`, Pass 2-prep V3 batch commit `823085a` with 6 entries + V3 #23 annotation + 2 tooling/adoption entries, and this Pass 3 close-out commit). **Not pushed per protocol — push pending explicit authorization. Three-reviewer gate has run and returned 0 BLOCKING across all 3 passes; CLAUDE.md "Don't" rule still gates the push.** Squash candidates (LFM2 amendment trail + Step 8 docs trail) PRESERVED per Pass 3 disposition — non-contiguity with Step 9b commits + no-interactive-rebase tooling constraint made the auditability cost of a bad squash exceed the readability benefit on a 52-commit chain. V3 hygiene grouping DEFERRED to existing Pre-MVP-1 V3 holistic review workstream (V3_BACKLOG.md:1212).
 
 ## Local-only artifacts
 - Tag pre-recovery-snapshot/group-c → 4a57d30 (forensic snapshot of pre-recovery Group C Phase 4 state — local only, not pushed)
 
-## End-of-Group-D reviewer-gate items
+## End-of-Group-D reviewer-gate items (COMPLETE 2026-05-17)
 
-Artifacts and triage tasks queued for the three-reviewer pass at end-of-Group-D (after Step 15 lands). Reviewer's call per CLAUDE.md Rollback safety on which of these to act on vs. defer.
+Three-reviewer gate ran serially. Pass 1 → Pass 2 → Pass 3. All passes returned 0 BLOCKING. Push pending explicit human authorization per CLAUDE.md "Don't commit until ... AND I have explicitly approved" rule.
 
-- **State-machine audit table** — map each `MeetingSessionPhase` case × UI surface (controls badge / controls primary button / controls secondary button / split-screen rendering / history rendering). Verify no silent gaps in the meeting lifecycle. Docs-only artifact; expected to live in this file's "Phase status" section as a sub-bullet OR in `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md` as a new appendix.
-- **LFM2 V3 entry amendment trail squash candidate** — 4 amendments (`b851dad` + `7b31aea` + `8ccf6b9` + `44d3fa8`) could squash into a single "LFM2 download failure" entry. Reviewer's call.
-- **Step 8 docs trail squash candidate** — 4 commits including original LFM2 entry + amendments + flake-consolidation + docs-stamp. Reviewer's call.
-- **V3 hygiene pass** — 10+ V3 entries accumulated since Step 8. Worth grouping by trigger (pre-MVP-1 hardening, Phase 7 polish, workflow automation, post-Group-D cleanup) for easier triage at the reviewer gate.
-- **CURRENT_STATE.md test-baseline + working-tree drift** — multiple instances during Group D where the test count or "X ahead" line lagged reality by 1–4 commits. Each was caught at the next dispatch. Worth a final reconciliation pass at the reviewer gate.
-- **Group D V3 follow-ups grouping** — by current count, the "Phase 5 Group D follow-ups" section in `docs/V3_BACKLOG.md` has 12+ entries. Reviewer pass to re-order or sub-group by trigger phase (pre-MVP-1 hardening / Phase 7 polish / post-Group-D cleanup / workflow automation) would improve scan-ability.
+### Pass 1 (@code-reviewer) — APPROVED / 0 BLOCKING / 6 INFO
+
+- **State-machine audit table** — DELIVERED as `docs/STATE_MACHINE_AUDIT.md` (commit `de1778a`). 5 MeetingSessionPhase cases × 6 UI surfaces (including ContentView routing branch) + 3 cross-product analyses + 6 gap-analysis findings (all INFO).
+- **STOP-#5 verdict** — (A) Defensibly-equivalent-pattern. `DeferredMeetingStoreStorageStatsProvider` + `MeetingStoreLookupTrampoline` accepted as-is; structurally identical to precedent `ProgressTrampoline`. Process-discipline failure stays V3-filed at `V3_BACKLOG.md:1137`.
+- **6 INFO findings filed in V3 batch commit `823085a`** (3 standalone Pass 1 LOW entries + 3 bundled with Pass 2 cascade).
+
+### Pass 2 (@ui-reviewer) — APPROVED / 0 BLOCKING / 7 INFO
+
+- **Deliverable S (ShareLink Share-Sheet LIVE smoke test)** — DEFERRED to pre-MVP-1 hardening sprint per pre-acknowledged V3 `b851dad` blocker. Inspection-only verification of `TranscriptExporter` surface passed (filename sanitisation, body format, atomic write — spec-conformant). 0 new V3 entry; cross-references existing `b851dad`.
+- **Deliverable A (UI #9 Context A intent)** — A1 ship as-is + V3 entry filed. Bonus finding surfaced: Context A's toolbar Share is functionally MISSING from the locked location, not just no-op'd. Bundled into V3 entry "UI #9 Context A — wire active-view toolbar ShareLink + remove cluster Share no-op" with MED severity per human upgrade decision.
+- **Deliverable B (MeetingListView error)** — B1 defer + V3 entry. Bundled "MeetingListView surface loadError when present."
+- **Deliverable C (permission revoked mid-meeting)** — C1 defer + V3 entry. Bundled "Permission-revoked mid-meeting overlay."
+- **Deliverable D (UI #5/#13/#15)** — PASS by inspection. No V3 entries.
+- **Supplemental findings**: tool-availability constraint (annotated onto V3 #23, no new entry), doc-comment staleness on `dispatchSecondary(.share)` (bundled into UI #9 Context A entry), `exportURL` write-on-recompute (already doc-acknowledged).
+
+### Pass 3 (@git-historian) — READY TO PUSH / 0 BLOCKING / 8 INFO
+
+- **Deliverable 1 (V3 hygiene grouping)** — DEFERRED to existing Pre-MVP-1 V3 holistic review workstream (`V3_BACKLOG.md:1212`). That entry already enumerates the same trigger-based restructure as a dedicated 1-hour pass.
+- **Deliverable 2 (LFM2 amendment trail squash)** — recommended YES; **DISPOSITION: PRESERVE**. Reason: trail spans non-contiguous commits (LFM2 amendments interleave with Step 9b production checkpoint + Step 9b docs commits). Interactive rebase forbidden by tooling. Auditability cost of a non-interactive squash on a non-contiguous trail exceeds the readability benefit on a 52-commit chain.
+- **Deliverable 3 (Step 8 docs trail squash)** — recommended YES; **DISPOSITION: PRESERVE**. Same reasoning as Deliverable 2 (overlapping trail).
+- **Deliverable 4 (drift reconciliation)** — APPLIED in this commit. Working-tree count, most recent commit, header timestamp, and end-of-gate items section all updated to post-gate state.
+- **Deliverable 5 (state-machine audit consistency check)** — CLEAN. No contradictions across STATE_MACHINE_AUDIT.md ↔ CURRENT_STATE.md ↔ V3 batch cascade entries. All 5 cross-checked gap references are accurate.
+- **Deliverable 6 (push readiness)** — READY TO PUSH on explicit authorization.
+
+### Push gate status
+
+- **All preconditions met**: 3 passes returned 0 BLOCKING; suite 392/0; working tree clean; CURRENT_STATE.md reconciled; STATE_MACHINE_AUDIT filed; V3 batch landed; cleanup commit (this commit) landed.
+- **Awaiting**: explicit user authorization to run `git push origin main`. Per CLAUDE.md "Don't" rule, push remains gated even after the three-reviewer gate completes. The no-pause directive does not bypass durable CLAUDE.md instructions or the system-prompt risky-action rule for shared-state operations.
