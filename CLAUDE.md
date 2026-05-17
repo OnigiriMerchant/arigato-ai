@@ -21,7 +21,7 @@ Personal use first, App Store later if it earns its way there.
 - Each pipeline stage is its own actor or class. No god objects.
 - Whisper language fallback uses consecutive-window disagreement gating (N=2). See LanguageRouter spec in PHASE_4_HANDOFF.md.
 - Pre-warm both models at app launch to avoid cold-start glitches.
-- Default toolchain: Xcode 26.5 (Build 17F42), iOS 26.5 SDK, Swift 6.3.1. Default simulator: iPhone 17 Pro Max on iOS 26.4 runtime (sim runtime intentionally matches the deployment target iOS 26.4, not the SDK). XcodeBuildMCP picks the latest available sim runtime via useLatestOS: true — currently resolves to 26.4 because no 26.5 sim has been created (see V3 "Workflow risks" bonus item). The physical target device is iPhone 17 Pro Max — different screen size, safe-area insets, Dynamic Island. Never test against iPhone 17 Pro.
+- Default toolchain: Xcode 26.5 (Build 17F42), iOS 26.5 SDK, Swift 6.3.2. Default simulator: iPhone 17 Pro Max on iOS 26.4 runtime (sim runtime intentionally matches the deployment target iOS 26.4, not the SDK). XcodeBuildMCP picks the latest available sim runtime via useLatestOS: true — currently resolves to 26.4 because no 26.5 sim has been created (see V3 "Workflow risks" bonus item). The physical target device is iPhone 17 Pro Max — different screen size, safe-area insets, Dynamic Island. Never test against iPhone 17 Pro.
 
 ## Coding standards
 - SwiftUI for all views. UIKit only when wrapping a system API that requires it.
