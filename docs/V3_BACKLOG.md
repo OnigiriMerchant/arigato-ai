@@ -218,6 +218,8 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 - **Group D end-of-group gate datapoint (2026-05-10):** Second real-work consequence of the bug. The `@ui-reviewer` agent declared `mcp__xcode__*` and `mcp__xcodebuildmcp__*` tools in its frontmatter but the dispatched agent session did not have them inherited — only `Read` and `Edit`. The agent correctly refused to fake a visual review and returned a tooling-gap report plus a static-code-only concern list (8 concerns flagged for visual verification). Mitigation that worked: main session used XcodeBuildMCP to build, run, and capture screenshots; verified Concern 6 (duplicate "listening…") visually and confirmed the fix. **New action item to evaluate when this entry is revisited:** add a Bash-based screenshot capture fallback to `@ui-reviewer` (the agent has `Bash` and `Read`; `xcrun simctl io <UDID> screenshot <path>` would let the agent capture screenshots without MCP), so the agent can deliver a complete review even when MCP inheritance fails. Don't change the agent now, just record the signal — the cluster fix is still the right long-term answer.
 
+- **End-of-Group-D three-reviewer gate Pass 2 datapoint (2026-05-17):** Third real-work consequence. The `@ui-reviewer` agent in Pass 2 of the end-of-Group-D three-reviewer gate again reported a restricted tool set (`Read` + `Edit` only; no `mcp__xcodebuildmcp__*` / `mcp__xcode__*`). All four Pass 2 deliverables (ShareLink smoke test, UI #9 Context A intent, MeetingListView error rendering, permission-revoked overlay, UI #5/#13/#15 verification) degraded to inspection-only paths. Fallback was acceptable this gate because (a) the LFM2 blocker (V3 `b851dad`) would have forced inspection on the smoke test regardless, (b) cascade items B/C were inspection-acceptable per dispatch brief, (c) `RenderPreview` was an acceptable fallback for D. Same root cause as the 2026-05-10 datapoint; more evidence. **Recurrence note:** future @ui-reviewer dispatches that REQUIRE the simulator surface (live record + screenshot) must either confirm the tool surface is wired OR acknowledge inspection-only mode up front in the brief. No production change needed; CLAUDE.md fallback rule still applies.
+
 ### Test isolation strategy — Swift Testing parallel execution masks crash root causes
 
 **Problem observed:** During Phase 4 Group C Step 9 verification, a single array-bounds crash in C15 (TranscriptionActorTests.windowStream_anchorHostTime_matchesAudioArrayStart) terminated four unrelated tests running in parallel within the same test process: AppBootstrapper.startPrewarm_calledTwice_doesNotDoubleLoad, RollingAudioBuffer.append_largeNumberOfFrames_completesUnderTimeBudget, and two other TranscriptionActor tests (C9, C14). Xcode's test runner attributed all four collateral failures to TranscriptionActorTests.swift:568 — the source location of the original crash, not where the dying tests actually were. Surface read: 5 unrelated test failures across 3 suites. Reality: 1 real failure, 4 phantom misattributions.
@@ -1226,3 +1228,88 @@ Cost estimate: ~15 min.
 - **Trigger:** at end-of-Group-D reviewer gate, BEFORE the hardening bundle dispatches.
 - **Cost:** ~1 hour. Read pass + categorization + write the recommendation document.
 - **Action:** the review document is presented to the user for approval; user picks which items make MVP-1 cut; hardening bundle dispatches against the approved list.
+
+## End-of-Group-D three-reviewer gate findings (filed 2026-05-17)
+
+The following entries were filed in a single docs batch immediately before @git-historian's Pass 3 dispatch. Bundles Pass 1 (@code-reviewer) standalone INFO findings + Pass 2 (@ui-reviewer) cascade INFO findings (which absorbed overlapping Pass 1 cells where applicable) + 2 tooling/adoption tracking entries surfaced in the Claude.ai strategic guidance thread.
+
+The 3 cascade entries below (UI #9 Context A, MeetingListView loadError, Permission-revoked overlay) are deliberately grouped here for @git-historian's V3 hygiene grouping pass to relocate as a "Pre-MVP-1 hardening sprint" subsection adjacent to V3 `b851dad` (LFM2 download failure). Same trigger ("before device testing"), same workstream, same approval gate.
+
+### AppBootstrapper.assumeIsolated in storage-stats lookup is unenforced for non-main callers
+
+- **What:** `AppBootstrapper.swift:446` — the `MainActor.assumeIsolated { self.meetingStore }` call inside the deferred lookup closure on `MeetingStoreLookupTrampoline` asserts the closure runs on the main actor. Per `StorageStatsProvider.swift:288-307`, `currentStats()` invokes `meetingStoreLookup()` from the actor context of whoever awaited `currentStats()`. Today's only production caller is `SettingsViewModel.load()` (which is `@MainActor`), so the assumption holds. The protocol's `currentStats()` is unannotated; a future caller from a non-main actor would trip an `assumeIsolated` runtime trap.
+- **Why deferred:** Pass 1 (@code-reviewer) surfaced this during the STOP-#5 verdict reasoning. Coverage gap, not a live bug. Production today is `@MainActor`-only; trap is unreachable.
+- **Trigger to revisit:** any future caller of `StorageStatsProviding.currentStats()` from a non-main actor OR pre-MVP-1 hardening sprint OR next workflow automation pass that touches the storage-stats surface.
+- **Two-option fix:** (a) add a Swift Testing case that calls `meetingStoreLookup()` from a `Task.detached` and asserts the documented trap, (b) replace `assumeIsolated` with `await MainActor.run`. Option (a) is cheaper if the protocol stays `@MainActor`-only by convention; option (b) is correct if the protocol is meant to be actor-agnostic.
+- **Source:** End-of-Group-D three-reviewer gate Pass 1 finding #1.
+- **Severity:** LOW (coverage gap, not a live bug).
+
+### MeetingSession.process(event:) doc-comment naming paused/stopping but not .ended/.idle drop case
+
+- **What:** `MeetingSession.swift:512-521` doc-comment says "If we're paused or stopping, still persist." The actual behavior is broader: paused, stopping, AND ended-or-idle branches enter the `guard case let .recording` else clause; the call to `activeMeetingID()` returns the ID for paused/stopping but `nil` for ended/idle, so persist runs for paused/stopping only and the event is silently dropped on ended/idle. Doc-comment doesn't lie about the paused/stopping contract, but it's incomplete on the ended/idle drop.
+- **Why deferred:** doc-polish only. Behavior is correct; the comment just doesn't enumerate all the branches.
+- **Trigger to revisit:** next workflow automation pass OR pre-MVP-1 hardening sprint.
+- **Fix:** extend the comment to "If we're paused or stopping, still persist; if ended or idle, silently drop the event (these phases mean the session is past its capture window — late completions are dropped by design)."
+- **Source:** End-of-Group-D three-reviewer gate Pass 1 finding #2 (Gap #5 in `docs/STATE_MACHINE_AUDIT.md`).
+- **Severity:** LOW (doc-polish).
+
+### ContentView onboarding-pending unconditionally wins over phase routing — invariant not doc-asserted
+
+- **What:** `ContentView.swift:102-105` evaluates `!onboardingComplete && !bootstrapper.onboardingStore.hasCompletedOnboarding` BEFORE the phase routing. When true, `OnboardingView` renders regardless of `session.phase`. Structurally fine for MVP-1 because the first launch is always `.idle` — the session is constructed inside `makeCoordinator` (`AppBootstrapper.swift:630-644`) with `phase = .idle` per `MeetingSession.swift:59`, and the coordinator only publishes via the warmup tail (`AppBootstrapper.swift:598-611`). However, the assumption "session phase is `.idle` when onboarding is incomplete" is not enforced by a doc-comment cross-reference on `ContentView.body`. A future test fixture or call site that pre-seeds a non-`.idle` phase before onboarding completes would silently render onboarding over a "recording" session — auto-save would persist sentences against a row the user never saw.
+- **Why deferred:** no current production path constructs a non-`.idle` session before onboarding completes. The assumption is structurally enforced by current wiring, just not documented.
+- **Trigger to revisit:** next workflow automation pass OR if a future test/feature changes the session-construction ordering.
+- **Fix:** add a doc-comment on `ContentView.body` (or `ContentView` type-level) stating the invariant + cross-referencing the `AppBootstrapper.startPrewarm` enforcement.
+- **Source:** End-of-Group-D three-reviewer gate Pass 1 finding #5 (Gap #1 in `docs/STATE_MACHINE_AUDIT.md`).
+- **Severity:** LOW (doc-comment).
+
+### UI #9 Context A — wire active-view toolbar ShareLink + remove cluster Share no-op
+
+- **What:** UI #9 Context A (per `docs/GROUP_D_UI_DECISIONS.md:116-126` and decision #4 morphing table at `docs/GROUP_D_UI_DECISIONS.md:60-74`) locks Share to a toolbar icon at the top-right of the active view after STOP — "Share the just-ended transcript without navigating to history first." Two divergences from the locked decision in shipped state:
+  1. `MeetingControlsFormatter.secondaryButton(for: .ended)` (`MeetingControlsView.swift:690-691`) emits a `Share` button in the controls cluster (wrong location per decision #9 Context A) AND `dispatchSecondary(.share)` (`MeetingControlsView.swift:275-279`) is a documented no-op with comment "Step 13 will wire a real `ShareLink`" — comment is stale (Step 13 came and went without wiring).
+  2. The active-view toolbar Share (where the locked decision puts it) is functionally missing. The only working ShareLink is in `MeetingDetailView`'s toolbar (`MeetingDetailView.swift:119-127`) per UI #9 Context B — reachable only after navigating to History → meeting row.
+- **Why deferred:** bundles with V3 `b851dad` pre-MVP-1 hardening sprint. Both this entry and `b851dad` require LFM2 to be working before the active-meeting flow can be exercised end-to-end; no point wiring Context A while Context B itself can't be smoke-tested.
+- **Trigger:** pre-MVP-1 hardening sprint, same window as V3 `b851dad`.
+- **Fix:**
+  1. Remove the `.share` case from `MeetingControlsFormatter.secondaryButton(for: .ended)` (return `nil` once toolbar Share is in place). Drop `SecondaryKind.share` and the `dispatchSecondary(.share)` no-op.
+  2. Add a `ToolbarItem(placement: .topBarTrailing)` to `TranscriptLiveView` (or `ContentView`'s `mainContent`) that renders a `ShareLink` when `phase == .ended` AND the active meeting has ≥1 sentence. Compose the same `TranscriptExporter` pipeline as `MeetingDetailView.exportURL`.
+  3. Update the stale doc-comment at `MeetingControlsView.swift:275-279` to "Pre-MVP-1 hardening relocated Share to the active-view toolbar per UI #9 Context A; this case is now `nil` from the formatter."
+- **Source:** Bundles Pass 1 finding #3 (Gap #4 in `docs/STATE_MACHINE_AUDIT.md`) + Pass 2 Deliverable A (verdict A1 with bonus surfacing #1 of functionally-missing toolbar Share) + Pass 2 Finding 6 (stale doc-comment).
+- **Severity:** MED — MVP-1 ship blocker; bundled with pre-MVP-1 hardening sprint.
+
+### MeetingListView — surface loadError when present, regardless of meetings collection state
+
+- **What:** `MeetingListView.swift:117-136` outer branch is `if model.meetings.isEmpty && model.loadError == nil` → empty/search-empty content; `else` → `listContent`. Two reachable failure modes are silently swallowed:
+  1. `loadError != nil && !meetings.isEmpty` — error captured in `loadError` but never rendered; user sees stale list with no indication of failure.
+  2. `loadError != nil && meetings.isEmpty` — empty-state ("No meetings yet") renders instead of the error; silent reassuring lie.
+- **Why deferred:** reachability is low in MVP-1 (single-user device, no remote backing, SwiftData fetch failure rare on healthy device). The only writer of `loadError` is `MeetingListViewModel.reload()` (`MeetingListView.swift:363-378`); the production fetcher is the actor-backed `MeetingStore.fetchAll(searchText:)` which throws on SwiftData corruption or actor-hop cancellation outside the SwiftUI-managed `.task(id:)` window.
+- **Trigger:** any user report of "my meetings list disappeared / didn't update" OR pre-MVP-1 hardening sprint (bundle with UI #9 Context A entry + V3 `b851dad`).
+- **Fix:** restructure the outer branch to evaluate `loadError` FIRST, render an inline error banner above whichever sub-branch (empty / search-empty / `listContent`) would otherwise render. Banner copy: "Couldn't load meetings — pull to refresh." Severity: muted-secondary background, no destructive color (the underlying meetings table is intact, only the in-memory mirror is stale).
+- **Source:** Bundles Pass 1 finding #4 (Gap #6 in `docs/STATE_MACHINE_AUDIT.md`) + Pass 2 Deliverable B (verdict B1, with newly-surfaced second failure mode).
+- **Severity:** MED — bundled with pre-MVP-1 hardening sprint.
+
+### Permission-revoked mid-meeting overlay — preserve STOP affordance + data-recovery messaging
+
+- **What:** `MeetingControlsView.swift:73-95` switches on `model.permissionStatus()` BEFORE consulting `model.phase()`; phase is only consulted inside the `.granted` branch (`MeetingControlsView.swift:152-160`). Mid-meeting OS-level permission revocation (user backgrounds the app, navigates to Settings → Privacy & Security → Microphone → ArigatoAI, toggles off) flips the surface to `deniedContent` (`MeetingControlsView.swift:117-131`) on return, which offers only an "Open Settings" button. STOP affordance disappears. Undo toast disappears. Pulsing badge disappears. Recovery exists (re-grant + tap STOP) but is unintuitive — the meeting row sits in History with `endedAt == nil` until then.
+- **Why deferred:** out-of-spec user gesture (backgrounding mid-meeting to revoke permission is not a path users accidentally find). Auto-save guarantees no data loss — sentences persist via `MeetingSession.persistCompleted(...)` regardless of pipeline state. The pipeline tears down naturally via the audio engine's next-frame error after revocation.
+- **Trigger:** post-MVP-1 user research showing real users hit this path OR Phase 6 polish pass.
+- **Fix:** in `MeetingControlsView.body`, evaluate phase BEFORE branching on permission. When `phase != .idle` AND `permission == .denied`, render a dedicated overlay with: (1) "Microphone access revoked during meeting" headline, (2) preserved STOP button calling `model.tapRequestStop()` (note: STOP under no audio capture is safe — `MeetingSession.requestStop` walks the same `.stoppingWithUndoWindow` ladder regardless of pipeline state), (3) "Open Settings to re-grant access" secondary button. Add inspection-only doc-comment cross-reference on `MeetingControlsView.body` noting the current behavior (revocation flips to deniedContent, audio engine error is the safety net) so a future reader understands why phase isn't checked first today.
+- **Source:** Bundles Pass 1 finding #6 (Gap #2 in `docs/STATE_MACHINE_AUDIT.md`) + Pass 2 Deliverable C (verdict C1).
+- **Severity:** MED — bundled with pre-MVP-1 hardening sprint (per @git-historian hygiene grouping intent).
+
+### Claude Code programmatic tool calling — adoption candidate
+
+- **What:** Anthropic API + Claude Agent SDK expose programmatic tool calling primitives (tool_use / tool_result blocks; the API's `tools` array; the SDK's tool registration patterns). Worth evaluating whether our workflow benefits from defining custom tools for repeated operations (e.g., V3 entry filing, working-tree drift reconciliation, dispatch-brief drafting). Today these are all done via slash commands + agent dispatches; a programmatic tool layer might compress some of the ceremony.
+- **Why deferred:** workflow automation rather than product work. Surfaced in Claude.ai strategic guidance thread as worth tracking, not actioning now.
+- **Trigger:** workflow automation pass OR explicit evaluation window post-MVP-1.
+- **Action class:** tracking-only, no code. Document what tool surface (if any) would replace existing slash-command + agent-dispatch patterns. Estimate adoption cost. Compare against the existing CLAUDE.md "project rhythm" section's slash-command + agent recipes.
+- **Cross-references:** Anthropic API docs (tools), Claude Agent SDK docs, existing CLAUDE.md "Using your tools" section, V3 entries #41/#42/#43/#44 (existing workflow-automation bundle — natural home if pursued).
+- **Severity:** LOW (tooling tracking).
+
+### Anthropic API prompt caching — best-practice tracking for tier-2 post-MVP-1 fallback path
+
+- **What:** Tier-2 post-meeting cleanup uses Claude Opus 4.7 via the Anthropic API (network path), per CLAUDE.md's stack section. Anthropic's prompt caching feature can reduce token cost on repeated cleanup operations (system prompt + meeting context tokens cached across multiple cleanup passes on the same transcript). Worth tracking the best-practice surface (cache breakpoints, TTL behavior, cache-hit-rate observability) so the tier-2 implementation lands with caching wired correctly from day one rather than retrofitted.
+- **Why deferred:** tier-2 is post-MVP-1 scope per CLAUDE.md stack section. No code today calls the Anthropic API; tracking is preparatory.
+- **Trigger:** tier-2 implementation window (post-MVP-1, Phase 6+).
+- **Action class:** tracking-only. When tier-2 design starts, the `claude-api` skill (already installed) is the canonical tool. Pre-design notes to capture: (a) system prompt structure to maximize cache hit, (b) meeting-context placement (cached vs uncached portion), (c) cache TTL alignment with typical post-meeting cleanup latency, (d) cache-hit-rate observability without violating CLAUDE.md "no analytics, no tracking, no telemetry" rule (local-only diagnostics per V3 `#46`).
+- **Cross-references:** Anthropic API prompt caching docs, `claude-api` skill, CLAUDE.md tier-2 stack note, V3 `#46` local-only diagnostics entry.
+- **Severity:** LOW (tooling tracking).
