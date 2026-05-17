@@ -453,6 +453,34 @@ The existing V3 entry "feature-planner system prompt update — concurrency sche
 
 **Trigger to revisit:** Post-Phase-4 workflow automation bundle.
 
+### Dispatch-brief completeness — anticipate predictable git-state contradictions in MAY-touch scope
+
+**What:** Implementation dispatch briefs (drafted by the main session for `@swift-implementer`) declare an absolute `MAY touch` / `MUST NOT touch` scope. The P-1 dispatch (commit `754225c`, "bundle LFM2 GGUF as app resource") listed `MAY touch` as `.gitattributes` + `ArigatoAI/Resources/Models/*.gguf` + `CLAUDE.md`. A pre-existing `*.gguf` rule in `.gitignore` (line 55 of the file at the time of dispatch) would have silently blocked the entire dispatch's purpose — `git add` against the new GGUF would have been ignored, and `git lfs ls-files` would have come up empty even with `.gitattributes` correctly configured. The implementer surfaced the contradiction and made the pragmatic call to add a surgical negation (`!ArigatoAI/Resources/Models/*.gguf` at line 64) plus a one-line comment update reflecting the new policy. Surfaced in the implementer's reply with reasoning. Per strict CLAUDE.md "swift-implementer scope-and-decision discipline," this should have triggered a STOP and redispatch — the implementer's call was a scope-discipline violation, defensible on pragmatic grounds.
+
+**Shared root cause:** the dispatching session (main session) did not scan git-state files (`.gitignore`, `.gitattributes`) for contradictions before drafting the brief. The contradiction was predictable from the brief's content goal (commit a `*.gguf` file) but was not predicted. The implementer was left to either STOP+redispatch (clean but wasteful) or make the pragmatic call (efficient but technically out-of-scope). Either way, the brief should have listed `.gitignore` as MAY-touch with explicit instructions, OR pre-removed the conflicting rule in a preparatory commit, OR called out the contradiction explicitly for the implementer to handle.
+
+**Concrete fix — three rules for the dispatching session when drafting implementation briefs:**
+
+1. **Grep before drafting**: when an implementation brief adds or modifies files of a type that might be subject to git-state rules (large binaries, model files, build artifacts, generated code), the dispatching session must `grep` the relevant patterns in `.gitignore` and `.gitattributes` before listing `MAY touch` scope. Predictable contradictions belong in the brief, not in the implementer's diagnostic surface.
+2. **List git-state files explicitly when relevant**: if `.gitignore` or `.gitattributes` need modification to support the dispatch, include them in `MAY touch` with the specific change required (e.g., "add `!ArigatoAI/Resources/Models/*.gguf` negation"). Don't rely on the implementer to make the call.
+3. **Pre-remove conflicts in a preparatory commit when scope is large**: for multi-file dispatches where multiple `.gitignore` rules might conflict, draft a preparatory commit that handles the git-state cleanup separately. This keeps the implementation dispatch's MAY-touch scope smaller and the diagnostic load on the implementer cleaner.
+
+**Why this is V3 (workflow improvement, not immediate code change):** the P-1 commit landed correctly via the implementer's pragmatic call. The improvement is for FUTURE dispatch briefs to anticipate this class of contradiction. Pattern-level workflow tightening; doesn't block anything in flight.
+
+**Trigger to revisit:** next implementation dispatch where the main session is adding files of a type that might be git-ignored or otherwise git-state-managed. **Most immediate concrete check**: the P-2 atomic SDK migration brief (worktree-isolated). P-2 touches `Package.swift` / `Package.resolved` / `project.pbxproj` (Xcode SPM dependency change) and deletes the two spike files — none of these have predictable `.gitignore` contradictions, but verify before drafting.
+
+**Effort:** ~5 min added to each implementation-dispatch drafting (grep `.gitignore` + `.gitattributes` for predictable contradictions). Lower if folded into a brief-drafting checklist; higher if surfaced as a hook or a doc-comment in the dispatch-implementer slash command template.
+
+**Cross-references:**
+- P-1 commit `754225c` — where this pattern surfaced.
+- The P-1 dispatch brief (inline in the dispatching session's prior turn) — the source artifact whose `MAY touch` scope was incomplete.
+- CLAUDE.md "swift-implementer scope-and-decision discipline" section — the rule the implementer's pragmatic call technically violated.
+- V3 entry "swift-implementer scope-and-decision discipline (V3 entry sharpening)" (line 442) — the agent-side discipline this dispatch-side rule complements.
+- V3 entry "feature-planner output channel rigidity — pre-flight enforcement deferred to dispatch-brief layer" (line 391) — the existing entry that already moves enforcement to the dispatch-brief layer; this entry extends that thread to git-state scope completeness.
+- V3 entry "doc-researcher source-not-found discipline" bullet (commit `8e785a0`) — same dispatch-discipline family; both are about pre-dispatch verification rigor.
+
+**Severity:** LOW — pattern-level workflow improvement. The implementer's pragmatic call worked; catching this earlier would have saved one round of post-hoc surfacing in the commit body. Compounds gradually if not addressed — each future dispatch with similar git-state contradictions adds one cycle of surfacing or one technical scope violation.
+
 ### Process trim — Group C closure decisions
 
 **Status (2026-05-10):** Trigger fired (end of Group D). Pending review: did the trim deliver expected results? Re-evaluate during post-Phase-4 retrospective alongside this bundle.
