@@ -1313,3 +1313,47 @@ The 3 cascade entries below (UI #9 Context A, MeetingListView loadError, Permiss
 - **Action class:** tracking-only. When tier-2 design starts, the `claude-api` skill (already installed) is the canonical tool. Pre-design notes to capture: (a) system prompt structure to maximize cache hit, (b) meeting-context placement (cached vs uncached portion), (c) cache TTL alignment with typical post-meeting cleanup latency, (d) cache-hit-rate observability without violating CLAUDE.md "no analytics, no tracking, no telemetry" rule (local-only diagnostics per V3 `#46`).
 - **Cross-references:** Anthropic API prompt caching docs, `claude-api` skill, CLAUDE.md tier-2 stack note, V3 `#46` local-only diagnostics entry.
 - **Severity:** LOW (tooling tracking).
+
+## Pre-MVP-1 hardening sprint findings (filed 2026-05-17)
+
+Findings surfaced during sprint-window dispatch work against the Bucket 1 list in `docs/PRE_MVP1_REVIEW.md`. Distinct from the end-of-Group-D three-reviewer gate section above — those entries came from the reviewer gate at end-of-Group-D; these entries surfaced during the hardening sprint that the user approved off the back of that gate.
+
+### Full-suite parallel-execution flake — AppBootstrapper test suites (sprint-window infrastructure risk)
+
+- **What:** During B1.5 dispatch verification (`feat(debug): bypass StartupErrorView for LFM2 failure in DEBUG builds`, commit `2aba525`), `mcp__XcodeBuildMCP__test_sim` reported intermittent failures across two test suites under default full-suite parallel execution:
+  - `ArigatoAITests/AppBootstrapperLFM2Tests` — observed failing instances (subset):
+    - `startPrewarm_runsLFM2AfterWhisperReady`
+    - `startPrewarm_lfm2HappyPath_advancesToReady`
+    - `startPrewarm_calledTwice_lfm2CoalescedByLoader`
+    - `startPrewarm_lfm2WarmupFails_advancesToFailedTranslationError`
+  - `ArigatoAITests/AppBootstrapperMeetingWiringTests` — observed failing instances (subset):
+    - `startPrewarm_whenContainerIsNil_neverConstructsCoordinator`
+    - `startPrewarm_constructsCoordinatorOnceWarmupCompletes` (appeared 3× in the failure list — parallel-destination clone artifact)
+    - `startPrewarm_whenWhisperFails_neverConstructsCoordinator`
+    - `meetingStoreWrites_doNotBlockMainThread_under100SentenceBurst` (appeared 2×)
+  - Additionally: the first run of the parallel suite reported `FBSOpenApplicationServiceErrorDomain Code=1` against the UI-test runner — an iOS Simulator boot-time race when multiple destination clones (Clone 1 / Clone 2 / Clone 3) launch app instances concurrently.
+- **Bisection done (rules out the B1.5 change as cause):**
+  - All 12 named tests pass cleanly when run in isolation via `mcp__XcodeBuildMCP__test_sim` with `-only-testing:` flags and `-parallel-testing-enabled NO`. Confirmed against the B1.5 commit (`2aba525`) — 12 passed / 0 failed / 0 skipped in 28.1s.
+  - swift-implementer's pre-commit bisection (stash B1.5 → reproduce same failures on bare `main`, unstash → reproduce again) confirms the flake is pre-existing on `main` and orthogonal to the B1.5 change. The B1.5 change is a `#if DEBUG` guard inside `ArigatoAIApp.startupError` (a pure computed property reading `bootstrapper.lfm2LoaderState`). There is no production-code path from `startupError` to `AppBootstrapper.startPrewarm`; the failing tests instantiate `AppBootstrapper` directly with fakes and never construct `ArigatoAIApp`.
+- **Suspected root cause (two distinct sub-issues, likely independent):**
+  1. **Test-double timing semantics under parallel-destination pressure.** Both `AppBootstrapperLFM2Tests` and `AppBootstrapperMeetingWiringTests` exercise `AppBootstrapper.startPrewarm`'s detached-init pattern (FB13399899 workaround, Step 8 Amendment 3) using shared fakes for the Whisper + LFM2 loaders. Test failures correlate with multi-clone parallel runs but not with single-runner sequential runs — pattern is consistent with the fakes' timing semantics being non-deterministic across destination clones rather than across logical concurrency. **Possibly same root-cause class as V3 commit `395e104`** (cumulative-load timing race in `TranslationProtocolTests.translate_burstThenCancel` + `MeetingPipelineTests.pipeline_stop_...`): both involve test-double timing races that materialize only under specific test-runner pressure. If the root cause is shared (fake-driven AsyncStream / actor-hop continuation timing under parallel pressure), a single fix to the test-double pattern may close both this entry and `395e104`.
+  2. **`FBSOpenApplicationServiceErrorDomain Code=1` simulator boot race.** Independent of the test-double issue — this is a known iOS Simulator parallel-clone resource contention pattern. The UI-test runner (a separate process) races with the main-app launch on initial clone instantiation. Not specific to this codebase; affects any project that runs UI tests under parallel destinations.
+- **Why deferred:** pre-existing on `main` before B1.5 lands. Not a B1.5-introduced regression. Tests pass under isolation, so the sprint-window deliverables themselves are verifiable — the flake is an *infrastructure risk*, not a sprint-window blocker. **However:** sprint-window dispatches that rely on a green full-suite signal (notably B1.3 cumulative-load timing race in `docs/PRE_MVP1_REVIEW.md`) cannot trust the default `test_sim` invocation to distinguish real regressions from parallel-runner flake. This entry documents the workaround pattern (`-parallel-testing-enabled NO` + `-only-testing:` for affected suites) so subsequent dispatches don't burn time re-diagnosing.
+- **Trigger to fix:**
+  - **Hard:** any sprint-window dispatch that relies on a green full-suite signal (most immediate: B1.3 cumulative-load timing race investigation, which is itself about test-double timing semantics).
+  - **Soft:** pre-MVP-1 hardening sprint — bundle with B1.3 since both touch the test-double timing-race family.
+  - **Inversion trigger:** if B1.3's `FakeTranslator` post-cancel state-machine fix (per V3 `395e104` "Action when triggered") incidentally clears these flakes too, this entry becomes a candidate for Bucket-4 closure without dedicated work.
+- **Fix options (in order of cost):**
+  1. **Annotate the two suites `.serialized`** (Swift Testing's per-suite serialization attribute). Localized; lets the rest of the suite continue running in parallel. Doesn't address the sim-launch boot race (issue 2 above). ~30 min.
+  2. **Investigate the shared fake-timing root cause** (in concert with B1.3 investigation). Real fix if the root cause is shared with `395e104`. ~2–4h on top of B1.3's existing ~1–2h estimate.
+  3. **Disable parallel testing target-wide.** Heavy hammer. Sequential full-suite duration unmeasured but extrapolating from the 28.1s for 12 tests, the full suite (~167 tests per V3 line 659) would likely run several minutes vs. current parallel-clone time. Not recommended unless options 1 and 2 fail.
+  4. **For the simulator boot race (issue 2):** no clean code fix. Workaround is `-disable-concurrent-destination-testing` if it becomes intolerable. iOS Simulator behavior, not our codebase.
+- **Workaround pattern for sprint-window dispatches (effective immediately):** when verifying a change whose blast radius doesn't include `AppBootstrapper.startPrewarm` or the loader fakes, invoke `test_sim` with `-only-testing:` flags scoped to the change's blast radius, or with `-parallel-testing-enabled NO` for a slower but deterministic full-suite signal. Document the workaround invocation in the dispatch verification log.
+- **Cost estimate:** ~30 min for option 1 (localized `.serialized` annotation). ~2–4h for option 2 if bundled with B1.3.
+- **Cross-references:**
+  - V3 commit `395e104` (cumulative-load timing race in cancellation-ordering tests) — possibly shared root-cause class via test-double timing semantics under parallel pressure.
+  - V3 entry "Test isolation strategy — Swift Testing parallel execution masks crash root causes" (line 223) — same flake family at the suite-level, this entry is the case-level instance.
+  - V3 line 826 (cumulative-load timing race consolidation) — bundle-with candidate; the existing entry already notes `FakeTranslator` post-cancel semantics as the suspected root cause, which would generalize naturally to `AppBootstrapper`'s loader fakes if the pattern matches.
+  - `docs/PRE_MVP1_REVIEW.md` B1.3 (sprint-window deliverable for the cumulative-load timing race) — natural bundle target.
+  - B1.5 dispatch (commit `2aba525`) — where this flake surfaced and was bisected.
+- **Severity:** MED — sprint-window infrastructure risk. Does not block MVP-1 ship; does compromise the trust signal for sprint-window dispatches. Documented workaround above lets dispatches proceed without diagnosis cost.
