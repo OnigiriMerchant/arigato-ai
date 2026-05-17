@@ -3,7 +3,7 @@ name: leap-sdk
 description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Use whenever adding, modifying, or debugging Japanese-English translation calls. Covers SDK setup, system prompt requirements, model loading, async streaming, and concurrency constraints.
 ---
 
-<!-- Verified against: LEAP iOS SDK v0.9.4 (commit 72afe9bf4c2fae086fbced3b05995edaad2c6bf2). Reconcile date: 2026-05-17. Sources: .swiftinterface inspection (PHASE_5_GROUP_B_PRE_FLIGHT.md), github.com/Liquid4All/leap-ios tree, docs.liquid.ai model card. -->
+<!-- Verified against: LEAP iOS SDK v0.9.4 (commit 72afe9bf4c2fae086fbced3b05995edaad2c6bf2). Reconcile dates: 2026-05-17 (initial), 2026-05-17 (post-spike). Sources: .swiftinterface inspection (PHASE_5_GROUP_B_PRE_FLIGHT.md), github.com/Liquid4All/leap-ios tree, docs.liquid.ai model card, AND the maintainer-published manifest at https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json (discovered by the B1.1 Phase 1 spike, commit 6512662 — see docs/PHASE_5_B1_1_PRE_FLIGHT.md corrigendum). -->
 
 # LEAP iOS SDK — LFM2-350M-ENJP-MT integration
 
@@ -44,11 +44,20 @@ Use the factory on `ModelRunner` — cleaner than the `Conversation(modelRunner:
 let conversation = runner.createConversation(systemPrompt: "Translate to English.")
 let stream = conversation.generateResponse(
     message: ChatMessage(role: .user, content: [.text(inputText)]),
-    generationOptions: GenerationOptions(maxTokens: 256)
+    generationOptions: GenerationOptions(
+        temperature: 0.3,
+        minP: 0.15,
+        repetitionPenalty: 1.05,
+        maxOutputTokens: 256
+    )
 )
 ```
 
-`maxTokens: 256` is sourced from the official model card examples. Other `GenerationOptions` fields (`temperature`, `topP`, `minP`, `repetitionPenalty`) are available but their recommended values for this model are not confirmed by an allowed source — prefer the bundle manifest defaults (pass `nil` fields).
+**Field name correction**: in v0.9.4 the token-budget parameter is `maxOutputTokens` (`UInt32?`), NOT `maxTokens`. The earlier reconcile (commit `1f56009`) carried `maxTokens` from the model card's general-purpose example — that example reflects an older or different SDK surface. The pinned v0.9.4 `.swiftinterface` declares `maxOutputTokens`. Verified by the B1.1 Phase 1 spike (commit `6512662`) compiling against the real SDK.
+
+**Sampling defaults source**: `temperature: 0.3`, `minP: 0.15`, `repetitionPenalty: 1.05` are the maintainer-published values from `https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json` (the LEAP manifest Liquid AI publishes for this exact pinned quantization, under `generation_time_parameters.sampling_parameters`). Discovered by the B1.1 spike; supersedes the earlier "prefer the bundle manifest defaults (pass `nil` fields)" hedge. `topP` is omitted because the maintainer manifest does not set it — the `nil` default applies.
+
+**`maxOutputTokens: 256`** is sourced from the official model card examples and matches the typical sentence-scale translation budget for LFM2-350M-ENJP-MT.
 
 ## Direction handling
 ```swift
