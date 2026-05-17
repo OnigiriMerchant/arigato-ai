@@ -112,7 +112,49 @@ struct MeetingDetailView: View {
             await model.reload()
         }
         .toolbar {
-            // MARK: - Step 13 — ShareLink lands here (UI #9 Context B)
+            // Step 13 — UI #9 Context B (detail-view share) + UI #10
+            // (Markdown format). Hidden when the transcript is empty
+            // (UI decision #4 "buttons exist only when usable.") OR
+            // when `TranscriptExporter` fails to write the temp file.
+            ToolbarItem(placement: .topBarTrailing) {
+                if !model.sentences.isEmpty, let exportURL {
+                    ShareLink(item: exportURL) {
+                        Image(systemName: "square.and.arrow.up")
+                            .accessibilityLabel("Share transcript")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Synthesises the temp-file URL for the current transcript on
+    /// demand. Returns `nil` if ``TranscriptExporter/writeTemporaryFile(markdown:filename:)``
+    /// throws — the toolbar item then hides, matching UI decision #4
+    /// "buttons exist only when usable."
+    ///
+    /// Write-on-recompute is acceptable for MVP 1 scale (30–60 KB body
+    /// written in well under a render tick). The body is regenerated
+    /// every time SwiftUI re-evaluates the toolbar; collision policy
+    /// inside ``TranscriptExporter`` is the second-line defence against
+    /// same-second re-renders. Post-MVP optimization candidate: cache the
+    /// URL keyed off `(summary.id, model.sentences.count)` and invalidate
+    /// on change.
+    private var exportURL: URL? {
+        do {
+            let body = TranscriptExporter.markdownBody(
+                summary: summary,
+                sentences: model.sentences
+            )
+            let filename = TranscriptExporter.makeFilename(
+                title: summary.title,
+                startedAt: summary.startedAt
+            )
+            return try TranscriptExporter.writeTemporaryFile(
+                markdown: body,
+                filename: filename
+            )
+        } catch {
+            return nil
         }
     }
 
