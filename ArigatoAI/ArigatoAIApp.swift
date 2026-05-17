@@ -10,6 +10,21 @@ import SwiftUI
 
 @main
 struct ArigatoAIApp: App {
+    #if DEBUG
+        /// Sprint-window workflow flag: when `true`, the ``startupError``
+        /// ladder skips the LFM2 loader-failure case so the UI surfaces
+        /// (history, search, export, onboarding, settings) can be tested on
+        /// device while the B1.1 LFM2 download fix is in flight.
+        /// Container-init and Whisper loader failures still surface as
+        /// ``StartupErrorView`` — both are terminal to the meeting use case
+        /// and not bypassable.
+        ///
+        /// Per `docs/PRE_MVP1_REVIEW.md` B1.5. **Set to `false` before
+        /// merging the B1.1 LFM2 download fix.** This flag does not exist
+        /// in release builds (`#if DEBUG` guard).
+        private static let bypassLFM2StartupErrorForUITesting = true
+    #endif
+
     /// App-wide bootstrapper. Owns the Whisper loader, mirrors its state
     /// for the UI, and holds any container-construction error so the
     /// failure path renders ``StartupErrorView`` instead of crashing.
@@ -89,6 +104,11 @@ struct ArigatoAIApp: App {
         if case let .failed(error) = bootstrapper.loaderState {
             return error
         }
+        #if DEBUG
+            if Self.bypassLFM2StartupErrorForUITesting {
+                return nil
+            }
+        #endif
         if case let .failed(error) = bootstrapper.lfm2LoaderState {
             return error
         }
