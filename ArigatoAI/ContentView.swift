@@ -81,7 +81,40 @@ struct ContentView: View {
     /// ``AppBootstrapper/meetingStore`` gates the history toolbar item.
     @Environment(AppBootstrapper.self) private var bootstrapper
 
+    /// One-shot SwiftUI flag flipped by
+    /// ``OnboardingViewModel/finish()`` via the onComplete callback.
+    /// Starts `false` so the first render reads
+    /// ``AppBootstrapper/onboardingStore/hasCompletedOnboarding`` from
+    /// the persistent store. Once flipped to `true`, ``ContentView``
+    /// re-renders against the main-app branch even before the next
+    /// store read would observe the new flag (the same SwiftUI render
+    /// cycle the callback fires in).
+    ///
+    /// The combined check `!onboardingComplete &&
+    /// !store.hasCompletedOnboarding` covers both directions: a fresh
+    /// process (store flag set, in-process flag still `false`) skips
+    /// onboarding by reading the persistent flag; an in-flight finish
+    /// (in-process flag flipped, persistent flag also written) skips
+    /// onboarding via either gate.
+    @State private var onboardingComplete: Bool = false
+
     var body: some View {
+        if !onboardingComplete && !bootstrapper.onboardingStore.hasCompletedOnboarding {
+            OnboardingView(store: bootstrapper.onboardingStore) {
+                onboardingComplete = true
+            }
+        } else {
+            mainContent
+        }
+    }
+
+    /// The main-app surface. Extracted from ``body`` so the
+    /// top-of-body onboarding branch keeps its conditional shape
+    /// simple. Renders the same `NavigationStack` /
+    /// ``TranscriptLiveView`` + history-toolbar combo Step 6 wired up;
+    /// nothing about the main-app routing changed in Step 14.
+    @ViewBuilder
+    private var mainContent: some View {
         // D8-2 option (a): derive the wired VM each render. SwiftUI
         // re-renders against `wiring(coordinator:)` once the
         // bootstrapper publishes the coordinator.

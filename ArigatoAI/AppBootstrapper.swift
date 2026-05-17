@@ -161,6 +161,22 @@ final class AppBootstrapper {
     /// parameter on ``init(loader:lfm2Loader:lfm2Factory:container:containerError:capture:transcriberFactory:routerFactory:)``.
     let capture: any AudioCapturing
 
+    /// Persistent onboarding-completion flag store. Read by
+    /// ``ContentView`` at render time to gate the first-launch
+    /// ``OnboardingView`` branch; written by
+    /// ``OnboardingViewModel/finish()``.
+    ///
+    /// Defaulted to ``UserDefaultsOnboardingCompletionStore`` for
+    /// production. Tests inject an in-memory fake so the flag can be
+    /// pre-set, observed, and discarded without leaking to
+    /// `UserDefaults.standard`.
+    ///
+    /// Held on the bootstrapper for the same reason ``meetingStore``
+    /// is: a single instance threaded through the SwiftUI environment
+    /// avoids constructing a fresh store on every render. The store
+    /// itself is `Sendable` and contains no per-render state.
+    let onboardingStore: any OnboardingCompletionStoring
+
     /// Eagerly-constructed audio capture view model, kept alongside
     /// ``capture`` for UI bindings only —
     /// ``AudioCaptureViewModel/permissionStatus`` and
@@ -245,6 +261,11 @@ final class AppBootstrapper {
     ///     production wiring `LanguageRouter(transcriber: transcriber)`
     ///     is used. When supplied, the closure is invoked synchronously
     ///     inside `init` with the resolved ``transcriber``.
+    ///   - onboardingStore: Persistent onboarding-completion flag
+    ///     store. Defaulted to ``UserDefaultsOnboardingCompletionStore``
+    ///     for production. Tests inject an in-memory fake so the flag
+    ///     can be pre-set or observed without leaking to
+    ///     `UserDefaults.standard`.
     init(
         loader: WhisperModelLoader = WhisperModelLoader(),
         lfm2Loader: LFM2ModelLoader? = nil,
@@ -253,11 +274,13 @@ final class AppBootstrapper {
         containerError: Error? = nil,
         capture: (any AudioCapturing)? = nil,
         transcriberFactory: ((WhisperModelLoader) -> TranscriptionActor)? = nil,
-        routerFactory: (@MainActor (TranscriptionActor) -> LanguageRouter)? = nil
+        routerFactory: (@MainActor (TranscriptionActor) -> LanguageRouter)? = nil,
+        onboardingStore: any OnboardingCompletionStoring = UserDefaultsOnboardingCompletionStore()
     ) {
         self.loader = loader
         self.container = container
         self.containerError = containerError
+        self.onboardingStore = onboardingStore
         let resolvedTranscriber: TranscriptionActor
         if let transcriberFactory {
             resolvedTranscriber = transcriberFactory(loader)
