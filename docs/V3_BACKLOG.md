@@ -1375,6 +1375,7 @@ Findings surfaced during sprint-window dispatch work against the Bucket 1 list i
   - **(C)** Fix the LEAP portal auth — investigate what changed in `leap.liquid.ai`, possibly file an issue with Liquid AI. Cost depends on whether the bug is on their side, in our config, or in the SDK's cached creds. Lowest cost IF the bug is recoverable on our side.
   - **(D)** Bundle the model in the app binary, skip download entirely. ~260 MB binary inflation; App Store distribution complications; cheap to revert.
 - **Cost estimate:** spike + closure cost: ~30 min (already burned in commit `6512662`). The remaining cost depends entirely on which option is selected — see option breakdowns above.
+- **Doc-researcher source-not-found discipline gap surfaced** (manifest schema guessed in pre-flight Q1.5/Q5 instead of flagged UNVERIFIABLE; `maxTokens: 256` cited from non-existent source). Bundle full fix with workflow automation pass V3 #41-44 — tighten doc-researcher system prompt to never present unverifiable claims as findings.
 - **Cross-references:**
   - Pre-flight findings doc: `docs/PHASE_5_B1_1_PRE_FLIGHT.md` (commit `398ed2c`) — recommendation now disproven; corrigendum filed post-spike.
   - Spike commit `6512662` — the empirical verdict and the disposable test file (`ArigatoAITests/Spikes/LFM2LocalLoadSpike.swift`, env-var gated via `RUN_NETWORK_SPIKES=1`).
