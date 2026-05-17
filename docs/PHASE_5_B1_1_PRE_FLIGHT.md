@@ -292,3 +292,84 @@ The Q5_K_M variant remains the correct choice: 260 MB actual (not 350 MB as esti
 - **`HuggingFaceDownloadableModel.localFilename` computation**: The exact local filename the SDK uses for the cached file (stored internally by `ModelDownloader`) is not documented. It is computable from the `localFilename` property on the struct but the storage directory is determined internally by the SDK. The `getModelFile(_:DownloadableModel)` method returns the full local URL, making this a non-issue for implementation — use `getModelFile` rather than constructing the path manually.
 
 - **`ModelDownloader.downloadModel(_:DownloadableModel)` download endpoint for `HuggingFaceDownloadableModel`**: Confirmed architecturally that `uri` is HF-derived (not portal-derived), but the exact HTTP behavior (whether it uses the `leapDefault` `URLSessionConfiguration` with any custom headers that might interfere with HF's CDN) is not documented. If the `leapDefault` session config adds custom headers that break HF's Xet redirect chain, the download would fail. This is a second empirical gate.
+
+---
+
+## Corrigendum (filed 2026-05-17 post-spike)
+
+**Status update**: this pre-flight's main recommendation is **DISPROVEN**. The Phase 1 spike (`ArigatoAITests/Spikes/LFM2LocalLoadSpike.swift`, commit `6512662`) ran the recommended chain end-to-end against the real v0.9.4 SDK and the real LFM2 model.
+
+### Verdict
+
+> **SPIKE FAIL**: `Leap.load(manifestURL:)` rejected `file://` URL after 3.5s. Error: `Error Domain=NSURLErrorDomain Code=-1011 "(null)"`. Production path requires SDK fork or future release.
+
+The HF download half of the chain works fine (260,374,304 bytes in 3.5s, exact size match, Xet redirect handled transparently by `URLSession`). The `Leap.load(manifestURL:)` step closes the path — the SDK throws the SAME `NSURLErrorDomain -1011` against a `file://` URL that it throws against the broken portal, with empty `userInfo` (no `NSURLErrorFailingURLErrorKey`). Strong evidence the SDK has a single HTTP-only network code path that doesn't dispatch on URL scheme, regardless of the `Foundation.URL` parameter type's lack of scheme restriction.
+
+### What this means for the Summary table
+
+Re-grade row (a2):
+
+| Path | Status (pre-spike) | Status (post-spike) |
+|---|---|---|
+| (a2) `Leap.load(manifestURL:)` with local `file://` manifest JSON | VIABLE-UNVERIFIED-AT-RUNTIME | **DISPROVEN — SDK rejects `file://` with same `-1011` as portal path** |
+
+All other rows remain accurate (the spike did not re-verify them; it only tested row (a2)).
+
+### What this means for the Recommendation section
+
+The two-phase approach is invalidated. The "If Phase 1 fails" branch (lines ~244-249 of the original recommendation) fires. The remaining viable paths for B1.1 production, as surfaced to the human gate post-spike:
+
+- **(A) Fork LEAP SDK v0.9.4** to add `file://` handling to the manifest-URL load path. Multi-day; touches private SDK internals; open-ended maintenance cost; forks are sticky.
+- **(B) Wait for Liquid AI** to ship the `loadSimpleModel(modelPath:)` API the `docs.liquid.ai` docs describe but no GitHub release contains. v0.10.x does NOT exist on GitHub as of 2026-05-17 (confirmed by Q4); the docs site is documenting an unreleased version. Unknown wait; cheap if it ships soon.
+- **(C) Fix the LEAP portal auth** — investigate what changed in `leap.liquid.ai`, possibly file an issue with Liquid AI. Cost depends on whether the bug is on their side, in our config, or in the SDK's cached creds. Lowest cost IF the bug is recoverable on our side.
+- **(D) Bundle the model in the app binary**, skip download entirely. ~260 MB binary inflation; App Store distribution complications; cheap to revert.
+
+Option selection is pending human-gate decision as of this corrigendum's filing.
+
+### Authoritative manifest schema URL captured (resolves a Q3 "Unverifiable claim")
+
+The pre-flight Q3 example manifest JSON used GUESSED string values:
+
+```json
+{
+  "inferenceType": "gguf",          // GUESSED — wrong
+  "schemaVersion": "1",              // GUESSED — wrong
+  "loadTimeParameters": {            // camelCase — wrong
+    "model": "/path/to/model.gguf"
+  }
+}
+```
+
+The spike discovered the **maintainer-published manifest** at:
+
+```
+https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json
+```
+
+This URL is Liquid AI's official LEAP manifest for our exact pinned quantization (LFM2-350M-ENJP-MT-Q5_K_M). The real schema:
+
+- `inference_type`: `"llama.cpp/text-to-text"` (NOT `"gguf"`)
+- `schema_version`: `"1.0.0"` (NOT `"1"`)
+- Keys are `snake_case` (NOT `camelCase`)
+- `generation_time_parameters.sampling_parameters` block publishes maintainer-recommended defaults: `temperature: 0.3`, `min_p: 0.15`, `repetition_penalty: 1.05`
+
+These last three values resolve the previous "Other `GenerationOptions` fields … recommended values for this model are not confirmed by an allowed source" hedge that appeared in `.claude/skills/leap-sdk/SKILL.md` (commit `1f56009`). The skill was reconciled with the verified values in commit `2610a4d`.
+
+**The maintainer manifest URL is now the authoritative schema reference** for whichever B1.1 production path is selected. Even option (A) — SDK fork — would benefit from a manifest constructed against the real schema once `file://` handling is added.
+
+### Side findings from the spike worth recording
+
+1. **`GenerationOptions` field name regression in `leap-sdk` SKILL** — `maxTokens` does not exist in v0.9.4; the correct field is `maxOutputTokens` (`UInt32?`). Fixed in commit `2610a4d`.
+2. **Empty `userInfo` on SDK errors makes production diagnostics opaque** — when LEAP SDK throws `NSURLErrorDomain -1011`, the failing URL is not surfaced via `NSURLErrorFailingURLErrorKey` or `NSURLErrorFailingURLStringErrorKey`. Any production error-handler that wants to log "which URL did the SDK actually attempt" will need to capture it via a different path (e.g., `URLProtocol` interception during diagnostics).
+3. **`-1011` is the same code from both portal and `file://` paths** — production code that distinguishes "portal-auth-broken" from "file://-not-accepted" cannot use the error code as a discriminator. Both manifest as the same indistinguishable failure.
+4. **HF Xet redirect chain works seamlessly with `URLSession.download`** — no special configuration needed; the time-limited Xet CAS presigned URL is followed automatically. For any future option that downloads from HF directly, this is verified-good.
+5. **Doc-researcher source-not-found discipline gap** (manifest schema guessed at in pre-flight Q3 instead of flagged UNVERIFIABLE-with-STOP). Recorded as a workflow lesson in V3 commit `8e785a0`. The pre-flight should have surfaced "the verification path is unreachable in practice, so STOP and ask for a different research path" rather than recommending the construction-template approach with the values flagged in a tail section.
+
+### Cross-references
+
+- Spike commit: `6512662` — `ArigatoAITests/Spikes/LFM2LocalLoadSpike.swift` (env-var gated via `RUN_NETWORK_SPIKES=1`, gets deleted in the B1.1 production implementation commit regardless of which option lands).
+- V3 closure entry: commit `d3b621c` — "B1.1 HF-download → local-manifest → `Leap.load(manifestURL: file://)` chain — empirically disproven."
+- Doc-researcher discipline lesson: commit `8e785a0` (bullet within V3 entry `d3b621c`).
+- SKILL second reconcile: commit `2610a4d` — fixes `maxTokens` → `maxOutputTokens` and populates the verified sampling defaults from the manifest URL above.
+- Parent V3 entry: `b851dad` ("LFM2 model download failing — LEAP SDK portal path stale") — the work this pre-flight was gating.
+- Sprint sequencing doc: `docs/PRE_MVP1_REVIEW.md` B1.1 — sprint-window deliverable whose recommended approach is now obsolete.
