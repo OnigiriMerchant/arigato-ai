@@ -3,7 +3,7 @@ name: leap-sdk
 description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Use whenever adding, modifying, or debugging Japanese-English translation calls. Covers SDK setup, system prompt requirements, model loading, async streaming, and concurrency constraints.
 ---
 
-<!-- Verified against: LEAP iOS SDK v0.9.4 (commit 72afe9bf4c2fae086fbced3b05995edaad2c6bf2). Reconcile dates: 2026-05-17 (initial), 2026-05-17 (post-spike). Sources: .swiftinterface inspection (PHASE_5_GROUP_B_PRE_FLIGHT.md), github.com/Liquid4All/leap-ios tree, docs.liquid.ai model card, AND the maintainer-published manifest at https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json (discovered by the B1.1 Phase 1 spike, commit 6512662 — see docs/PHASE_5_B1_1_PRE_FLIGHT.md corrigendum). -->
+<!-- Verified against: LEAP iOS SDK v0.10.6 (released 2026-05-12, tag v0.10.6 on Liquid4All/leap-sdk). Reconcile date: 2026-05-18. Sources: docs.liquid.ai quick-start, model-loading, conversation-generation, leap-sdk-changelog; github.com/Liquid4All/leap-sdk Package.swift (tag v0.10.6); github.com/Liquid4All/leap-sdk/releases/tag/v0.10.6. -->
 
 # LEAP iOS SDK — LFM2-350M-ENJP-MT integration
 
@@ -14,52 +14,117 @@ LFM2-350M-ENJP-MT requires ONE of these EXACT system prompts. No variation, no r
 
 The user turn is the text to translate. Single-turn conversations only — do not accumulate history across translation calls.
 
-## Model loading pattern (v0.9.4)
-The locked GGUF path uses overload #3 from the `.swiftinterface`:
+## SDK package setup (v0.10.0+)
+
+**Package URL (changed in v0.10.0):** `https://github.com/Liquid4All/leap-sdk.git`
+
+**Minimum iOS deployment target:** 17.0 (raised from 15.0 in v0.10.0)
+
+**Swift tools version required:** 6.0 (Xcode 16+)
+
+**Pick exactly one product per target:**
+- `LeapSDK` — core inference + conversation; no download manager
+- `LeapModelDownloader` — re-exports all `LeapSDK` types PLUS `URLSession`-backed downloads
+
+For sideloaded GGUF (our use case), use `LeapModelDownloader`. In v0.10.6, linking both `LeapSDK` and `LeapModelDownloader` together produces a build-time dual-import guard error. Use only `import LeapModelDownloader` — it re-exports all `LeapSDK` types, so no separate `import LeapSDK` is needed.
+
+Other products (not used in Arigato AI): `LeapOpenAIClient`, `LeapUI`, `LeapSDKMacros`.
+
+## Model loading pattern (v0.10.6 — sideloaded GGUF)
+
+For sideloaded GGUF files (not portal download), use `LeapDownloader.loadSimpleModel(model:options:...)`:
 
 ```swift
-import LeapSDK
+import LeapModelDownloader  // NOT import LeapSDK
 
-actor LFM2ModelLoader {
-    private(set) var runner: (any ModelRunner)?
+let downloader = LeapDownloader(
+    config: LeapDownloaderConfig(saveDir: modelsDir)
+)
 
-    func load() async throws {
-        guard runner == nil else { return }
-        runner = try await Leap.load(
-            model: "lfm2-350m-enjp-mt",
-            quantization: "Q5_K_M",
-            options: nil,
-            downloadProgressHandler: nil
-        )
+let cacheDir = // ... resolve from FileManager (.cachesDirectory)
+let options = LiquidInferenceEngineManifestOptions(
+    cacheOptions: .enabled(path: cacheDir)
+)
+
+let runner: any ModelRunner = try await downloader.loadSimpleModel(
+    model: ModelSource(
+        modelPath: ggufURL.path,
+        modelName: "lfm2-350m-enjp-mt",
+        quantizationId: "Q5_K_M"
+    ),
+    options: options
+)
+```
+
+Key changes from v0.9.4:
+- `Leap.load(model:quantization:options:downloadProgressHandler:)` is the legacy compatibility API. New code should use `LeapDownloader.loadSimpleModel(model:options:...)`.
+- `ModelSource(modelPath:modelName:quantizationId:)` is the new type (replaces bare string args).
+- `LiquidCacheOptions(path:maxEntries:)` initializer is no longer the documented API; use `LiquidCacheOptions.enabled(path:)` static factory (added in v0.10.4.3).
+- `LiquidInferenceEngineManifestOptions` uses `cacheOptions: LiquidCacheOptions?` (unchanged field name, but construction changes).
+
+**`LeapDownloader` vs `ModelDownloader`:** In v0.10.6, `LeapModelDownloader` SPM product exposes `ModelDownloader` as the class name (renamed from `LeapModelDownloader` class in v0.10.6 breaking change). `LeapDownloader` is the older non-SPM-product class, still present for compatibility. For SPM consumers importing `LeapModelDownloader`, use `ModelDownloader`.
+
+## Conversation creation and streaming (v0.10.6)
+
+```swift
+let conversation = runner.createConversation(systemPrompt: "Translate to English.")
+
+// v0.10.6 GenerationOptions — key field name: maxTokens (NOT maxOutputTokens)
+let options = GenerationOptions(
+    temperature: 0.5,
+    topP: 1.0,
+    minP: 0.1,
+    repetitionPenalty: 1.05
+)
+
+let stream = conversation.generateResponse(
+    userTextMessage: inputText,  // or: message: ChatMessage(...)
+    generationOptions: options
+)
+```
+
+**`GenerationOptions` field names in v0.10.6:**
+- `temperature: Float?`
+- `topP: Float?`
+- `minP: Float?`
+- `topK: Int32?`
+- `repetitionPenalty: Float?`
+- `maxTokens: Int32?` ← **field name is `maxTokens`, NOT `maxOutputTokens`** (v0.9.4 had `maxOutputTokens: UInt32?`)
+- `rngSeed: Int64?`
+- `jsonSchemaConstraint: String?`, `extras: String?`, etc.
+
+**`MessageResponse` case handling in v0.10.6:**
+Use `switch onEnum(of: response)` for exhaustive matching (SKIE-bridged Kotlin sealed class):
+
+```swift
+for try await response in stream {
+    switch onEnum(of: response) {
+    case .chunk(let c):
+        // c is MessageResponse.Chunk — access text via c.text
+        accumulated += c.text
+    case .complete(let completion):
+        // completion.fullMessage, completion.finishReason, completion.stats
+        break
+    case .reasoningChunk, .functionCalls, .audioSample:
+        // drop — not surfaced in translation pipeline
+        continue
     }
 }
 ```
 
-`Leap.load(url:)` exists in v0.9.4 but is marked `@available(*, deprecated, message: "Use load(options:) instead")`. Do not use it in new code.
+**CRITICAL:** In v0.10.6, `.chunk` associated value is `MessageResponse.Chunk` (a struct with `.text: String`), NOT a bare `String`. The v0.9.4 pattern `case let .chunk(text): use(text)` is now `case .chunk(let c): use(c.text)` or via `onEnum(of:)`.
 
-## Conversation creation
-Use the factory on `ModelRunner` — cleaner than the `Conversation(modelRunner:history:)` initializer:
+**`MessageResponse` cases in v0.10.6 (complete set):**
+- `.chunk(Chunk)` — `Chunk.text: String`
+- `.reasoningChunk(ReasoningChunk)` — `ReasoningChunk.reasoning: String`
+- `.functionCalls(FunctionCalls)` — `FunctionCalls.functionCalls: [LeapFunctionCall]`
+- `.audioSample(AudioSample)` — `AudioSample.samples`, `.sampleRate`
+- `.complete(Complete)` — `Complete.fullMessage`, `.finishReason`, `.stats: GenerationStats?`
 
-```swift
-let conversation = runner.createConversation(systemPrompt: "Translate to English.")
-let stream = conversation.generateResponse(
-    message: ChatMessage(role: .user, content: [.text(inputText)]),
-    generationOptions: GenerationOptions(
-        temperature: 0.3,
-        minP: 0.15,
-        repetitionPenalty: 1.05,
-        maxOutputTokens: 256
-    )
-)
-```
+**Note on case name:** v0.9.4's `.swiftinterface` recorded `.functionCall` (singular). v0.10.6 docs show `.functionCalls` (plural). The compatibility layer may bridge this — verify at compile time.
 
-**Field name correction**: in v0.9.4 the token-budget parameter is `maxOutputTokens` (`UInt32?`), NOT `maxTokens`. The earlier reconcile (commit `1f56009`) carried `maxTokens` from the model card's general-purpose example — that example reflects an older or different SDK surface. The pinned v0.9.4 `.swiftinterface` declares `maxOutputTokens`. Verified by the B1.1 Phase 1 spike (commit `6512662`) compiling against the real SDK.
+## Direction handling (unchanged)
 
-**Sampling defaults source**: `temperature: 0.3`, `minP: 0.15`, `repetitionPenalty: 1.05` are the maintainer-published values from `https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json` (the LEAP manifest Liquid AI publishes for this exact pinned quantization, under `generation_time_parameters.sampling_parameters`). Discovered by the B1.1 spike; supersedes the earlier "prefer the bundle manifest defaults (pass `nil` fields)" hedge. `topP` is omitted because the maintainer manifest does not set it — the `nil` default applies.
-
-**`maxOutputTokens: 256`** is sourced from the official model card examples and matches the typical sentence-scale translation budget for LFM2-350M-ENJP-MT.
-
-## Direction handling
 ```swift
 enum TranslationDirection {
     case jaToEn, enToJa
@@ -73,14 +138,22 @@ enum TranslationDirection {
 }
 ```
 
-## Cold-start mitigation
-No SDK-provided warmup primitive exists (`prewarm()`, `warmup()`, and `preload()` are absent from the v0.9.4 interface). Use a dummy inference at app launch — the dummy-inference pattern is the only path:
+## Cold-start mitigation (unchanged)
+
+No SDK-provided `prewarm()` primitive. Use a dummy inference at app launch:
 
 ```swift
 _ = try? await translate("おはようございます", direction: .jaToEn)
 ```
 
-First inference after load can be slow. Pre-warm before the first meeting session.
+## GenerationStats (v0.10.6)
+
+Available via `completion.stats: GenerationStats?` in the `.complete` case:
+- `promptTokens: Long`
+- `completionTokens: Long`
+- `totalTokens: Long`
+- `tokenPerSecond: Float`
+- `cachedPromptTokens: Long` (non-zero when KV cache hit)
 
 ## What this model is good at (from model card)
 - Short-to-medium text (optimized for low latency at sentence scale)
@@ -91,12 +164,45 @@ First inference after load can be slow. Pre-warm before the first meeting sessio
 - Long-form (>3 paragraphs) — chunk first
 - Single-turn only — do not feed it multi-turn history
 
-## Concurrency constraints (v0.9.4 .swiftinterface)
-`ModelRunner` is a non-Sendable protocol. `Conversation` is a non-Sendable class. Neither crosses actor boundaries safely.
+## Concurrency constraints (v0.10.6)
 
-- Do NOT hold `any ModelRunner` or `Conversation` as stored properties in a `Sendable` type without `nonisolated(unsafe)`.
-- Preferred pattern: keep both `ModelRunner` and `Conversation` inside one actor's isolation. Create `Conversation` via `runner.createConversation(systemPrompt:)` inside the actor that will consume it.
-- `GenerationHandler` is the only Sendable type in the relevant surface — use it for cancellation across boundaries.
+The docs state all API functions are safe to call from the main/UI thread. `ModelRunner` remains a protocol with no `Sendable` inheritance in v0.10.6 public docs. `Conversation` remains a class. Neither is explicitly `Sendable` in the v0.10.6 documentation.
 
-## KV cache (v0.9.4)
-`LiquidCacheOptions` is a plain struct: `LiquidCacheOptions(path: String, maxEntries: Int)`. Both fields are non-optional. There is no in-memory variant and no `.enabled(path:)` factory in v0.9.4. If omitting the cache entirely (`options: nil`), KV-cache acceleration is disabled. If enabling it, use `Library/Caches` (not `Documents`) to avoid iCloud backup. Cache strategy is a pending architectural decision (see V3 backlog, D4 collision).
+- The established `@unchecked Sendable` adapter pattern (`LFM2EngineAdapter`) remains appropriate. Verify at compile time whether `ModelRunner` or `Conversation` gained `Sendable` conformance in v0.10.6 — if they did, the `nonisolated(unsafe)` and `@unchecked Sendable` annotations become unnecessary overhead but not errors.
+- Keep both `ModelRunner` and `Conversation` inside one actor's isolation. Create `Conversation` via `runner.createConversation(systemPrompt:)` inside the actor that will consume it.
+
+**Cancellation (v0.10.6 — confirmed from docs):**
+> "Cancelling the Swift Task ... stops generation and frees native resources."
+> "Cancellation is cooperative — the engine checks between tokens, so there's at most one extra token of slack after cancel()."
+
+This matches the existing `TranslationActor.cancel()` doc-comment which was based on 2026-05-16 doc-researcher findings. The v0.10.6 docs confirm this behavior is still current.
+
+## KV cache (v0.10.6)
+
+`LiquidCacheOptions` now exposes a static factory instead of a memberwise init:
+
+```swift
+// v0.10.6 (correct):
+let cacheOptions: LiquidCacheOptions = .enabled(path: cacheDir.path)
+
+// v0.9.4 (no longer documented public API):
+// LiquidCacheOptions(path: cachePath, maxEntries: 1000)  ← do NOT use
+```
+
+The `maxEntries` parameter is no longer part of the public `LiquidCacheOptions` API in v0.10.6. The SDK manages its own eviction internally. Pass `options.cacheOptions = .enabled(path:)` to `LiquidInferenceEngineManifestOptions`.
+
+KV cache config in v0.10.4+ uses a "Bounded-LRU CacheOptions API" internally. `use_mmap=true` is the engine default since v0.10.4.
+
+## Migration from v0.9.4
+
+A full call-site inventory and sequenced migration plan are in `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md`. Summary: the migration involves 1 package URL change, ~15 pure-rename call sites, ~10 signature changes, and 4 behavioral-area verifications (LiquidCacheOptions construction, MessageResponse case payload access pattern, Leap.load removal forced by dual-import guard, GenerationFinishReason case-set verification).
+
+## Sources Consulted
+
+- https://docs.liquid.ai/deployment/on-device/sdk/quick-start
+- https://docs.liquid.ai/deployment/on-device/sdk/model-loading
+- https://docs.liquid.ai/deployment/on-device/sdk/conversation-generation
+- https://docs.liquid.ai/deployment/on-device/leap-sdk-changelog
+- https://github.com/Liquid4All/leap-sdk (v0.10.6 tag)
+- https://github.com/Liquid4All/leap-sdk/releases/tag/v0.10.6
+- https://raw.githubusercontent.com/Liquid4All/leap-sdk/refs/tags/v0.10.6/Package.swift
