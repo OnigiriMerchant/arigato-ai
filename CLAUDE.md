@@ -15,6 +15,21 @@ Personal use first, App Store later if it earns its way there.
 ## Documentation map
 - docs/ROADMAP.md — end-to-end project arc, phase status, V3 trigger map. Read alongside CURRENT_STATE.md to orient at session start.
 
+## Setup
+
+Fresh clones require Git LFS for the bundled LFM2 model file
+(`ArigatoAI/Resources/Models/LFM2-350M-ENJP-MT-Q5_K_M.gguf`, ~260 MB).
+
+After cloning:
+```bash
+brew install git-lfs       # if not already installed
+git lfs install --local    # enable LFS hooks for this repo
+git lfs pull               # pull the LFS-tracked files
+```
+
+Without LFS, the GGUF file appears as a small pointer file and the
+app fails to load LFM2 at launch.
+
 ## Architecture rules
 - All real-time inference is on-device. No network calls during meetings.
 - Audio capture → Whisper streaming with language tag → router → LFM2 translate (JA→EN or EN→JA) → SwiftData persist → SwiftUI render.

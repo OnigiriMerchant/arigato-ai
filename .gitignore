@@ -52,13 +52,16 @@ GoogleService-Info.plist
 *.apikey
 .api-keys/
 
-# --- Model files (we'll bundle them differently or download on demand) ---
-# Whisper models can be 600MB+, LFM2 ~250MB+ — these don't belong in Git
+# --- Model files (bundled via Git LFS or downloaded on demand) ---
+# Whisper models can be 600MB+, LFM2 ~250MB+ — most don't belong in Git.
+# Exception: the bundled LFM2 GGUF under ArigatoAI/Resources/Models/ is
+# Git LFS-tracked (see .gitattributes and CLAUDE.md ## Setup).
 *.gguf
 *.bundle
 *.mlmodelc
 Models/*.gguf
 Models/*.bundle
+!ArigatoAI/Resources/Models/*.gguf
 
 # --- IDE noise ---
 .vscode/
