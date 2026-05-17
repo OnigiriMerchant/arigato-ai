@@ -1089,3 +1089,46 @@ Cost estimate: ~15 min.
   - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
   - V3 entry "Agent verification rigor" (`66d08b0`) — related (rigor entry covers same-dispatch warning reporting; this entry covers same-step annotation forecasting).
   - 4 cumulative instances in Group D (Step 6, 9a, 11, 13).
+
+
+### Re-onboarding from Settings — let users re-view privacy promise after the fact
+
+- **What:** First-launch onboarding (UI #16, Step 14) shows the privacy promise once. Users who want to re-read it (e.g. before a sensitive meeting, or to share the wording with a colleague) currently have no in-app surface — the onboarding flow is single-shot and `UserDefaultsOnboardingCompletionStore.markCompleted()` is one-way.
+- **Why this is V3 and not Step 14 scope:** the privacy promise is a trust artifact, not a one-time orientation. Re-onboarding from Settings is a polish concern, not a blocker; Step 14 explicitly STOPped on this per pre-authorized STOP #5 (`Need to implement re-onboarding from Settings`).
+- **Bundle with:** Phase 7 settings expansion (UI #19 currently scopes settings to About + Storage; a "Privacy" subsection is the natural home).
+- **Trigger to revisit:** Phase 7 settings polish OR user feedback during MVP 1 device testing that the privacy wording was hard to find after first launch.
+- **Action when triggered:** add a "Privacy promise" row in `SettingsView` (Phase 7 / Group E) that presents the same locked verbatim copy (D14-4) inline. Consider whether to also expose a "Reset onboarding" debug-only affordance (probably not — `UserDefaults` reset is reachable via offload/re-install, which is the canonical user path for this).
+- **Cost estimate:** ~30 min once `SettingsView` exists.
+- **Cross-references:**
+  - UI decision #16 (locked privacy copy)
+  - UI decision #19 (Settings scope for MVP 1)
+  - Step 14 dispatch brief pre-authorized STOP #5
+
+### Onboarding visual identity polish — replace SF Symbol hero with custom illustration
+
+- **What:** Step 14 ships Screen 1 with an `Image(systemName: "text.bubble.fill")` hero at 64pt tinted with `.tint`. The visual is functional but visually flat — every iOS app with onboarding leans on SF Symbols, and Arigato AI has no visual identity moment on first launch.
+- **Why this is V3 and not Step 14 scope:** custom illustration is a brand polish concern, not a functional one. Step 14 explicitly STOPped on this per pre-authorized STOP #4 (`Need to introduce V3 #22 visual identity`).
+- **Bundle with:** V3 #22 design language pass (Phase 7). The hero illustration is one moment among several that need brand treatment (`MeetingListView` empty state, `StartupErrorView` icon, app icon).
+- **Trigger to revisit:** V3 #22 design language pass (Phase 7 polish).
+- **Action when triggered:** commission or design a custom hero illustration for Screen 1 (Japanese↔English / waveform / on-device theme). Replace the SF Symbol with the illustration. Potentially add a subtle animation (waveform pulse, characters flipping) on view appear. Consider whether Screen 2 needs analogous treatment (the "Setting up Arigato AI." title currently has no hero).
+- **Cost estimate:** illustration commission cost varies; integration is ~1 hour of SwiftUI work.
+- **Cross-references:**
+  - V3 #22 (Phase 7 design language pass)
+  - V3 entry "Step 7's MeetingControlsView consumes Phase-4 DesignTokens" — same Phase-7 scope.
+  - Step 14 dispatch brief pre-authorized STOP #4
+
+### Onboarding A/B copy testing — is "Continue without translation" framing too soft for the Roche audience?
+
+- **What:** Step 14 ships an LFM2-failed branch with the affirmative framing "Continue without translation" (per UI #16 + brief LFM2-broken-handling section). This is a polite, opt-in framing that hides the failure under a soft "continue" verb. A more explicit framing — e.g. "Continue with translation unavailable" or "Continue (translation will not work)" — would be honest about the broken state but may feel alarming.
+- **Why this is V3 and not Step 14 scope:** copy A/B testing requires real users; MVP 1 testing is solo on Jose's device. The right copy is an empirical question with two reasonable answers; pre-MVP-1 we lock the soft framing per UI #16, then revisit.
+- **Bundle with:** post-MVP-1 polish (after initial Roche audience feedback).
+- **Trigger to revisit:**
+  - Post-MVP-1 user feedback indicates confusion about whether translation worked.
+  - Support load indicates users assume the app is fine when LFM2 is in fact failed.
+  - OR the LFM2 portal fix (V3 `b851dad`) lands and the `.failed` branch becomes vanishingly rare, in which case A/B testing the copy becomes academic.
+- **Action when triggered:** swap the failed-state button label to a more explicit framing; observe user response over a measurement window. If the explicit framing reduces support load, keep it. If users abandon at this screen, revert to the soft framing.
+- **Cost estimate:** ~5 min copy change + observation window of multiple weeks of real meetings.
+- **Cross-references:**
+  - V3 entry "LFM2 model download failing" (`b851dad`) — when this fix lands, the `.failed` branch goes cold automatically.
+  - UI decision #16 (locked copy)
+  - Step 14 dispatch brief LFM2-broken-handling section
