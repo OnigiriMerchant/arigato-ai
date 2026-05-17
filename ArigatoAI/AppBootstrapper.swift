@@ -177,6 +177,18 @@ final class AppBootstrapper {
     /// itself is `Sendable` and contains no per-render state.
     let onboardingStore: any OnboardingCompletionStoring
 
+    /// Storage-stats provider read by ``SettingsView`` (UI #19) for
+    /// the LFM2 cache size + transcript count rows, and used by the
+    /// "Clear cache" destructive action.
+    ///
+    /// Production wiring uses ``DeferredMeetingStoreStorageStatsProvider``
+    /// because ``meetingStore`` is published asynchronously after the
+    /// detached warmup task per Step 8 / Amendment 3 — the provider
+    /// resolves the live store at call time via a `[weak self]`
+    /// closure rather than capturing a non-existent reference at
+    /// `init`. Tests inject a fake conforming to ``StorageStatsProviding``.
+    let storageStatsProvider: any StorageStatsProviding
+
     /// Eagerly-constructed audio capture view model, kept alongside
     /// ``capture`` for UI bindings only —
     /// ``AudioCaptureViewModel/permissionStatus`` and
@@ -266,6 +278,16 @@ final class AppBootstrapper {
     ///     for production. Tests inject an in-memory fake so the flag
     ///     can be pre-set or observed without leaking to
     ///     `UserDefaults.standard`.
+    ///   - storageStatsProvider: Settings (UI #19) storage-stats reader.
+    ///     Defaulted to `nil`, which resolves to a production
+    ///     ``DeferredMeetingStoreStorageStatsProvider`` whose
+    ///     `meetingStoreLookup` closure reads ``meetingStore`` at call
+    ///     time via `[weak self]`. The deferred-lookup pattern exists
+    ///     because ``meetingStore`` is published asynchronously after
+    ///     the detached warmup task per Step 8 / Amendment 3 — the
+    ///     bootstrapper's `init` cannot hand a live store reference at
+    ///     this line. Tests inject a fake conforming to
+    ///     ``StorageStatsProviding``.
     init(
         loader: WhisperModelLoader = WhisperModelLoader(),
         lfm2Loader: LFM2ModelLoader? = nil,
@@ -275,7 +297,8 @@ final class AppBootstrapper {
         capture: (any AudioCapturing)? = nil,
         transcriberFactory: ((WhisperModelLoader) -> TranscriptionActor)? = nil,
         routerFactory: (@MainActor (TranscriptionActor) -> LanguageRouter)? = nil,
-        onboardingStore: any OnboardingCompletionStoring = UserDefaultsOnboardingCompletionStore()
+        onboardingStore: any OnboardingCompletionStoring = UserDefaultsOnboardingCompletionStore(),
+        storageStatsProvider: (any StorageStatsProviding)? = nil
     ) {
         self.loader = loader
         self.container = container
@@ -305,8 +328,15 @@ final class AppBootstrapper {
             capture: resolvedCapture,
             router: nil
         )
+        // LFM2 loader. Trampoline (if used) is stashed in a local and
+        // wired post-init at the bottom of this initialiser — Swift
+        // forbids `self` method calls (the `install*` helpers) until
+        // every stored property has been assigned, and the Step 15
+        // ``storageStatsProvider`` property is initialised below.
+        let lfm2Trampoline: ProgressTrampoline?
         if let lfm2Loader {
             self.lfm2Loader = lfm2Loader
+            lfm2Trampoline = nil
         } else {
             // Production wiring. We cannot capture `self` directly in
             // the progress handler closure here because `self` is not
@@ -332,7 +362,39 @@ final class AppBootstrapper {
             } else {
                 self.lfm2Loader = LFM2ModelLoader(progressHandler: progressForwarder)
             }
-            installLFM2ProgressHandler(into: trampoline)
+            lfm2Trampoline = trampoline
+        }
+
+        // ─── Step 15 — Settings storage-stats provider ───
+        //
+        // Either accept the test-injected fake or build a production
+        // ``DeferredMeetingStoreStorageStatsProvider`` whose
+        // `meetingStoreLookup` closure reads `self?.meetingStore` at
+        // call time. The same `self`-capture problem we hit with
+        // ``LFM2ModelLoader``'s progress handler applies here, so we
+        // route through a lookup trampoline that is rebound to a
+        // `[weak self]` closure post-init via
+        // ``installStorageStatsProviderLookup(into:)``.
+        let storageTrampoline: MeetingStoreLookupTrampoline?
+        if let storageStatsProvider {
+            self.storageStatsProvider = storageStatsProvider
+            storageTrampoline = nil
+        } else {
+            let trampoline = MeetingStoreLookupTrampoline()
+            let lookup: @Sendable () -> MeetingStore? = { trampoline.lookup() }
+            self.storageStatsProvider = DeferredMeetingStoreStorageStatsProvider(
+                meetingStoreLookup: lookup
+            )
+            storageTrampoline = trampoline
+        }
+
+        // All stored properties are now initialised — safe to call
+        // `self`-bound install helpers.
+        if let lfm2Trampoline {
+            installLFM2ProgressHandler(into: lfm2Trampoline)
+        }
+        if let storageTrampoline {
+            installStorageStatsProviderLookup(into: storageTrampoline)
         }
     }
 
@@ -353,6 +415,35 @@ final class AppBootstrapper {
             Task { @MainActor in
                 self.setLFM2Progress(progress)
             }
+        }
+    }
+
+    /// Late-binds the Settings storage-stats provider's `MeetingStore`
+    /// lookup against `self` via the supplied trampoline. Same
+    /// stored-property-initialisation rationale as
+    /// ``installLFM2ProgressHandler(into:)``.
+    ///
+    /// The trampoline's bound closure reads ``meetingStore`` on the
+    /// main actor (the bootstrapper is `@MainActor`-isolated, and
+    /// `meetingStore` is published from the detached warmup task via
+    /// a `MainActor.run` hop in ``startPrewarm(variant:)``). The
+    /// closure is `nonisolated` because the lookup must be callable
+    /// from the `DeferredMeetingStoreStorageStatsProvider`'s
+    /// `currentStats()` regardless of the caller's actor context;
+    /// the read itself is a single `MainActor.assumeIsolated` hop
+    /// inside the closure body.
+    private func installStorageStatsProviderLookup(into trampoline: MeetingStoreLookupTrampoline) {
+        trampoline.bind { [weak self] in
+            guard let self else { return nil }
+            // The provider may be called from any actor. `MainActor.assumeIsolated`
+            // is safe because the only mutator of `meetingStore` runs on
+            // the main actor (publication in `startPrewarm` via
+            // `MainActor.run`), and reads from any thread of a value
+            // published from the main actor are safe per the
+            // `@MainActor @Observable` model — the read here is a
+            // pointer load. We funnel through `MainActor.assumeIsolated`
+            // to satisfy Swift 6 strict concurrency without an actor hop.
+            return MainActor.assumeIsolated { self.meetingStore }
         }
     }
 
@@ -617,5 +708,38 @@ private final class ProgressTrampoline: @unchecked Sendable {
     /// any context without forcing a hop.
     nonisolated func bind(_ handler: @escaping @Sendable (Double) -> Void) {
         lock.withLock { $0 = handler }
+    }
+}
+
+/// Private trampoline that mediates the Settings storage-stats provider's
+/// ``MeetingStore`` lookup.
+///
+/// Purpose: ``DeferredMeetingStoreStorageStatsProvider`` wants a
+/// `@Sendable () -> MeetingStore?` closure at construction time, but the
+/// bootstrapper's `init` cannot capture `self` in such a closure because
+/// `self` is not yet fully initialised at the provider's assignment line.
+/// The trampoline mirrors ``ProgressTrampoline``: it holds a mutable inner
+/// lookup that `init` binds post-construction via
+/// ``AppBootstrapper/installStorageStatsProviderLookup(into:)``.
+///
+/// Synchronised via `OSAllocatedUnfairLock` per the CLAUDE.md Swift 6
+/// rule that bans `NSLock` from async contexts.
+private final class MeetingStoreLookupTrampoline: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<(@Sendable () -> MeetingStore?)?>(initialState: nil)
+
+    /// Returns the currently-bound lookup result, or `nil` when the
+    /// lookup has not yet been bound (which is the pre-init window —
+    /// vanishingly small in production because `init` binds before
+    /// returning, and the provider is not exercised until Settings is
+    /// opened from the gear toolbar).
+    nonisolated func lookup() -> MeetingStore? {
+        let lookup = lock.withLock { $0 }
+        return lookup?()
+    }
+
+    /// Replaces the inner lookup. Called once from
+    /// ``AppBootstrapper/installStorageStatsProviderLookup(into:)``.
+    nonisolated func bind(_ lookup: @escaping @Sendable () -> MeetingStore?) {
+        lock.withLock { $0 = lookup }
     }
 }

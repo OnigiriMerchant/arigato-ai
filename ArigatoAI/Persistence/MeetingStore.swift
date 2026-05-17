@@ -400,6 +400,38 @@ actor MeetingStore {
         modelContext.delete(meeting)
         try modelContext.save()
     }
+
+    /// Deletes every ``Meeting`` record in the store and (via cascade)
+    /// every associated ``Sentence``.
+    ///
+    /// Step 15's "Delete all transcripts" Settings action. The cascade
+    /// is declared on ``Meeting/sentences`` via
+    /// `@Relationship(deleteRule: .cascade)` (Step 1) and exercised at
+    /// the actor layer by
+    /// ``MeetingStoreDeleteAllTests/deleteAllMeetings_cascadesToSentences_freshFetchReturnsEmpty``.
+    ///
+    /// Uses the V3-blessed `FetchDescriptor` + per-row
+    /// `modelContext.delete(_:)` pattern (`6023f2a`). Does NOT use
+    /// `model(for:)` or `registeredModel(for:)`. Does NOT use a
+    /// SwiftData batch-delete primitive — the cascade fires
+    /// correctly via per-row delete + single save (per Step 1
+    /// Amendment 4's FB13640004 regression test pattern).
+    ///
+    /// - Returns: Count of meetings deleted.
+    /// - Throws: Re-throws any error raised by `ModelContext.fetch(_:)`
+    ///   or `ModelContext.save()`.
+    ///
+    /// Named test: ``MeetingStoreDeleteAllTests/deleteAllMeetings_returnsCount_removesAllRows``.
+    func deleteAllMeetings() throws -> Int {
+        let descriptor = FetchDescriptor<Meeting>()
+        let meetings = try modelContext.fetch(descriptor)
+        let count = meetings.count
+        for meeting in meetings {
+            modelContext.delete(meeting)
+        }
+        try modelContext.save()
+        return count
+    }
 }
 
 /// Errors thrown by ``MeetingStore``.

@@ -77,6 +77,17 @@ struct MeetingListView: View {
     /// view (tap-navigation is a render-time-only concern under tests).
     private let store: MeetingStore?
 
+    /// Bootstrapper threaded in from ``ArigatoAIApp`` via the SwiftUI
+    /// environment. Used by Step 15's gear toolbar item to resolve the
+    /// ``StorageStatsProviding`` + the live ``MeetingStore`` for
+    /// ``SettingsView``. Mirrors ``ContentView``'s
+    /// `@Environment(AppBootstrapper.self)` precedent so the destination
+    /// stays out of ``ContentView``'s scope (MAY-NOT-modify per the
+    /// dispatch brief). The test-only `init(model:)` callers do not
+    /// render the toolbar item (no `store`, gear gated on
+    /// `bootstrapper.meetingStore != nil`).
+    @Environment(AppBootstrapper.self) private var bootstrapper
+
     /// Production initializer — closes over the actor-backed store.
     ///
     /// - Parameter store: The actor-backed read source. Constructed
@@ -143,6 +154,29 @@ struct MeetingListView: View {
         }
         .task(id: model.refreshTrigger) {
             await model.reload()
+        }
+        // Step 15: gear toolbar that pushes ``SettingsView``. Gated on
+        // `bootstrapper.meetingStore != nil` so the gear is absent
+        // during pre-warmup (when Settings has no live store to read
+        // the transcript count from) and during the test-only
+        // `init(model:)` path (which renders the list without
+        // installing a bootstrapper). Placement is `.topBarLeading`
+        // per UI #19 so the existing trailing slots stay available
+        // for Step 13's swipe-action surface and any future affordances.
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if let store = bootstrapper.meetingStore {
+                    NavigationLink {
+                        SettingsView(
+                            statsProvider: bootstrapper.storageStatsProvider,
+                            meetingStore: store
+                        )
+                    } label: {
+                        Image(systemName: "gear")
+                            .accessibilityLabel("Settings")
+                    }
+                }
+            }
         }
     }
 
