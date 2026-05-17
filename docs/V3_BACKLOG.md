@@ -1070,3 +1070,22 @@ Cost estimate: ~15 min.
   - V3 #911 "Swift 6 mode build warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel" — relevant because the existing `MeetingStore.swift:187` warning ties into the broader Step-2/Step-12 actor-isolation surface.
   - Step 12 commits: production checkpoint `ac87ec4` + docs commit (this commit)
   - Step 12 perf test `meetingListSearch_15kRows_searchLatencyUnder200ms` and its device-variant counterpart (device variant TBD per Decision #14 trigger).
+
+### Project-default-isolation pattern — SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor forces explicit nonisolated on stateless pure-value types
+
+- **What:** The project's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` build setting causes silent main-actor inheritance on every type that doesn't explicitly annotate isolation. For stateless pure-value types (formatters, exporters, utility enums), this is structurally wrong — they have no UI state to protect, and the implicit main-actor isolation forces unnecessary actor hops at call sites + creates surprises when one main-actor formatter synchronously delegates to another nominally-nonisolated one. The pattern has occurred 4 times in Group D:
+  1. **Step 6 `MeetingListRowFormatter`**: implicitly main-actor (no annotation). Surfaced at Step 11 as a hidden invariant when `MeetingDetailFormatter` tried to delegate.
+  2. **Step 9a `TranscriptSplitScreenFormatter`**: explicit `nonisolated` (caught by planner).
+  3. **Step 11 `MeetingDetailFormatter`**: forced to `@MainActor` because synchronous delegation to `MeetingListRowFormatter` (which was implicitly main-actor) crossed the boundary.
+  4. **Step 13 `TranscriptExporter`**: explicit `nonisolated` (caught by planner; pattern now recognised).
+- **Why this is V3 and not Step 13 scope:** the structural cause is the project build setting, not any single type's annotation. Each new step rediscovers the pattern; future agents will keep stumbling until CLAUDE.md names the build setting as the cause.
+- **Trigger to fix:** workflow automation pass OR pre-MVP-1 hardening, whichever fires first.
+- **Action when triggered:** update CLAUDE.md's "swift-implementer scope-and-decision discipline" section to:
+  - Cite `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` as the structural cause of the recurring nonisolated/MainActor annotation friction.
+  - Pre-specify in briefs that any new stateless pure-value type (formatter, exporter, utility enum) MUST be explicitly annotated `nonisolated` to avoid silent main-actor inheritance.
+  - Pre-specify in briefs that any new type that synchronously delegates to a non-isolated type must surface the isolation crossing as a STOP condition.
+- **Cost estimate:** ~30 min to draft CLAUDE.md clauses + add to workflow automation bundle.
+- **Cross-references:**
+  - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
+  - V3 entry "Agent verification rigor" (`66d08b0`) — related (rigor entry covers same-dispatch warning reporting; this entry covers same-step annotation forecasting).
+  - 4 cumulative instances in Group D (Step 6, 9a, 11, 13).
