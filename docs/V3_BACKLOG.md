@@ -1411,3 +1411,35 @@ Findings surfaced during sprint-window dispatch work against the Bucket 1 list i
   - V3 commit `1f56009` (LEAP SDK skill reconcile) — the just-reconciled skill has a stale `GenerationOptions(maxTokens:)` example that does NOT compile against v0.9.4 (correct field is `maxOutputTokens: UInt32?`). Surfaced by the spike's compilation against the real SDK. Pending a second reconcile commit (filed separately).
   - `docs/PRE_MVP1_REVIEW.md` B1.1 — the sprint-window entry whose recommended approach is now obsolete; the sprint sequencing assumed B1.1 had a clean v0.9.4 path.
 - **Severity:** HIGH — B1.1 is the most expensive and load-bearing Bucket-1 entry in the pre-MVP-1 hardening sprint, and its sole recommended v0.9.4 path is now closed. MVP-1 ship is gated on whichever of A/B/C/D the user selects. This entry's closure does NOT itself block MVP-1, but it forces the next decision.
+
+### LEAP SDK v0.10.x migration — upstream-blocked (P-2 attempt closed)
+
+- **What:** P-2 attempted v0.9.4 → v0.10.6 SDK migration, blocked on upstream XCFramework packaging bug. `libinference_engine.dylib` in both v0.10.5 and v0.10.6 records a dependency on `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` (framework-bundle form), but the SDK ships only `libinference_engine_llamacpp_backend.dylib` (plain dylib). dyld cannot resolve at app launch → crash before LFM2 reaches `.ready`. Affects both `LeapModelDownloader` and `LeapSDK` SPM products. v0.10.7 release notes explicitly retain the v0.10.6 dynamic-framework setup without addressing the @rpath mismatch.
+- **Evidence baselines (parked worktrees):**
+  - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints, builds clean, crashes at launch via `LeapModelDownloader.framework`'s inner dylib).
+  - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints, builds clean, crashes at launch via `LeapSDK.framework`'s inner dylib — LeapSDK transitively linked via LeapModelDownloader product).
+- **GitHub issue:** https://github.com/Liquid4All/leap-sdk/issues/5
+- **Trigger to revisit:** Monitor `Liquid4All/leap-sdk` releases for an XCFramework rebuild that fixes the @rpath/framework-vs-dylib mismatch. Watch the weekly Liquid AI brief (V3 #45). When a fixed version ships, the parked worktrees are the starting point for resuming the migration — most behavioral changes (B1, B2, B3, B6, B9) were verified at both v0.10.5 and v0.10.6 via `.swiftinterface` grep and remain correct.
+- **Cross-references:** V3 entry `b851dad` (LFM2 download — LEAP portal stale; this P-2 closure is the closure of the broader migration arc). `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` §5 (P-2 Execution Results) for the full behavioral diff and grep findings.
+- **Severity:** HIGH — sprint workstream B1.1 closed-with-upstream-block; MVP-1 ships against v0.9.4. Resumption depends entirely on upstream timeline.
+
+### Migration inventory PURE-RENAME claims — compile verification required
+
+- **What:** Two rows in `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` were labeled PURE-RENAME but broke at compile time when actually attempted in v0.10.5 AND v0.10.6:
+  - **Row 5 (`ChatMessage` init):** claimed unchanged shape `ChatMessage(role:, content: [...])`. Actual v0.10.5/v0.10.6 shape requires single-content init `ChatMessage(role:, content: .text(...))` — B9 finding.
+  - **Row 9 (`GenerationOptions` init):** claimed unchanged shape `GenerationOptions(temperature: ..., topP: ..., minP: ..., repetitionPenalty: ...)`. Actual v0.10.5/v0.10.6 native type only exposes `init()` + `.with(temperature:)` / `.with(topP:)` / `.with(minP:)` / `.with(repetitionPenalty:)` / `.with(maxTokens: Int32)` builders — B6 finding.
+  - Both contradictions confirmed via `.swiftinterface` grep against the actually-installed v0.10.5 AND v0.10.6 xcframeworks during P-2 dispatches.
+- **Why V3-worthy:** doc-researcher's pre-flight discipline currently allows "PURE-RENAME verified by examples-page reading" as sufficient evidence. P-2 shows examples-page reading is insufficient — examples pages can lag the actual swiftinterface, especially when types were redesigned as Kotlin-Multiplatform bridges (the v0.10.x SKIE-bridged types are exactly this case).
+- **Action when triggered:** tighten doc-researcher Rule 2 to require: *"compile verification against the pinned SDK is the only source of PURE-RENAME confidence. Examples-page reading is supporting evidence, not primary."* Apply at the next workflow automation pass alongside V3 #41 / #42 / #43 / #44 (dispatch-implementer / agent prompt hygiene cluster).
+- **Cross-references:** P-2 worktree commits (parked); migration inventory §5 P-2 Execution Results; preceding V3 entry "LEAP SDK v0.10.x migration — upstream-blocked".
+- **Severity:** LOW — process improvement; no immediate code consequence. Both wrong rows were caught at dispatch time, not in production.
+
+### Worktree parking convention for failed-migration evidence
+
+- **What:** Pattern: when a migration attempt fails after meaningful discovery work, preserve the worktree as an evidence baseline rather than deleting it. P-2 established two such worktrees (v0.10.6 + v0.10.5) that retain the resolved behavioral changes, the swiftinterface grep findings, and the actual dyld error reproductions.
+- **Why it earns its place:** the cost of preserving a worktree is negligible (a few GB of build artifacts; one line in `git worktree list`). The cost of re-deriving the discoveries when upstream eventually unblocks is real — at minimum a full re-grep of the swiftinterface, at worst a from-scratch behavioral diff against an SDK whose specifics may have shifted again. Parked worktrees collapse that to "rebase the parked branch onto current main, fix conflicts, rebuild."
+- **When to apply:** any future failed migration attempt where the worktree's discoveries would be needed to resume — typically when (a) the work compiles and tests cleanly but blocks on an external dependency, or (b) the work documents non-obvious behavioral findings that aren't otherwise captured.
+- **When NOT to apply:** abandoned exploratory branches with no committed discoveries; worktrees whose findings are already fully captured in the inventory doc + skill files.
+- **Cleanup:** when the upstream block clears and the migration is either revived or definitively rejected, remove the worktrees via `git worktree remove` + `git branch -D` once their value has been extracted into a real merged commit.
+- **Cross-references:** P-2 parked worktrees (described in preceding V3 entry).
+- **Severity:** LOW — workflow convention; no code consequence.

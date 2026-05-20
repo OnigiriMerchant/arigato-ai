@@ -291,3 +291,50 @@ All URLs consulted during this research, with what they verified:
 | https://raw.githubusercontent.com/Liquid4All/leap-sdk/refs/tags/v0.10.6/Package.swift | Swift tools version 6.0; platform minimums iOS 17, macOS 15; product names: LeapSDK, LeapModelDownloader, LeapOpenAIClient, LeapUI, LeapSDKMacros; all targets |
 | https://github.com/Liquid4All/leap-sdk/tree/v0.10.6 | Repository exists; written in Swift 100%; 17 releases; v0.10.6 is latest tag |
 | https://leap.liquid.ai/models | UNVERIFIABLE — dynamically rendered SPA; model list not extractable |
+
+---
+
+## 5. P-2 Execution Results
+
+**Date:** 2026-05-20
+**Outcome:** BLOCKED on upstream XCFramework packaging bug.
+**GitHub issue:** https://github.com/Liquid4All/leap-sdk/issues/5
+
+### 5.1 Bug summary
+
+The LEAP iOS SDK's `libinference_engine.dylib` records a dependency on `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` (framework-bundle form), but the SDK ships only `libinference_engine_llamacpp_backend.dylib` (plain dylib). dyld cannot resolve the missing `.framework` directory at app launch — verified via `xcrun simctl launch --console` against built `.app` artifacts. The bug exists in BOTH v0.10.5 and v0.10.6 (`otool -L` byte-identical broken `@rpath` line in both). v0.10.6's static-to-dynamic transition of `LeapModelDownloader` extends the existing bug to a second framework, but the bug itself predates that change — it lives in `LeapSDK.framework`'s inner dylib in both versions. v0.10.7 release notes explicitly retain the v0.10.6 dynamic-framework setup without addressing the @rpath mismatch.
+
+### 5.2 Worktree parking (resumption baselines)
+
+P-2 work was preserved as evidence baselines for resuming migration when upstream ships a fix:
+
+- **`~/AI-projects/arigato-ai-p2`** — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9`, 5 checkpoint commits. Builds clean; crashes at launch with broken `@rpath` from `LeapModelDownloader.framework/Frameworks/libinference_engine.dylib`.
+- **`~/AI-projects/arigato-ai-p2-v0.10.5`** — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378`, 2 checkpoint commits. Builds clean; crashes at launch with same broken `@rpath` from `LeapSDK.framework/Frameworks/libinference_engine.dylib` (LeapSDK transitively linked via the LeapModelDownloader SPM product). The dyld error traversed 18 search paths before failing — full output captured in P-2 dispatch results.
+
+### 5.3 Findings STILL VALID for future migration retry
+
+These behavioral changes were verified at both v0.10.5 and v0.10.6 via `.swiftinterface` grep against actually-installed xcframeworks. They apply when upstream unblocks:
+
+- **B1 — `LiquidCacheOptions.enabled(path:)` static factory** replaces the v0.9.4 `init(path:maxEntries:)`. Confirmed at v0.10.5 and v0.10.6 (swiftinterface line 116).
+- **B2 — `MessageResponse` chunk struct payload.** `.chunk` carries `MessageResponseChunk` (top-level type with `.text: String`, NOT a nested `MessageResponse.Chunk`). `MessageResponse` itself is a protocol; bare `switch response` does NOT match cases exhaustively — `switch onEnum(of: response)` is required. Confirmed at v0.10.5 and v0.10.6.
+- **B3 — `LeapDownloader.loadSimpleModel(model: ModelSource(...), options:, ...)`** replaces v0.9.4's free function `Leap.load(model:quantization:options:downloadProgressHandler:)`. `ModelSource(modelPath:modelName:quantizationId:)` is the new init. The actually-working call shape for the bundled-GGUF path turned out to be `Leap.shared.load(url:options:generationTimeParameters:autoDetectCompanionFiles:)`, per the v0.10.6 worktree's `60b74a7` commit. Confirmed at v0.10.5 and v0.10.6 (swiftinterface line 790).
+- **B6 — `GenerationOptions` builder pattern.** Native `GenerationOptions` exposes only zero-arg `init()` plus builder methods (`.with(temperature: Float)`, `.with(topP: Float)`, `.with(minP: Float)`, `.with(repetitionPenalty: Float)`, `.with(topK: Int32)`, `.with(rngSeed: Int64)`, `.with(jsonSchema: String)`, `.with(maxTokens: Int32)`). The value-init claimed in row 9 of this inventory (PURE-RENAME) does NOT exist in v0.10.5 or v0.10.6. Confirmed via swiftinterface lines 23–49 in both versions. **Row 9 PURE-RENAME claim was wrong.**
+- **B9 — `ChatMessage` single-content init.** `ChatMessage(role:, content: .text(...))` replaces the v0.9.4 array-content shape. Confirmed at v0.10.5 and v0.10.6. **Row 5 PURE-RENAME claim was wrong.**
+
+### 5.4 Findings that DIFFER between v0.10.5 and v0.10.6 (matters when choosing version on retry)
+
+- **B4 — dual-import guard:** added in v0.10.6 only. v0.10.5 does not enforce import-product exclusivity. v0.10.6 requires `import LeapModelDownloader` alone (or `import LeapSDK` alone). In v0.10.5 the import story is different because `LeapModelDownloader` is a static archive exposing only ObjC `LMD*` types — Swift code must `import LeapSDK` to see `GenerationOptions`, `ChatMessage`, `Leap.shared`, etc.
+- **B5 — `ModelDownloader` class rename:** v0.10.6 only. v0.10.5 still uses `LeapDownloader` as the Swift class name. Both versions' Swift API for download lives in the `LeapSDK` module; v0.10.6's dynamic `LeapModelDownloader.framework` re-exports Swift symbols, v0.10.5's static archive does not.
+- **`LeapModelDownloader.xcframework` framework type:** static archive in v0.10.5 (21.9 MB single binary, no `Frameworks/` subdir, `otool -L` reports `Archive : ... (LeapModelDownloader.framework.o):`); dynamic framework in v0.10.6 (11.5 MB main binary + separate dylibs in `Frameworks/`, with broken `@rpath` propagated to `Frameworks/libinference_engine.dylib`). This is the v0.10.6 change that extended the @rpath bug from `LeapSDK.framework` alone to also affect `LeapModelDownloader.framework`.
+
+### 5.5 Implications for resumption
+
+The full v0.10.6 behavioral diff is reconciled and parked. When upstream ships an XCFramework fix:
+
+1. Verify the fix by `otool -L`ing the newly-released `libinference_engine.dylib` — the framework-bundle `@rpath` should be replaced with a plain-dylib reference matching the actually-shipped `libinference_engine_llamacpp_backend.dylib`.
+2. Rebase the parked `p2-leap-migration` branch onto current `main`.
+3. Build, install, launch on iPhone 17 Pro Max simulator, confirm LFM2 reaches `.ready`.
+4. Run the full test suite with `-parallel-testing-enabled NO`.
+5. If green, squash-merge to `main` and remove both parked worktrees.
+
+The v0.10.5 worktree adjustments document the version-specific deltas if a future decision targets v0.10.5 instead of v0.10.6 (e.g., if v0.10.5 ships a fix earlier than v0.10.6/v0.10.7).

@@ -3,7 +3,7 @@ name: leap-sdk
 description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Use whenever adding, modifying, or debugging Japanese-English translation calls. Covers SDK setup, system prompt requirements, model loading, async streaming, and concurrency constraints.
 ---
 
-<!-- Verified against: LEAP iOS SDK v0.10.6 (released 2026-05-12, tag v0.10.6 on Liquid4All/leap-sdk). Reconcile date: 2026-05-18. Sources: docs.liquid.ai quick-start, model-loading, conversation-generation, leap-sdk-changelog; github.com/Liquid4All/leap-sdk Package.swift (tag v0.10.6); github.com/Liquid4All/leap-sdk/releases/tag/v0.10.6. -->
+> **This skill reflects v0.9.4 (pinned via `Liquid4All/leap-ios`).** P-2 attempted to migrate to v0.10.6 and was blocked on an upstream XCFramework packaging bug — `libinference_engine.dylib` records a `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` (framework-bundle form) dependency, but the SDK ships only `libinference_engine_llamacpp_backend.dylib` (plain dylib). dyld cannot resolve at app launch. The bug exists in both v0.10.5 and v0.10.6. See GitHub issue [Liquid4All/leap-sdk#5](https://github.com/Liquid4All/leap-sdk/issues/5). When upstream ships a fixed XCFramework, restore the v0.10.6 surface by rebasing the parked worktree `~/AI-projects/arigato-ai-p2` (branch `p2-leap-migration`, HEAD `d8e65d9`) onto current main.
 
 # LEAP iOS SDK — LFM2-350M-ENJP-MT integration
 
@@ -14,116 +14,95 @@ LFM2-350M-ENJP-MT requires ONE of these EXACT system prompts. No variation, no r
 
 The user turn is the text to translate. Single-turn conversations only — do not accumulate history across translation calls.
 
-## SDK package setup (v0.10.0+)
+## SDK package setup (v0.9.4)
 
-**Package URL (changed in v0.10.0):** `https://github.com/Liquid4All/leap-sdk.git`
+**Package URL:** `https://github.com/Liquid4All/leap-ios.git`
 
-**Minimum iOS deployment target:** 17.0 (raised from 15.0 in v0.10.0)
+**Pinned product:** `LeapSDK` — single SPM product in v0.9.4. (v0.10.0+ splits into multiple products; not yet adopted due to upstream block.)
 
-**Swift tools version required:** 6.0 (Xcode 16+)
+**Swift import:** `import LeapSDK`
 
-**Pick exactly one product per target:**
-- `LeapSDK` — core inference + conversation; no download manager
-- `LeapModelDownloader` — re-exports all `LeapSDK` types PLUS `URLSession`-backed downloads
-
-For sideloaded GGUF (our use case), use `LeapModelDownloader`. In v0.10.6, linking both `LeapSDK` and `LeapModelDownloader` together produces a build-time dual-import guard error. Use only `import LeapModelDownloader` — it re-exports all `LeapSDK` types, so no separate `import LeapSDK` is needed.
-
-Other products (not used in Arigato AI): `LeapOpenAIClient`, `LeapUI`, `LeapSDKMacros`.
-
-## Model loading pattern (v0.10.6 — sideloaded GGUF)
-
-For sideloaded GGUF files (not portal download), use `LeapDownloader.loadSimpleModel(model:options:...)`:
+## Model loading pattern (v0.9.4)
 
 ```swift
-import LeapModelDownloader  // NOT import LeapSDK
+import LeapSDK
 
-let downloader = LeapDownloader(
-    config: LeapDownloaderConfig(saveDir: modelsDir)
-)
-
-let cacheDir = // ... resolve from FileManager (.cachesDirectory)
-let options = LiquidInferenceEngineManifestOptions(
-    cacheOptions: .enabled(path: cacheDir)
-)
-
-let runner: any ModelRunner = try await downloader.loadSimpleModel(
-    model: ModelSource(
-        modelPath: ggufURL.path,
-        modelName: "lfm2-350m-enjp-mt",
-        quantizationId: "Q5_K_M"
-    ),
-    options: options
+let runner: any ModelRunner = try await Leap.load(
+    model: "lfm2-350m-enjp-mt",
+    quantization: "Q5_K_M",
+    options: manifestOptions,
+    downloadProgressHandler: { progress, _ in
+        // progress: 0.0 ... 1.0
+    }
 )
 ```
 
-Key changes from v0.9.4:
-- `Leap.load(model:quantization:options:downloadProgressHandler:)` is the legacy compatibility API. New code should use `LeapDownloader.loadSimpleModel(model:options:...)`.
-- `ModelSource(modelPath:modelName:quantizationId:)` is the new type (replaces bare string args).
-- `LiquidCacheOptions(path:maxEntries:)` initializer is no longer the documented API; use `LiquidCacheOptions.enabled(path:)` static factory (added in v0.10.4.3).
-- `LiquidInferenceEngineManifestOptions` uses `cacheOptions: LiquidCacheOptions?` (unchanged field name, but construction changes).
+The portal download path is the v0.9.4 default. The B1.1 spike (V3 entry, commit `6512662`) empirically disproved the `file://` manifest alternative — `Leap.load(manifestURL:)` does NOT accept `file://` URLs in v0.9.4, throws `NSURLErrorDomain` -1011 with empty `userInfo`.
 
-**`LeapDownloader` vs `ModelDownloader`:** In v0.10.6, `LeapModelDownloader` SPM product exposes `ModelDownloader` as the class name (renamed from `LeapModelDownloader` class in v0.10.6 breaking change). `LeapDownloader` is the older non-SPM-product class, still present for compatibility. For SPM consumers importing `LeapModelDownloader`, use `ModelDownloader`.
+**Authoritative manifest schema URL** (maintainer-published): `https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json`. Keys are `snake_case`; `inference_type` is `"llama.cpp/text-to-text"`; `schema_version` is `"1.0.0"`.
 
-## Conversation creation and streaming (v0.10.6)
+## KV cache config (v0.9.4)
+
+```swift
+let cacheOptions = LiquidCacheOptions(path: cachePath, maxEntries: 1000)
+let manifestOptions = LiquidInferenceEngineManifestOptions(cacheOptions: cacheOptions)
+```
+
+Pass `manifestOptions` to `Leap.load(...)` via the `options:` parameter. `maxEntries: 1000` is locked per Phase 5 Decision 4 revision (persistent `Caches/` directory). Cache invalidation rules and on-device benchmark are V3-tracked under "LFM2 prompt cache effectiveness benchmark."
+
+## Conversation creation and streaming (v0.9.4)
 
 ```swift
 let conversation = runner.createConversation(systemPrompt: "Translate to English.")
 
-// v0.10.6 GenerationOptions — key field name: maxTokens (NOT maxOutputTokens)
 let options = GenerationOptions(
-    temperature: 0.5,
+    temperature: 0.3,
     topP: 1.0,
-    minP: 0.1,
+    minP: 0.15,
     repetitionPenalty: 1.05
 )
 
 let stream = conversation.generateResponse(
-    userTextMessage: inputText,  // or: message: ChatMessage(...)
+    userTextMessage: inputText,
     generationOptions: options
 )
 ```
 
-**`GenerationOptions` field names in v0.10.6:**
+**Maintainer-recommended sampling defaults** (from the published manifest):
+- `temperature: 0.3`
+- `min_p: 0.15`
+- `repetition_penalty: 1.05`
+
+**`GenerationOptions` field names in v0.9.4:**
 - `temperature: Float?`
 - `topP: Float?`
 - `minP: Float?`
 - `topK: Int32?`
 - `repetitionPenalty: Float?`
-- `maxTokens: Int32?` ← **field name is `maxTokens`, NOT `maxOutputTokens`** (v0.9.4 had `maxOutputTokens: UInt32?`)
+- `maxOutputTokens: UInt32?` ← **field name is `maxOutputTokens` (NOT `maxTokens`)**
 - `rngSeed: Int64?`
-- `jsonSchemaConstraint: String?`, `extras: String?`, etc.
 
-**`MessageResponse` case handling in v0.10.6:**
-Use `switch onEnum(of: response)` for exhaustive matching (SKIE-bridged Kotlin sealed class):
+(v0.10.5+ renames this field to `maxTokens: Int32?` and moves the type to builder-only `init()` + `.with(...)`. Both differences are upstream-block-deferred.)
+
+**`MessageResponse` case handling in v0.9.4:**
 
 ```swift
 for try await response in stream {
-    switch onEnum(of: response) {
-    case .chunk(let c):
-        // c is MessageResponse.Chunk — access text via c.text
-        accumulated += c.text
-    case .complete(let completion):
-        // completion.fullMessage, completion.finishReason, completion.stats
+    switch response {
+    case let .chunk(text):
+        // text is a bare String
+        accumulated += text
+    case .complete:
         break
-    case .reasoningChunk, .functionCalls, .audioSample:
-        // drop — not surfaced in translation pipeline
+    default:
         continue
     }
 }
 ```
 
-**CRITICAL:** In v0.10.6, `.chunk` associated value is `MessageResponse.Chunk` (a struct with `.text: String`), NOT a bare `String`. The v0.9.4 pattern `case let .chunk(text): use(text)` is now `case .chunk(let c): use(c.text)` or via `onEnum(of:)`.
+In v0.9.4 the `.chunk` associated value is a **bare `String`**, not a `Chunk` struct. (v0.10.5+ changes this to `MessageResponseChunk` with `.text: String` and requires `onEnum(of:)` for case-match; upstream-block-deferred.)
 
-**`MessageResponse` cases in v0.10.6 (complete set):**
-- `.chunk(Chunk)` — `Chunk.text: String`
-- `.reasoningChunk(ReasoningChunk)` — `ReasoningChunk.reasoning: String`
-- `.functionCalls(FunctionCalls)` — `FunctionCalls.functionCalls: [LeapFunctionCall]`
-- `.audioSample(AudioSample)` — `AudioSample.samples`, `.sampleRate`
-- `.complete(Complete)` — `Complete.fullMessage`, `.finishReason`, `.stats: GenerationStats?`
-
-**Note on case name:** v0.9.4's `.swiftinterface` recorded `.functionCall` (singular). v0.10.6 docs show `.functionCalls` (plural). The compatibility layer may bridge this — verify at compile time.
-
-## Direction handling (unchanged)
+## Direction handling
 
 ```swift
 enum TranslationDirection {
@@ -138,7 +117,7 @@ enum TranslationDirection {
 }
 ```
 
-## Cold-start mitigation (unchanged)
+## Cold-start mitigation
 
 No SDK-provided `prewarm()` primitive. Use a dummy inference at app launch:
 
@@ -146,14 +125,14 @@ No SDK-provided `prewarm()` primitive. Use a dummy inference at app launch:
 _ = try? await translate("おはようございます", direction: .jaToEn)
 ```
 
-## GenerationStats (v0.10.6)
+## Concurrency constraints (v0.9.4)
 
-Available via `completion.stats: GenerationStats?` in the `.complete` case:
-- `promptTokens: Long`
-- `completionTokens: Long`
-- `totalTokens: Long`
-- `tokenPerSecond: Float`
-- `cachedPromptTokens: Long` (non-zero when KV cache hit)
+- `ModelRunner` is a protocol with no `Sendable` inheritance.
+- `Conversation` is a class with no `Sendable` conformance.
+- The established `@unchecked Sendable` adapter pattern (`LFM2EngineAdapter`) is required for crossing actor boundaries.
+- Keep both `ModelRunner` and `Conversation` inside one actor's isolation. Create `Conversation` via `runner.createConversation(systemPrompt:)` inside the actor that will consume it.
+
+**Cancellation (v0.9.4):** Cooperative — cancelling the Swift Task stops generation and frees native resources, with at most one extra token of slack after `cancel()`. `GenerationFinishReason` has no `.cancelled` case in v0.9.4 (confirmed unchanged through v0.10.5 and v0.10.6 by P-2 swiftinterface grep). Cancellation may surface as a normal stream finish.
 
 ## What this model is good at (from model card)
 - Short-to-medium text (optimized for low latency at sentence scale)
@@ -164,45 +143,22 @@ Available via `completion.stats: GenerationStats?` in the `.complete` case:
 - Long-form (>3 paragraphs) — chunk first
 - Single-turn only — do not feed it multi-turn history
 
-## Concurrency constraints (v0.10.6)
+## Migration to v0.10.6 — BLOCKED (upstream)
 
-The docs state all API functions are safe to call from the main/UI thread. `ModelRunner` remains a protocol with no `Sendable` inheritance in v0.10.6 public docs. `Conversation` remains a class. Neither is explicitly `Sendable` in the v0.10.6 documentation.
+P-2 attempted the v0.9.4 → v0.10.6 migration and surfaced an upstream XCFramework packaging bug affecting both v0.10.5 and v0.10.6. Issue: [Liquid4All/leap-sdk#5](https://github.com/Liquid4All/leap-sdk/issues/5).
 
-- The established `@unchecked Sendable` adapter pattern (`LFM2EngineAdapter`) remains appropriate. Verify at compile time whether `ModelRunner` or `Conversation` gained `Sendable` conformance in v0.10.6 — if they did, the `nonisolated(unsafe)` and `@unchecked Sendable` annotations become unnecessary overhead but not errors.
-- Keep both `ModelRunner` and `Conversation` inside one actor's isolation. Create `Conversation` via `runner.createConversation(systemPrompt:)` inside the actor that will consume it.
+The completed migration code is parked as evidence baselines:
+- `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints, builds clean, crashes at launch with dyld error)
+- `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints, same crash via `LeapSDK.framework`'s inner dylib)
 
-**Cancellation (v0.10.6 — confirmed from docs):**
-> "Cancelling the Swift Task ... stops generation and frees native resources."
-> "Cancellation is cooperative — the engine checks between tokens, so there's at most one extra token of slack after cancel()."
+Full call-site inventory and P-2 execution results: `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` (sections 1–5).
 
-This matches the existing `TranslationActor.cancel()` doc-comment which was based on 2026-05-16 doc-researcher findings. The v0.10.6 docs confirm this behavior is still current.
-
-## KV cache (v0.10.6)
-
-`LiquidCacheOptions` now exposes a static factory instead of a memberwise init:
-
-```swift
-// v0.10.6 (correct):
-let cacheOptions: LiquidCacheOptions = .enabled(path: cacheDir.path)
-
-// v0.9.4 (no longer documented public API):
-// LiquidCacheOptions(path: cachePath, maxEntries: 1000)  ← do NOT use
-```
-
-The `maxEntries` parameter is no longer part of the public `LiquidCacheOptions` API in v0.10.6. The SDK manages its own eviction internally. Pass `options.cacheOptions = .enabled(path:)` to `LiquidInferenceEngineManifestOptions`.
-
-KV cache config in v0.10.4+ uses a "Bounded-LRU CacheOptions API" internally. `use_mmap=true` is the engine default since v0.10.4.
-
-## Migration from v0.9.4
-
-A full call-site inventory and sequenced migration plan are in `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md`. Summary: the migration involves 1 package URL change, ~15 pure-rename call sites, ~10 signature changes, and 4 behavioral-area verifications (LiquidCacheOptions construction, MessageResponse case payload access pattern, Leap.load removal forced by dual-import guard, GenerationFinishReason case-set verification).
+When upstream ships a fixed XCFramework, the parked worktrees are the resumption point. Most behavioral changes (B1, B2, B3, B6, B9) were verified at both v0.10.5 and v0.10.6 via `.swiftinterface` grep and remain correct.
 
 ## Sources Consulted
 
-- https://docs.liquid.ai/deployment/on-device/sdk/quick-start
-- https://docs.liquid.ai/deployment/on-device/sdk/model-loading
-- https://docs.liquid.ai/deployment/on-device/sdk/conversation-generation
-- https://docs.liquid.ai/deployment/on-device/leap-sdk-changelog
-- https://github.com/Liquid4All/leap-sdk (v0.10.6 tag)
-- https://github.com/Liquid4All/leap-sdk/releases/tag/v0.10.6
-- https://raw.githubusercontent.com/Liquid4All/leap-sdk/refs/tags/v0.10.6/Package.swift
+- https://github.com/Liquid4All/leap-ios (v0.9.4 pinned baseline)
+- https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF (model + manifest)
+- https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json (authoritative manifest schema for Q5_K_M)
+- https://github.com/Liquid4All/leap-sdk/issues/5 (upstream block tracking P-2)
+- `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` §5 (P-2 execution results, swiftinterface findings)
