@@ -74,6 +74,20 @@ import SwiftUI
 /// inlined here as a computed `activeMeetingID(...)` rather than added
 /// as a method on `MeetingSession` (MAY-NOT-modify scope for Step 9a's
 /// ContentView wiring).
+///
+/// ## B1.4 — UI #9 Context A toolbar `ShareLink`
+///
+/// The same `.toolbar` modifier carries a second ``ToolbarItem`` at
+/// `.topBarTrailing` rendering a SwiftUI `ShareLink` when the session's
+/// phase is ``MeetingSessionPhase/ended`` and the active meeting has at
+/// least one persisted sentence. The render gate matches
+/// ``MeetingDetailView``'s Context B `ShareLink` (UI #4 "buttons exist
+/// only when usable").
+///
+/// Data path: ``ActiveMeetingShareViewModel`` is constructed per render
+/// (same Option a pattern as ``TranscriptSplitScreenViewModel``) and
+/// hydrated by a `.task(id:)` modifier so the share payload's title +
+/// sentences are fetched once the meeting reaches the ended phase.
 struct ContentView: View {
     /// The shared bootstrapper threaded in from ``ArigatoAIApp`` via
     /// the SwiftUI environment. ``AppBootstrapper/coordinator`` drives
@@ -129,6 +143,13 @@ struct ContentView: View {
         // ``TranscriptLiveView`` falls back to its empty-state branch.
         let transcriptModel = makeTranscriptModel()
 
+        // B1.4 — UI #9 Context A: re-derive the active-meeting share
+        // VM each render, scoped to the ended-phase meeting only. The
+        // VM is non-nil **only** when the phase is `.ended` AND the
+        // store is reachable — recording / paused phases have no Share
+        // affordance (UI #4 morphing table).
+        let shareModel = makeShareModel()
+
         NavigationStack {
             TranscriptLiveView(
                 controlsModel: controlsModel,
@@ -145,7 +166,113 @@ struct ContentView: View {
                         }
                     }
                 }
+                // B1.4 / UI #9 Context A — active-view toolbar Share.
+                // Renders only when:
+                //   1. The session phase is `.ended` (gate enforced by
+                //      `makeShareModel()` returning nil for any other
+                //      phase).
+                //   2. The share VM has a hydrated snapshot.
+                //   3. The snapshot's `sentences` are non-empty (UI #4
+                //      "buttons exist only when usable").
+                if let shareModel,
+                   let snapshot = shareModel.snapshot,
+                   !snapshot.sentences.isEmpty,
+                   let exportURL = activeMeetingExportURL(snapshot: snapshot)
+                {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ShareLink(item: exportURL) {
+                            Image(systemName: "square.and.arrow.up")
+                                .accessibilityLabel("Share transcript")
+                        }
+                    }
+                }
             }
+            // Drive the share VM's reload when the active meetingID
+            // changes (typically on the recording → ended transition,
+            // or when a new meeting ends after the previous one).
+            // `.task(id:)` cancels the prior in-flight reload on every
+            // identifier change, matching the last-query-wins
+            // scheduling assumption documented on
+            // ``ActiveMeetingShareViewModel``.
+            .task(id: activeShareIdentity()) {
+                if let shareModel {
+                    await shareModel.reload()
+                }
+            }
+        }
+    }
+
+    /// Builds the active-meeting share VM, gated on the session phase
+    /// being ``MeetingSessionPhase/ended``. Returns `nil` for any other
+    /// phase so the toolbar `ShareLink` does not render outside the
+    /// locked Context A trigger.
+    ///
+    /// Mirrors the construction pattern of ``makeTranscriptModel()`` —
+    /// derived per render, scoped to the active meetingID, no
+    /// long-lived `@State`. SwiftUI re-evaluates the body when the
+    /// underlying `bootstrapper.coordinator?.session.phase` changes,
+    /// producing a fresh VM on every phase transition.
+    private func makeShareModel() -> ActiveMeetingShareViewModel? {
+        guard let coordinator = bootstrapper.coordinator,
+              let store = bootstrapper.meetingStore
+        else {
+            return nil
+        }
+        let phase = coordinator.session.phase
+        guard case let .ended(meetingID, _, _) = phase else {
+            return nil
+        }
+        return ActiveMeetingShareViewModel(store: store, meetingID: meetingID)
+    }
+
+    /// Stable identity for the share VM's `.task(id:)` modifier so the
+    /// reload re-fires exactly when the active ended-meeting changes.
+    /// Returns a sentinel when no share VM should be active (idle /
+    /// recording / paused phases) so the `.task(id:)` does not run any
+    /// fetcher in those phases.
+    private func activeShareIdentity() -> AnyHashable {
+        guard let coordinator = bootstrapper.coordinator,
+              case let .ended(meetingID, _, _) = coordinator.session.phase
+        else {
+            return AnyHashable("inactive")
+        }
+        return AnyHashable(meetingID)
+    }
+
+    /// Synthesizes the temp-file `URL` for the share payload on demand.
+    /// Mirrors ``MeetingDetailView/exportURL`` but reads from the
+    /// share VM's atomic snapshot rather than from injected DTOs.
+    ///
+    /// Returns `nil` if ``TranscriptExporter/writeTemporaryFile(markdown:filename:)``
+    /// throws — the caller (the toolbar `ShareLink` guard above) hides
+    /// the item on `nil`, matching UI decision #4 "buttons exist only
+    /// when usable."
+    ///
+    /// ## Synchronous write contract
+    ///
+    /// `TranscriptExporter.writeTemporaryFile` performs synchronous
+    /// `Data.write(to:)` on the calling thread (the
+    /// `TranscriptExporter` type-level scheduling-assumption doc
+    /// covers this). MVP-1 transcript sizes (30–60 KB) make the
+    /// inline call fine — re-fired every body re-evaluation via the
+    /// computed-property pattern that
+    /// ``MeetingDetailView/exportURL`` established (Step 13).
+    private func activeMeetingExportURL(snapshot: ActiveMeetingShareViewModel.Snapshot) -> URL? {
+        do {
+            let body = TranscriptExporter.markdownBody(
+                summary: snapshot.summary,
+                sentences: snapshot.sentences
+            )
+            let filename = TranscriptExporter.makeFilename(
+                title: snapshot.summary.title,
+                startedAt: snapshot.summary.startedAt
+            )
+            return try TranscriptExporter.writeTemporaryFile(
+                markdown: body,
+                filename: filename
+            )
+        } catch {
+            return nil
         }
     }
 

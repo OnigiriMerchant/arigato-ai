@@ -211,7 +211,9 @@ struct MeetingControlsViewTests {
     /// **D7-T-7** — Each phase yields the expected secondary button (or
     /// nil) per the UI #4 morphing table. Idle → nil. Recording/Paused
     /// → STOP. StoppingWithUndoWindow → nil (toast handles recovery).
-    /// Ended → Share.
+    /// Ended → nil (B1.4 / pre-MVP-1 hardening relocated Share to the
+    /// active-view toolbar per UI #9 Context A; the cluster no longer
+    /// emits a secondary action in the ended phase).
     @Test func formatter_secondaryButton_eachPhase_returnsExpectedSpec() throws {
         let id = try Self.makeID()
         let started = Date(timeIntervalSince1970: 1_700_000_000)
@@ -241,11 +243,11 @@ struct MeetingControlsViewTests {
             )
         ) == nil)
 
-        let endedSpec = MeetingControlsFormatter.secondaryButton(
+        // B1.4 contract change (UI #9 Context A): ended phase secondary
+        // is `nil`; Share now lives in the active-view toolbar.
+        #expect(MeetingControlsFormatter.secondaryButton(
             for: .ended(meetingID: id, startedAt: started, endedAt: ended)
-        )
-        #expect(endedSpec?.label == "Share")
-        #expect(endedSpec?.kind == .share)
+        ) == nil)
     }
 
     // MARK: - VM — tap dispatch

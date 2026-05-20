@@ -265,17 +265,14 @@ struct MeetingControlsView: View {
         }
     }
 
-    /// Routes a secondary-button tap. Step 13 will wire the `.share`
-    /// case to a real ``ShareLink`` payload (UI decision #9 context A);
-    /// for Step 7 the share button is a no-op placeholder.
+    /// Routes a secondary-button tap. Pre-MVP-1 hardening relocated Share
+    /// to the active-view toolbar per UI #9 Context A; the formatter no
+    /// longer emits a `.share` case from the cluster, so this dispatcher
+    /// handles `.stop` only.
     private func dispatchSecondary(_ kind: MeetingControlsFormatter.SecondaryButtonSpec.SecondaryKind) async {
         switch kind {
         case .stop:
             await model.tapRequestStop()
-        case .share:
-            // Placeholder per UI decision #9 context A — Step 13 will
-            // wire a real `ShareLink` here. Intentionally a no-op.
-            break
         }
     }
 }
@@ -675,8 +672,11 @@ nonisolated enum MeetingControlsFormatter {
     }
 
     /// Returns the secondary-button spec for the given phase, or `nil`
-    /// when no secondary action is available. Idle and the stopping
-    /// window have no secondary action per the morphing table (UI #4).
+    /// when no secondary action is available. Idle, the stopping window,
+    /// and the ended phase all have no secondary action per the morphing
+    /// table (UI #4) — the ended phase's Share is rendered as a toolbar
+    /// icon on the active view per UI #9 Context A (B1.4 hardening),
+    /// **not** as a button in this cluster.
     static func secondaryButton(for phase: MeetingSessionPhase) -> SecondaryButtonSpec? {
         switch phase {
         case .idle:
@@ -688,7 +688,11 @@ nonisolated enum MeetingControlsFormatter {
         case .stoppingWithUndoWindow:
             return nil
         case .ended:
-            return SecondaryButtonSpec(label: "Share", kind: .share)
+            // UI #9 Context A: Share moved to the active-view toolbar
+            // (B1.4 / pre-MVP-1 hardening). The cluster offers no
+            // secondary action in the ended phase — the primary button
+            // alone carries `NEW TRANSCRIPT`.
+            return nil
         }
     }
 
@@ -742,17 +746,22 @@ extension MeetingControlsFormatter {
 
     /// Pure value-type rendering of the secondary button (UI #4).
     nonisolated struct SecondaryButtonSpec: Equatable {
-        /// Button label, e.g. `STOP`, `Share`.
+        /// Button label, e.g. `STOP`.
         let label: String
-        /// The secondary kind. Step 13 will wire the `.share` case to a
-        /// real ``ShareLink``; Step 7 ships it as a placeholder no-op.
+        /// The secondary kind. Drives ``MeetingControlsView``'s dispatch
+        /// of the matching VM action.
         let kind: SecondaryKind
 
-        /// Secondary-button kinds. The only kinds in the morphing table
-        /// (UI #4) are `stop` and `share`.
+        /// Secondary-button kinds.
+        ///
+        /// Pre-MVP-1 hardening (B1.4) dropped the prior `.share` case
+        /// when Share moved to the active-view toolbar per UI #9 Context
+        /// A. The cluster's secondary slot now carries only `.stop`
+        /// (recording / paused phases); the ended phase emits `nil` from
+        /// ``MeetingControlsFormatter/secondaryButton(for:)`` because
+        /// the toolbar Share replaces it.
         enum SecondaryKind: Equatable {
             case stop
-            case share
         }
     }
 }
