@@ -1443,3 +1443,63 @@ Findings surfaced during sprint-window dispatch work against the Bucket 1 list i
 - **Cleanup:** when the upstream block clears and the migration is either revived or definitively rejected, remove the worktrees via `git worktree remove` + `git branch -D` once their value has been extracted into a real merged commit.
 - **Cross-references:** P-2 parked worktrees (described in preceding V3 entry).
 - **Severity:** LOW — workflow convention; no code consequence.
+
+### ActiveMeetingShareViewModel.reload() — concurrency-test gap
+
+- **What:** `ActiveMeetingShareViewModel.reload()` (introduced in B1.4 commit `f018a71`) performs an atomic two-fetcher pull (summary + sentences) and follows the established Phase-2 trio pattern with `.task(id:)`-driven last-query-wins serialization. The VM's doc-comment names the trio-pattern scheduling assumption and cites `TranscriptSplitScreenViewModelTests.viewModel_rapidSentencesDidUpdate_lastReloadWins` as covering it. That cited test enforces last-query-wins on a SINGLE-fetcher reload of a sibling VM; it does NOT exercise the new VM's TWO-fetcher atomic-snapshot semantics under concurrent reload.
+- **Why V3-worthy (CLAUDE.md "Concurrency design discipline"):** the rule says "If no real violation test exists yet, document the gap explicitly AND log a V3 entry with a concrete trigger." The doc-comment satisfies the "document the gap" half but no V3 entry existed for the trigger condition. This entry closes that.
+- **Why deferred:** today the trigger surface is essentially unreachable — `.task(id: activeShareIdentity())` keys on the phase's meetingID, which doesn't change while the meeting is `.ended`. Concurrent reloads for the same meeting cannot happen through any current UI gesture. The test gap is real but bounded.
+- **Concrete trigger to fire this entry:** any new wiring that invokes `ActiveMeetingShareViewModel.reload()` while a previous reload is in-flight WITHOUT `.task(id:)` cancellation as the serializing layer. Concrete examples:
+  1. Adding a user-initiated pull-to-refresh on the active view that calls `reload()` directly
+  2. Wiring `MeetingSession.sentencesDidUpdate` to bump the VM's `refreshTrigger` while `.ended` (today `.ended` has no sentence ingress, but a future "edit after end" path would change this)
+  3. Adding a "retry after error" affordance that calls `reload()` on tap
+- **Action when triggered:** add a bespoke two-fetcher race test. Suggested shape: `viewModel_concurrentReloads_atomicSnapshotPreserved` — fire two reloads concurrently against fetchers with mismatched delays, assert the final `snapshot` reflects exactly one fetcher's result-pair (never a torn pair). Drop the `[weak self]` capture in the closure-injected init and ensure no leak under concurrent invocation.
+- **Cost when triggered:** ~30-45 min including the test seam if a new closure-injection variant is needed.
+- **Cross-references:** B1.4 commit `f018a71` (`ActiveMeetingShareViewModel.swift:46-64` for the doc-comment + assumption naming); CLAUDE.md § "Concurrency design discipline".
+- **Severity:** LOW — gap is documented honestly in the VM's doc-comment; bounded reachability under current code.
+
+## Post-B1.4 follow-ups
+
+Five entries surfaced during the B1.4 dispatch (commit `f018a71`) and the three-reviewer gate but kept out of the merge per scope discipline. All bundle naturally with the pre-MVP-1 hardening sprint or with V3 `b851dad` (LFM2 upstream-block clearance).
+
+### Post-B1.4: post-LFM2 smoke verification of Context A toolbar Share visibility
+
+- **What:** B1.4 wired the active-view toolbar `ShareLink` and verified static visibility through unit tests + simulator screenshots, but reaching `phase == .ended` from a real meeting capture requires LFM2 (upstream-blocked per V3 `b851dad`). Smoke verification of the toolbar item ACTUALLY appearing in a real end-to-meeting flow is deferred until LFM2 unblocks.
+- **Concrete trigger:** V3 `b851dad` LFM2 upstream block clears (Liquid AI ships an XCFramework fix per V3 "LEAP SDK v0.10.x migration — upstream-blocked").
+- **Action when triggered:** boot iPhone 17 Pro Max simulator, perform a real meeting → STOP → confirm undo-window ends → confirm Share toolbar icon appears in the top-trailing slot when there is ≥1 sentence, AND does NOT appear when sentenceCount == 0.
+- **Cost when triggered:** ~5 min manual smoke (after LFM2 is back).
+
+### Post-B1.4: live-tap verification that ShareLink raises the iOS share sheet
+
+- **What:** Distinct from the visibility smoke above. The load-bearing question the B1.4 dispatch couldn't answer: does tapping the new Share toolbar button actually raise the iOS share sheet with a transcript file attached? The SwiftUI `ShareLink(item: URL)` shape is identical to the working `MeetingDetailView` Context B reference, so this is high-confidence-but-unverified.
+- **Concrete trigger:** V3 `b851dad` LFM2 upstream block clears AND the visibility-smoke entry above passes.
+- **Action when triggered:** at the simulator, after confirming the toolbar Share icon is visible, tap it. Confirm iOS share sheet appears with the transcript Markdown file attached and correctly named per `TranscriptExporter.makeFilename`. AirDrop and Mail at minimum should be in the share destinations list.
+- **Cost when triggered:** ~5 min manual smoke. Bundle with the visibility-smoke entry.
+
+### Post-B1.4: MeetingStore.fetchSummary(meetingID:) single-row primitive
+
+- **What:** `ActiveMeetingShareViewModel` resolves the meeting summary via `MeetingStore.fetchAllUnfiltered() + Swift-side filter`. The store has no single-row `fetchSummary(meetingID:)` primitive. The VM's doc-comment captures this as a post-MVP optimization candidate. Adjacent friction: `MeetingSummary` has no public memberwise init, so test fixtures construct summaries via in-memory `ModelContainer` round-trip with a discarded-`id` parameter (`ActiveMeetingShareViewModelTests.swift` `makeSummary` helper).
+- **Concrete trigger to fire:** any of (a) a second caller other than B1.4 needs the same fetch-summary-by-id shape, (b) meeting count grows past ~100 (where full-fetch + filter becomes a measurable SwiftData read cost), (c) a future test needs deterministic-ID `MeetingSummary` construction at scale and the round-trip helper becomes unwieldy.
+- **Action when triggered:** add `func fetchSummary(meetingID: PersistentIdentifier) async throws -> MeetingSummary?` to `MeetingStore` using the V3-blessed `FetchDescriptor` + `#Predicate` pattern (precedent: `MeetingStore.fetchSentences`). Optionally add a test-only memberwise `MeetingSummary.init(id:title:startedAt:endedAt:sentenceCount:firstMatchSnippet:)` behind `#if DEBUG` so test fixtures don't need ModelContainer round-trips.
+- **Cost when triggered:** ~20-30 min including the V3-blessed predicate test and the test-helper migration.
+- **Cross-references:** B1.4 commit `f018a71`; V3 lookup-primitive entry (`6023f2a`).
+- **Severity:** LOW.
+
+### Post-B1.4: ActiveMeetingShareViewModel per-render re-derivation flicker on `.ended → .ended` transitions
+
+- **What:** `ContentView.makeShareModel()` re-derives `ActiveMeetingShareViewModel` on every body re-evaluation (matches the D9a `transcriptModel` pattern). `.task(id: activeShareIdentity())` keys on the phase's meetingID, so the reload task only re-fires on identifier change — bounding the fetch storm. However, between body re-eval and `.task(id:)` re-firing, the new VM's `snapshot` is briefly `nil`, which would hide the toolbar item momentarily.
+- **Why it's bounded today:** `.ended`'s `endedAt` is frozen at `finalizeStop` time and the phase tuple doesn't mutate until the next meeting starts. So the body shouldn't re-evaluate the `.ended` branch in a way that destroys + recreates the VM.
+- **Concrete trigger:** if `.ended`'s associated values ever become mutable post-`finalizeStop` (e.g., a future "amend transcript" feature that updates `endedAt`), OR if a user reports the Share icon flickering during the post-stop window, OR if a UI-screenshot regression test catches the flicker.
+- **Action when triggered:** hoist VM ownership above the re-render boundary — e.g., own the `ActiveMeetingShareViewModel` in `AppBootstrapper` keyed by meetingID, with `ContentView` reading it as `@State` / `@Bindable`. Or, simpler: gate the toolbar item on `snapshot != nil` AND a cached-prior-snapshot fallback so the icon doesn't blink during the transient `nil` window.
+- **Cost when triggered:** ~30-60 min depending on which mitigation. Hoisting ownership is invasive; the cached-prior-snapshot fallback is a single-line VM addition.
+- **Cross-references:** B1.4 commit `f018a71` (`ContentView.swift:151-201`).
+- **Severity:** LOW.
+
+### Post-B1.4: ContentView.activeMeetingExportURL — per-render synthesis cost
+
+- **What:** `ContentView.activeMeetingExportURL(snapshot:)` calls `TranscriptExporter.writeTemporaryFile(...)` synchronously on the calling thread, matching `MeetingDetailView.exportURL`'s pattern. The function runs on every toolbar re-evaluation. For MVP-1 transcript sizes (30-60 KB) this is fine; the `TranscriptExporter` type-level doc already acknowledges the synchronous-write scheduling assumption.
+- **Concrete trigger:** if the active-view toolbar starts re-rendering at high frequency (e.g., a future per-second timer-driven re-render pushes through the toolbar context, which is NOT the case today — the badge `TimelineView` is scoped to `MeetingControlsView` only). Alternative trigger: transcript sizes grow past ~500 KB (would correspond to a multi-hour meeting with dense translation).
+- **Action when triggered:** cache the export URL keyed by `(meetingID, sentencesCount)` in `ActiveMeetingShareViewModel` so the file is written once per snapshot and reused on subsequent re-renders. Identical pattern to a future cache in `MeetingDetailView.exportURL`.
+- **Cost when triggered:** ~20 min including the cache + a test that asserts the file path is stable across renders for the same snapshot.
+- **Cross-references:** B1.4 commit `f018a71`; `TranscriptExporter.swift` type-level doc.
+- **Severity:** LOW.

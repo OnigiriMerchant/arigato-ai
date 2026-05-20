@@ -5,6 +5,9 @@ Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
+- (this commit) docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
+- f018a71 feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (B1.4)
+- e236773 docs(p2): salvage v0.9.4-true findings from blocked v0.10.x migration
 - 823085a docs(group-d-reviewer-gate): file V3 batch for Pass 1 + Pass 2 findings + tooling adoption
 - de1778a docs(group-d-reviewer-gate): file state-machine audit table (Pass 1 deliverable)
 - 223318a docs(group-d-step-15): record Step 15 results + Group D 15-step COMPLETE + STOP-#5 V3 entry + project-default-isolation tally 4→5
@@ -326,7 +329,11 @@ Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **52 ahead, 0 behind** — full Group D checkpoint + docs trail across Steps 1–15 + V3 entries (Step 2 lookup-primitive, Step 3 STOP-precedence + commit-shape amendment, Step 3a wiring, Steps 4–8 checkpoint/docs pairs, Step 8's LFM2 + flake-consolidation + verification-rigor V3 entries, Step 9b DesignSystem + 9b V3 entries, Step 9a checkpoint/docs + Step 9a V3 entries + audit-first continuation V3 entry, Step-10-closure commit, Step 11's checkpoint + docs pair, Step 12's checkpoint + docs pair with FTS5 V3 entry filed, Step 13's checkpoint + docs pair with project-default-isolation V3 entry filed, Step 14's checkpoint + docs pair with three new onboarding V3 entries filed, Step 15's checkpoint + docs pair with the STOP-#5 deviation V3 entry and the project-default-isolation occurrence-count update to 5, plus the end-of-Group-D three-reviewer gate trail: Pass 1 STATE_MACHINE_AUDIT.md commit `de1778a`, Pass 2-prep V3 batch commit `823085a` with 6 entries + V3 #23 annotation + 2 tooling/adoption entries, and this Pass 3 close-out commit). **Not pushed per protocol — push pending explicit authorization. Three-reviewer gate has run and returned 0 BLOCKING across all 3 passes; CLAUDE.md "Don't" rule still gates the push.** Squash candidates (LFM2 amendment trail + Step 8 docs trail) PRESERVED per Pass 3 disposition — non-contiguity with Step 9b commits + no-interactive-rebase tooling constraint made the auditability cost of a bad squash exceed the readability benefit on a 52-commit chain. V3 hygiene grouping DEFERRED to existing Pre-MVP-1 V3 holistic review workstream (V3_BACKLOG.md:1212).
+- Origin/main: **3 ahead, 0 behind** — the prior 52-ahead Group D trail was pushed in the intervening window (the salvage commit's gate flagged the ahead-count drift). Current unpushed commits, all post-push-reconciliation:
+  - `e236773` docs(p2): salvage v0.9.4-true findings from blocked v0.10.x migration (2026-05-20)
+  - `f018a71` feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (2026-05-21, B1.4)
+  - this commit: docs hygiene — V3 entries + STATE_MACHINE_AUDIT.md update + this reconciliation
+- **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. Three-reviewer gate ran on B1.4 and returned 0 BLOCKING (1 HIGH from @code-reviewer resolved inline as checkpoint step 5 before squash-merge).
 - **P-2 LEAP SDK migration (2026-05-20)** — attempted v0.9.4 → v0.10.6, BLOCKED on upstream XCFramework packaging bug (`libinference_engine.dylib` records `@rpath/inference_engine_llamacpp_backend.framework/...` framework-form dependency but ships plain-dylib form; dyld cannot resolve, crash at launch). Bug affects BOTH v0.10.5 and v0.10.6 — not a v0.10.6-specific regression. v0.10.7 retains the same packaging. GitHub issue filed: https://github.com/Liquid4All/leap-sdk/issues/5. Two evidence worktrees parked for resumption when upstream ships a fix:
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints)
   - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints)
