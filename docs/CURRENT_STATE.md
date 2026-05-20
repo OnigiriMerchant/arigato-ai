@@ -5,7 +5,8 @@ Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
-- (this commit) docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
+- (this commit) docs(state): fix ahead-count miscount in post-B1.4 hygiene
+- 8b29e5d docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
 - f018a71 feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (B1.4)
 - e236773 docs(p2): salvage v0.9.4-true findings from blocked v0.10.x migration
 - 823085a docs(group-d-reviewer-gate): file V3 batch for Pass 1 + Pass 2 findings + tooling adoption
@@ -329,10 +330,10 @@ Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **3 ahead, 0 behind** — the prior 52-ahead Group D trail was pushed in the intervening window (the salvage commit's gate flagged the ahead-count drift). Current unpushed commits, all post-push-reconciliation:
-  - `e236773` docs(p2): salvage v0.9.4-true findings from blocked v0.10.x migration (2026-05-20)
+- Origin/main: **3 ahead, 0 behind** — the prior 52-ahead Group D trail was pushed in the intervening window, and the P-2 salvage commit `e236773` was pushed shortly thereafter (so it's no longer unpushed; the ahead-count drift the salvage's gate flagged is fully reconciled now). Current unpushed commits:
   - `f018a71` feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (2026-05-21, B1.4)
-  - this commit: docs hygiene — V3 entries + STATE_MACHINE_AUDIT.md update + this reconciliation
+  - `8b29e5d` docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
+  - this commit: docs(state): fix ahead-count miscount in post-B1.4 hygiene
 - **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. Three-reviewer gate ran on B1.4 and returned 0 BLOCKING (1 HIGH from @code-reviewer resolved inline as checkpoint step 5 before squash-merge).
 - **P-2 LEAP SDK migration (2026-05-20)** — attempted v0.9.4 → v0.10.6, BLOCKED on upstream XCFramework packaging bug (`libinference_engine.dylib` records `@rpath/inference_engine_llamacpp_backend.framework/...` framework-form dependency but ships plain-dylib form; dyld cannot resolve, crash at launch). Bug affects BOTH v0.10.5 and v0.10.6 — not a v0.10.6-specific regression. v0.10.7 retains the same packaging. GitHub issue filed: https://github.com/Liquid4All/leap-sdk/issues/5. Two evidence worktrees parked for resumption when upstream ships a fix:
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints)
