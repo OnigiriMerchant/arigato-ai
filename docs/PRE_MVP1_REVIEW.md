@@ -37,7 +37,7 @@
 | B1.2 | ✅ **Swift 6 mode build warnings** (V3 `66d08b0`) — **SHIPPED 2026-05-21**, commit `d54bec3`. All 5 warnings cleared in ~1h actual (under the 2.5h budget). | (d) Three of five warnings are Swift 6 language mode errors. Build breaks when strict mode tightens. | ~2.5h |
 | B1.3 | ✅ **Cumulative-load timing race in cancellation-ordering tests** (V3 `395e104`, bundles `#16`) — **SHIPPED 2026-05-22**, commit `fd9cba0`. Two distinct root causes (NOT shared — pre-flight diagnosed correctly); two distinct fixes. 5/5 default-parallel runs of both target tests; serial full suite back to 398/0/2. | (d) soft variant. Suite-green signal can't be trusted at ~1-in-5 first-run flake. Bundles `TranslationProtocolTests.translate_burstThenCancel` + `MeetingPipelineTests.pipeline_stop_...` (same `FakeTranslator` root cause). | ~1–2h |
 | B1.4 | **UI #9 Context A — toolbar ShareLink + remove cluster Share no-op** | (c) Locked product decision shipped in contradicting state. Labeled "Share" button does nothing on tap. | ~1–2h |
-| B1.5 | **StartupErrorView debug bypass** (*new entry, see appendix*) | (d) soft variant. Unblocks parallel UI device testing while LFM2 fix proceeds. | ~30 min |
+| B1.5 | ✅ **StartupErrorView debug bypass** (*new entry, see appendix*) — **SHIPPED 2026-05-17**, commit `2aba525`. | (d) soft variant. Unblocks parallel UI device testing while LFM2 fix proceeds. | ~30 min |
 
 **Sprint subtotal: 9.5–19h.**
 
@@ -232,7 +232,7 @@ Grouped by trigger family. All entries have zero MVP-1 blocker criteria firing.
 **Sprint Day 1 (sequential prereqs)**:
 ```
 1. B1.0  LEAP SDK skill v0.10.4.3 reconcile   ~30-60 min  ← MUST land before B1.1 pre-flight
-2. B1.5  StartupErrorView debug bypass        ~30 min     ← unblocks parallel UI device-test
+2. B1.5  StartupErrorView debug bypass        ~30 min     ← unblocks parallel UI device-test  ✅ SHIPPED 2026-05-17 (2aba525)
 3. B1.1  doc-researcher pre-flight dispatch   variable    ← gates B1.1 implementation effort
 ```
 
