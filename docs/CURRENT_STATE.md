@@ -1,11 +1,13 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D three-reviewer gate COMPLETE** (push pending explicit authorization). All 3 reviewer passes returned 0 BLOCKING. Suite 392 test runs / 0 failures (389 unique = 386 unit + 3 unique UI methods, 4 parametric testLaunch variants → 392 runs). Decisions: D15-1 prompt cache only, D15-2 StorageStatsProviding trio, D15-3 reuse fetchAllUnfiltered count. Next: explicit push authorization → `git push origin main` → pre-MVP-1 V3 holistic review → pre-MVP-1 hardening sprint.
+Last updated: 2026-05-21 — Pre-MVP-1 hardening sprint in flight. **B1.4 ✅ + B1.2 ✅ + B2.1 ✅** all shipped today (commits `f018a71` and `d54bec3`). Build clean: 0 main-target warnings, down from 5 distinct + 7 W5-emission duplicates pre-B1.2. Test suite under serial execution: 397 passed / 1 failed / 2 skipped; the 1 failure is the V3-tracked `translate_burstThenCancel` race (commit `395e104`, B1.3 sprint scope) in code B1.2 did not touch. Remaining sprint workstream: B1.1 (LFM2 model download — V3 `b851dad` upstream-blocked), B1.3 (cumulative-load timing race), B1.5 (StartupErrorView debug bypass, sequenced earlier per sprint Day 1). Decisions still locked: D15-1 prompt cache only, D15-2 StorageStatsProviding trio, D15-3 reuse fetchAllUnfiltered count.
 
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
-- (this commit) docs(state): fix ahead-count miscount in post-B1.4 hygiene
+- (this commit) docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped; reconcile state
+- d54bec3 fix(b1.2-b2.1): clear 6 Swift 6 build warnings
+- 5f672bf docs(state): fix ahead-count miscount in post-B1.4 hygiene
 - 8b29e5d docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
 - f018a71 feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (B1.4)
 - e236773 docs(p2): salvage v0.9.4-true findings from blocked v0.10.x migration
@@ -330,11 +332,13 @@ Last updated: 2026-05-17 — Phase 5 **Group D 15-step COMPLETE + end-of-Group-D
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **3 ahead, 0 behind** — the prior 52-ahead Group D trail was pushed in the intervening window, and the P-2 salvage commit `e236773` was pushed shortly thereafter (so it's no longer unpushed; the ahead-count drift the salvage's gate flagged is fully reconciled now). Current unpushed commits:
+- Origin/main: **5 ahead, 0 behind**. Current unpushed commits:
   - `f018a71` feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (2026-05-21, B1.4)
   - `8b29e5d` docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
-  - this commit: docs(state): fix ahead-count miscount in post-B1.4 hygiene
-- **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. Three-reviewer gate ran on B1.4 and returned 0 BLOCKING (1 HIGH from @code-reviewer resolved inline as checkpoint step 5 before squash-merge).
+  - `5f672bf` docs(state): fix ahead-count miscount in post-B1.4 hygiene
+  - `d54bec3` fix(b1.2-b2.1): clear 6 Swift 6 build warnings (2026-05-21, B1.2 + B2.1)
+  - this commit: docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped; reconcile state
+- **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. B1.2 + B2.1 dispatch did not require a fresh three-reviewer gate per dispatch scope ("Pure code-work"). B1.4's gate disposition unchanged (0 BLOCKING at landing).
 - **P-2 LEAP SDK migration (2026-05-20)** — attempted v0.9.4 → v0.10.6, BLOCKED on upstream XCFramework packaging bug (`libinference_engine.dylib` records `@rpath/inference_engine_llamacpp_backend.framework/...` framework-form dependency but ships plain-dylib form; dyld cannot resolve, crash at launch). Bug affects BOTH v0.10.5 and v0.10.6 — not a v0.10.6-specific regression. v0.10.7 retains the same packaging. GitHub issue filed: https://github.com/Liquid4All/leap-sdk/issues/5. Two evidence worktrees parked for resumption when upstream ships a fix:
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints)
   - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints)

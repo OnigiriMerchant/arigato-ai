@@ -515,6 +515,8 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 
 ### TranscriptionActorTests withLock unused-result warning
 
+**Status (2026-05-21):** ✅ **RESOLVED in B2.1** (commit `d54bec3`, bundled with B1.2). Fix shape: `_ = snapshot.throwOnCall.insert(n)` inside the existing `withLock` closure — discards the `Set.insert` return tuple so the closure returns Void and `withLock` is no longer flagged. Localised to the actual discard site rather than wrapping `withLock` itself.
+
 **What:** TranscriptionActorTests.swift:51 emits a "result of call to 'withLock' is unused" compiler warning. Pre-existing; surfaced during Group D Step 1 verification. Not Step 1's responsibility — predates the change.
 
 **Why deferred:** Group D scope discipline. Mid-group warning cleanup violates the swift-implementer scope rule. Carrying forward as a known-clean fix.
@@ -940,7 +942,8 @@ Cost estimate: ~15 min.
 
 ### Swift 6 mode build warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel
 
-- **What:** Five build warnings discovered during Step 9b verification, in files Step 9b did NOT touch:
+- **Status (2026-05-21):** ✅ **RESOLVED in B1.2** (commit `d54bec3`). All five warnings cleared. Live locations at fix time + diagnoses: W1 `MeetingStore.swift:187` (was the W1 site) → fixed by marking `MeetingSummary.init(from:)` `nonisolated`; W2 `AppBootstrapper.swift:577` (`await` was decorative) → dropped; W3 `AppBootstrapper.swift:586` + W4 `AppBootstrapper.swift:608` → added `[weak self]` to each inner `MainActor.run` closure; W5 ActionKind → `nonisolated enum`. No `nonisolated(unsafe)` required. Three pre-MVP-1 hardening sprint items (B1.2 + B2.1) collapsed into the same commit.
+- **What (original entry):** Five build warnings discovered during Step 9b verification, in files Step 9b did NOT touch:
   1. `MeetingStore.swift:183` — main-actor-isolated init called from nonisolated context.
   2. `AppBootstrapper.swift:463` — no 'async' operations in 'await' expression.
   3. `AppBootstrapper.swift:472` — captured `var 'self'` in concurrent code. **Swift 6 language mode error.**
@@ -1120,6 +1123,14 @@ Cost estimate: ~15 min.
   - V3 #41 / #42 / #43 / #44 (workflow automation bundle) — natural home for the CLAUDE.md update.
   - V3 entry "Agent verification rigor" (`66d08b0`) — related (rigor entry covers same-dispatch warning reporting; this entry covers same-step annotation forecasting).
   - 5 cumulative instances in Group D (Step 6, 9a, 11, 13, 15).
+
+### Project-default-isolation pattern — instance 5 ActionKind fixed in B1.2
+
+- **What:** B1.2 added `nonisolated` to `MeetingControlsViewModel.ActionKind`, clearing the Swift 6 language-mode warning that was instance 5 of the project-default-isolation pattern.
+- **Status of broader doctrine update:** CLAUDE.md clauses for `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` remain QUEUED — B1.2 did not absorb the doctrine work per reviewer-gate clarity preference.
+- **Trigger advanced:** from "next workflow automation pass OR pre-MVP-1 hardening" to **"pre-MVP-1 ship" (hard trigger)**. The doctrine clauses must land before MVP-1 ships so future agents stop rediscovering the pattern.
+- **Cost estimate:** ~30 min — unchanged from parent entry.
+- **Cross-references:** parent entry "Project-default-isolation pattern" (above); B1.2 commit `d54bec3` (this dispatch).
 
 
 ### Re-onboarding from Settings — let users re-view privacy promise after the fact
@@ -1503,3 +1514,4 @@ Five entries surfaced during the B1.4 dispatch (commit `f018a71`) and the three-
 - **Cost when triggered:** ~20 min including the cache + a test that asserts the file path is stable across renders for the same snapshot.
 - **Cross-references:** B1.4 commit `f018a71`; `TranscriptExporter.swift` type-level doc.
 - **Severity:** LOW.
+

@@ -34,7 +34,7 @@
 |---|---|---|---|
 | **B1.0** | **LEAP SDK skill v0.10.4.3 phantom-version reconcile** (`.claude/skills/leap-sdk/SKILL.md`) | (d) soft variant. Pre-flight for B1.1 will read this skill to verify SDK API surface. Wrong version reference contaminates pre-flight findings. Must land BEFORE B1.1 doc-researcher dispatches. | ~30–60 min |
 | B1.1 | **LFM2 model download fix** (V3 `b851dad` + 3 amendments) | (a) App cannot launch. `StartupErrorView` fires every launch. | 4–12h (SDK-API-dependent) |
-| B1.2 | **Swift 6 mode build warnings** (V3 `66d08b0`) | (d) Three of five warnings are Swift 6 language mode errors. Build breaks when strict mode tightens. | ~2.5h |
+| B1.2 | ✅ **Swift 6 mode build warnings** (V3 `66d08b0`) — **SHIPPED 2026-05-21**, commit `d54bec3`. All 5 warnings cleared in ~1h actual (under the 2.5h budget). | (d) Three of five warnings are Swift 6 language mode errors. Build breaks when strict mode tightens. | ~2.5h |
 | B1.3 | **Cumulative-load timing race in cancellation-ordering tests** (V3 `395e104`, bundles `#16`) | (d) soft variant. Suite-green signal can't be trusted at ~1-in-5 first-run flake. Bundles `TranslationProtocolTests.translate_burstThenCancel` + `MeetingPipelineTests.pipeline_stop_...` (same `FakeTranslator` root cause). | ~1–2h |
 | B1.4 | **UI #9 Context A — toolbar ShareLink + remove cluster Share no-op** | (c) Locked product decision shipped in contradicting state. Labeled "Share" button does nothing on tap. | ~1–2h |
 | B1.5 | **StartupErrorView debug bypass** (*new entry, see appendix*) | (d) soft variant. Unblocks parallel UI device testing while LFM2 fix proceeds. | ~30 min |
@@ -47,7 +47,7 @@
 
 | # | Entry | Why it earns the slot | Effort |
 |---|---|---|---|
-| B2.1 | **`TranscriptionActorTests withLock` unused-result warning** (`#38`) | Bundle with B1.2 Swift 6 work — already in warning-cleanup mindset. Pure free-ride. | ~5 min |
+| B2.1 | ✅ **`TranscriptionActorTests withLock` unused-result warning** (`#38`) — **SHIPPED 2026-05-21**, commit `d54bec3` (bundled with B1.2). | Bundle with B1.2 Swift 6 work — already in warning-cleanup mindset. Pure free-ride. | ~5 min |
 | B2.2 | **Scroll animation timing tuning** (Step 9a) | Iterative feel-check during MVP-1 device-testing window. *Not a Claude Code dispatch.* Tune duration in-device if it feels off. | ~10–15 min per iteration, in-device only |
 
 ---
@@ -239,10 +239,10 @@ Grouped by trigger family. All entries have zero MVP-1 blocker criteria firing.
 **Sprint Days 2–3 (parallel-capable)**:
 ```
 4. B1.1  LFM2 model download fix              4–12h       ← biggest unknown
-5. B1.2  Swift 6 mode build warnings          ~2.5h       ← concurrency-annotation mindset
-   B2.1  withLock unused-result warning       ~5 min      ← free-ride bundle with B1.2
+5. B1.2  Swift 6 mode build warnings          ~2.5h       ← concurrency-annotation mindset  ✅ SHIPPED 2026-05-21 (d54bec3)
+   B2.1  withLock unused-result warning       ~5 min      ← free-ride bundle with B1.2     ✅ SHIPPED 2026-05-21 (d54bec3)
 6. B1.3  Cumulative-load timing race          ~1–2h       ← test-discipline mindset
-7. B1.4  UI #9 Context A toolbar ShareLink    ~1–2h       ← isolated, last
+7. B1.4  UI #9 Context A toolbar ShareLink    ~1–2h       ← isolated, last                 ✅ SHIPPED 2026-05-21 (f018a71)
 ```
 
 **During MVP-1 device test window (in-device, not a Claude Code dispatch)**:
