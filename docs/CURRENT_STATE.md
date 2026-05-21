@@ -332,12 +332,11 @@ Last updated: 2026-05-21 — Pre-MVP-1 hardening sprint in flight. **B1.4 ✅ + 
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **5 ahead, 0 behind**. Current unpushed commits:
-  - `f018a71` feat(ui): wire active-meeting toolbar ShareLink + remove cluster Share no-op (2026-05-21, B1.4)
-  - `8b29e5d` docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
-  - `5f672bf` docs(state): fix ahead-count miscount in post-B1.4 hygiene
+- Origin/main: **4 ahead, 0 behind**. The prior B1.4 hygiene trail (`f018a71`, `8b29e5d`, `5f672bf`) was pushed at some point between B1.4-hygiene landing and the B1.2 dispatch starting; the stale `## Working tree` block in 5f672bf still listed them as unpushed when in fact they were not. Current actually-unpushed commits:
   - `d54bec3` fix(b1.2-b2.1): clear 6 Swift 6 build warnings (2026-05-21, B1.2 + B2.1)
-  - this commit: docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped; reconcile state
+  - `8455cac` docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped
+  - `b38e2fd` docs(v3): file end-of-project GitHub cleanup portfolio entry
+  - this commit: docs(state): reconcile post-B1.2 ahead-count (same miscount class as `5f672bf`)
 - **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. B1.2 + B2.1 dispatch did not require a fresh three-reviewer gate per dispatch scope ("Pure code-work"). B1.4's gate disposition unchanged (0 BLOCKING at landing).
 - **P-2 LEAP SDK migration (2026-05-20)** — attempted v0.9.4 → v0.10.6, BLOCKED on upstream XCFramework packaging bug (`libinference_engine.dylib` records `@rpath/inference_engine_llamacpp_backend.framework/...` framework-form dependency but ships plain-dylib form; dyld cannot resolve, crash at launch). Bug affects BOTH v0.10.5 and v0.10.6 — not a v0.10.6-specific regression. v0.10.7 retains the same packaging. GitHub issue filed: https://github.com/Liquid4All/leap-sdk/issues/5. Two evidence worktrees parked for resumption when upstream ships a fix:
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints)
