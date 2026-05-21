@@ -49,7 +49,9 @@ private final nonisolated class RecordingFakeWhisperClient: WhisperClient, @unch
     /// `n`-th call (1-based).
     func setThrowOnCall(_ n: Int) {
         state.withLock { snapshot in
-            snapshot.throwOnCall.insert(n)
+            // Discard the `Set.insert` return tuple so the closure returns
+            // Void and `withLock`'s result is not flagged as unused.
+            _ = snapshot.throwOnCall.insert(n)
         }
     }
 

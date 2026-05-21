@@ -574,7 +574,7 @@ final class AppBootstrapper {
             // Without persistence the meeting surface cannot run, and
             // the UI is routed to StartupErrorView via containerError
             // instead.
-            guard let container = await self?.container else { return }
+            guard let container = self?.container else { return }
 
             // Step 10: idempotency guard. A second invocation of
             // startPrewarm after the first has published coordinator
@@ -582,7 +582,7 @@ final class AppBootstrapper {
             // `coordinator` property's "Single-instance invariant"
             // note and the named violation test
             // `startPrewarm_secondInvocation_doesNotOverwriteLiveCoordinator`.
-            let alreadyPublished = await MainActor.run {
+            let alreadyPublished = await MainActor.run { [weak self] in
                 self?.coordinator != nil
             }
             if alreadyPublished == true { return }
@@ -604,7 +604,7 @@ final class AppBootstrapper {
             // two concurrent `startPrewarm()` invocations could both
             // observe `coordinator == nil` and both proceed to
             // construct a store + coordinator.
-            await MainActor.run {
+            await MainActor.run { [weak self] in
                 guard let strong = self, strong.coordinator == nil else { return }
                 strong.meetingStore = store
                 strong.coordinator = strong.makeCoordinator(store: store)

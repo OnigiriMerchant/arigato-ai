@@ -55,7 +55,15 @@ struct MeetingSummary: Equatable {
     /// Must be called from within ``MeetingStore``'s isolation context
     /// because `Meeting.sentences` is a SwiftData relationship and is
     /// not safe to touch across actor boundaries.
-    init(from meeting: Meeting) {
+    ///
+    /// Marked `nonisolated` for the same reason as the snippet-bearing
+    /// sibling below — the nonisolated ``MeetingStore`` `@ModelActor`
+    /// calls this from within its own isolation context, and all stored
+    /// properties are `Sendable`. Without `nonisolated` the project-default
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` makes this init
+    /// MainActor-isolated, which produced the Swift 6 language-mode warning
+    /// at ``MeetingStore/fetchAllUnfiltered()``'s `MeetingSummary(from:)` call site.
+    nonisolated init(from meeting: Meeting) {
         self.init(from: meeting, firstMatchSnippet: nil)
     }
 
@@ -73,11 +81,8 @@ struct MeetingSummary: Equatable {
     /// All stored properties are `Sendable`; the `@Model` read against
     /// `meeting` itself is the caller's responsibility (the store calls
     /// this only from within its own isolation context). The Step-6
-    /// counterpart ``init(from:)`` remains MainActor-isolated — that
-    /// pre-existing warning is V3-tracked (V3 entry "Swift 6 mode build
-    /// warnings in MeetingStore + AppBootstrapper + MeetingControlsViewModel"
-    /// item 1); Step 12 deliberately scopes the fix to its own new init
-    /// to avoid scope drift.
+    /// counterpart ``init(from:)`` is also marked `nonisolated` for the
+    /// same reason — both inits run on the store's isolation context.
     ///
     /// - Parameters:
     ///   - meeting: Live model — read on the actor's isolation context.

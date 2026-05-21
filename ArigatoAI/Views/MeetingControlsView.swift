@@ -384,7 +384,15 @@ final class MeetingControlsViewModel {
 
     /// Categorises in-flight taps so the view can disable other buttons
     /// while one is running.
-    enum ActionKind: Equatable {
+    ///
+    /// Marked `nonisolated` so the synthesized `Equatable` conformance is
+    /// usable from any context. Without `nonisolated`, the project-default
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` lifts the nested enum
+    /// into MainActor isolation, which makes its Equatable conformance
+    /// MainActor-isolated and produces a Swift 6 language-mode warning at
+    /// every consumer comparison site (instance 5 of the project-default-isolation
+    /// pattern — V3 entry "Project-default-isolation pattern").
+    nonisolated enum ActionKind: Equatable {
         case start
         case pause
         case resume
