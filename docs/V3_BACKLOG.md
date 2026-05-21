@@ -1515,3 +1515,20 @@ Five entries surfaced during the B1.4 dispatch (commit `f018a71`) and the three-
 - **Cross-references:** B1.4 commit `f018a71`; `TranscriptExporter.swift` type-level doc.
 - **Severity:** LOW.
 
+## Post-MVP-1 portfolio polish
+
+### End-of-project GitHub cleanup for portfolio
+
+- **What:** Treat the repo as a portfolio artifact after MVP-1 ships and stabilizes. Scope:
+  1. **README rewrite** — top-level problem statement (on-device JA↔EN meeting translation for personal use), solution narrative, architecture diagram (audio → WhisperKit → LanguageRouter → LFM2 → SwiftData → SwiftUI), demo section (GIF or short video of a real meeting capture), tech-stack badges (Swift 6, SwiftUI, SwiftData, WhisperKit, LEAP SDK, Apple Foundation Models, Anthropic API). Anchor the narrative on the "on-device, no telemetry, no cloud sync" privacy promise.
+  2. **Repo hygiene** — delete merged feature branches, prune stale docs (the larger `PHASE_*_HANDOFF.md` and `*_PRE_FLIGHT.md` docs probably want to move under `docs/archive/` rather than stay top-level in `docs/`), evaluate whether the commit history is salvageable for narrative or whether a separate "story" doc is the better artifact. The checkpoint-commit chain pattern reads as noise to outside viewers — consider whether the post-MVP-1 main is best presented as-is or via squashed feature commits on a dedicated `portfolio` orphan branch.
+  3. **Pinned screenshots/GIFs** — add a `docs/media/` directory with curated captures: split-screen view during a real meeting, history view, post-meeting transcript export, onboarding flow. Light + dark mode each.
+  4. **LICENSE check** — confirm an OSS license is present (or deliberately omitted with explanation); verify third-party license compatibility (WhisperKit Apache-2.0, LFM2 model license, LEAP SDK terms). Add a `THIRD_PARTY_LICENSES.md` if any of those impose attribution requirements we're not already meeting.
+  5. **"Built with Claude" attribution** — visible README badge + a short note acknowledging the citizen-dev workflow (Claude.ai strategic planning + Claude Code implementation, multi-subagent pipeline). Optional but matches the project's actual story.
+  6. **Write-up link** — if a separate write-up is produced (blog post, Substack, internal doc), link it from the README.
+- **Why deferred:** anything done before MVP-1 ships is premature; the repo's current shape is structured around active development (long handoff docs, checkpoint commits, V3 backlog), which is the right shape for now and the wrong shape for a portfolio first-impression.
+- **Concrete trigger:** MVP-1 has shipped (V3 `b851dad` cleared, all pre-MVP-1 hardening sprint entries closed) AND ~2-4 weeks of real personal-use stabilization has passed — long enough to have either real meeting demo footage or a definitive "this is the use I get out of it" narrative.
+- **Action when triggered:** bundle as a single ~2-3 hour weekend session. Order: (1) README rewrite first (forces the narrative decisions that drive everything else), (2) media capture (depends on README structure), (3) hygiene + license, (4) attribution + write-up link last.
+- **Cost when triggered:** ~2-3 hours total. README is the biggest chunk; the rest is mechanical.
+- **Cross-references:** none yet — this entry will accrue cross-references as MVP-1 ships and the portfolio-shape question crystallizes.
+- **Severity:** LOW (portfolio polish, not functional). The repo as-is is fine for a private personal project; this is upgrade work for whenever the repo becomes externally visible.
