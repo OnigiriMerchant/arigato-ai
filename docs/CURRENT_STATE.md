@@ -1,11 +1,15 @@
 # Current State — Arigato AI
 
-Last updated: 2026-05-21 — Pre-MVP-1 hardening sprint in flight. **B1.4 ✅ + B1.2 ✅ + B2.1 ✅** all shipped today (commits `f018a71` and `d54bec3`). Build clean: 0 main-target warnings, down from 5 distinct + 7 W5-emission duplicates pre-B1.2. Test suite under serial execution: 397 passed / 1 failed / 2 skipped; the 1 failure is the V3-tracked `translate_burstThenCancel` race (commit `395e104`, B1.3 sprint scope) in code B1.2 did not touch. Remaining sprint workstream: B1.1 (LFM2 model download — V3 `b851dad` upstream-blocked), B1.3 (cumulative-load timing race), B1.5 (StartupErrorView debug bypass, sequenced earlier per sprint Day 1). Decisions still locked: D15-1 prompt cache only, D15-2 StorageStatsProviding trio, D15-3 reuse fetchAllUnfiltered count.
+Last updated: 2026-05-22 — Pre-MVP-1 hardening sprint in flight. **B1.4 ✅ + B1.2 ✅ + B2.1 ✅ + B1.3 ✅** all shipped (commits `f018a71`, `d54bec3`, `fd9cba0`). Build clean: 0 main-target warnings. Test suite under serial execution: **398 passed / 0 failed / 2 skipped — baseline restored** (was 397/1/2 after B1.2 due to the `translate_burstThenCancel` race, now deterministically fixed). Under default parallel, B1.3's targets pass 5/5; the sibling V3-tracked AppBootstrapper parallel-clone flake (loader-fake family + simulator boot race) is now confirmed **independent** from B1.3 (the "shared root-cause class" V3 hypothesis was disproven by post-B1.3 verification). Remaining sprint workstream: B1.1 (LFM2 model download — V3 `b851dad` upstream-blocked), B1.5 (StartupErrorView debug bypass, sequenced earlier per sprint Day 1). Decisions still locked: D15-1 prompt cache only, D15-2 StorageStatsProviding trio, D15-3 reuse fetchAllUnfiltered count.
 
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
-- (this commit) docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped; reconcile state
+- (this commit) docs(b1.3): mark cumulative-load timing race RESOLVED; reconcile sprint state
+- fd9cba0 fix(b1.3): stabilize cancellation-ordering test timing race
+- 45d2991 docs(state): reconcile post-B1.2 ahead-count
+- b38e2fd docs(v3): file end-of-project GitHub cleanup portfolio entry
+- 8455cac docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped
 - d54bec3 fix(b1.2-b2.1): clear 6 Swift 6 build warnings
 - 5f672bf docs(state): fix ahead-count miscount in post-B1.4 hygiene
 - 8b29e5d docs: post-B1.4 hygiene — V3 entries, state machine audit, current state
@@ -332,12 +336,14 @@ Last updated: 2026-05-21 — Pre-MVP-1 hardening sprint in flight. **B1.4 ✅ + 
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **4 ahead, 0 behind**. The prior B1.4 hygiene trail (`f018a71`, `8b29e5d`, `5f672bf`) was pushed at some point between B1.4-hygiene landing and the B1.2 dispatch starting; the stale `## Working tree` block in 5f672bf still listed them as unpushed when in fact they were not. Current actually-unpushed commits:
+- Origin/main: **6 ahead, 0 behind**. Current unpushed commits:
   - `d54bec3` fix(b1.2-b2.1): clear 6 Swift 6 build warnings (2026-05-21, B1.2 + B2.1)
   - `8455cac` docs(b1.2-b2.1): mark Swift 6 warnings + withLock entries shipped
   - `b38e2fd` docs(v3): file end-of-project GitHub cleanup portfolio entry
-  - this commit: docs(state): reconcile post-B1.2 ahead-count (same miscount class as `5f672bf`)
-- **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. B1.2 + B2.1 dispatch did not require a fresh three-reviewer gate per dispatch scope ("Pure code-work"). B1.4's gate disposition unchanged (0 BLOCKING at landing).
+  - `45d2991` docs(state): reconcile post-B1.2 ahead-count
+  - `fd9cba0` fix(b1.3): stabilize cancellation-ordering test timing race (2026-05-22, B1.3)
+  - this commit: docs(b1.3): mark cumulative-load timing race RESOLVED; reconcile sprint state
+- **Push protocol active:** push pending explicit authorization per CLAUDE.md "Don't" rule. B1.3 dispatch did not require a fresh three-reviewer gate per dispatch scope ("test infrastructure only — no production code"). B1.2 + B2.1 + B1.4 gate dispositions unchanged.
 - **P-2 LEAP SDK migration (2026-05-20)** — attempted v0.9.4 → v0.10.6, BLOCKED on upstream XCFramework packaging bug (`libinference_engine.dylib` records `@rpath/inference_engine_llamacpp_backend.framework/...` framework-form dependency but ships plain-dylib form; dyld cannot resolve, crash at launch). Bug affects BOTH v0.10.5 and v0.10.6 — not a v0.10.6-specific regression. v0.10.7 retains the same packaging. GitHub issue filed: https://github.com/Liquid4All/leap-sdk/issues/5. Two evidence worktrees parked for resumption when upstream ships a fix:
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints)
   - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints)
