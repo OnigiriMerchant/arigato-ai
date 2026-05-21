@@ -84,8 +84,32 @@ private final nonisolated class ScriptedLanguagePipelineWhisperClient: WhisperCl
 /// records a cancellation stamp into the supplied ``StampRecorder``
 /// when the surrounding task is cancelled (used by the
 /// stop-cancel-ordering test).
+///
+/// **Scheduling assumption.** Once ``awaitParked()`` returns, the
+/// next ``transcribe(audio:anchorHostTime:)`` call has entered
+/// `withTaskCancellationHandler`'s body and parked inside
+/// ``parkUntilCancelled``. From that point, any cancellation of the
+/// surrounding task is guaranteed to fire the `onCancel` handler
+/// deterministically — there is no race window where the task can be
+/// cancelled before the cancellation handler is registered.
+///
+/// **Why this exists.** The stop-cancel-ordering test
+/// (`pipeline_stop_awaitsRouterCancelThenTranslatorCancel_inOrder`)
+/// asserts router-cancel runs before translator-cancel via timestamp
+/// comparison. Without the parked signal, the test relied on
+/// sleep-by-yield (`awaitCondition` + manual `Task.yield()` loop) to
+/// guess when transcribe was parked — flaking under suite-level
+/// parallel-clone scheduler pressure when the body hadn't yet entered
+/// the cancellation handler at stop-time. Documented under V3
+/// "Full-suite parallel-execution flake".
 private final nonisolated class CancelObservingWhisperClient: WhisperClient, @unchecked Sendable {
     private let recorder: StampRecorder
+    private let parkState = OSAllocatedUnfairLock(initialState: ParkState())
+
+    private struct ParkState {
+        var isParked: Bool = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
 
     init(recorder: StampRecorder) {
         self.recorder = recorder
@@ -93,11 +117,39 @@ private final nonisolated class CancelObservingWhisperClient: WhisperClient, @un
 
     func prewarmModels() async throws {}
 
+    /// Waits until a subsequent ``transcribe(audio:anchorHostTime:)``
+    /// call enters `withTaskCancellationHandler` and parks. Replaces
+    /// the previous sleep-by-yield handshake pattern in
+    /// `pipeline_stop_awaitsRouterCancelThenTranslatorCancel_inOrder`.
+    func awaitParked() async {
+        await withCheckedContinuation { continuation in
+            let alreadyParked = parkState.withLock { snapshot -> Bool in
+                if snapshot.isParked { return true }
+                snapshot.waiter = continuation
+                return false
+            }
+            if alreadyParked {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func signalParked() {
+        let waiter = parkState.withLock { snapshot -> CheckedContinuation<Void, Never>? in
+            snapshot.isParked = true
+            let w = snapshot.waiter
+            snapshot.waiter = nil
+            return w
+        }
+        waiter?.resume()
+    }
+
     func transcribe(
         audio _: [Float],
         anchorHostTime: UInt64
     ) async throws -> WhisperWindowResult {
         await withTaskCancellationHandler {
+            signalParked()
             await parkUntilCancelled()
         } onCancel: { [recorder] in
             recorder.bumpRouter()
@@ -659,25 +711,14 @@ struct MeetingPipelineTests {
         // we observe cancel ordering.
         await fixture.pipeline.start(frames: frames)
 
-        // Wait until the WhisperClient parks (router cancel will then
-        // observe its task cancellation).
-        let parked = await awaitCondition(iterations: 5000) {
-            // We can't directly observe parking, but once the
-            // transcriber's first inflight call enters
-            // `withTaskCancellationHandler`, the call to stop() will
-            // surface the cancel. So wait until the pipeline task
-            // has been initialised (it has — we already returned from
-            // start()). A short yield budget is sufficient.
-            true
-        }
-        #expect(parked)
-        // Give the pipeline task some yields to actually reach the
-        // routerStream's for-try-await iteration, which causes the
-        // TranscriptionActor's windowStream drain to begin and the
-        // WhisperClient's transcribe call to park.
-        for _ in 0 ..< 50 {
-            await Task.yield()
-        }
+        // Deterministic park handshake: wait until the WhisperClient's
+        // `transcribe(...)` call has entered `withTaskCancellationHandler`
+        // and parked. From this point, `stop()`'s task cancellation is
+        // guaranteed to fire the WhisperClient's `onCancel` and record
+        // the router stamp. Replaces the prior sleep-by-yield pattern
+        // (`awaitCondition { true }` + 50 manual `Task.yield()`s) that
+        // flaked under suite-level parallel-clone scheduler pressure.
+        await whisper.awaitParked()
 
         await fixture.pipeline.stop()
         framesCont.finish()

@@ -21,10 +21,32 @@ import Foundation
 /// iteration awaits before pulling the next.
 ///
 /// **Cancellation semantics.** ``cancel()`` finishes the current event
-/// stream without throwing and cancels the producer task. The configured
-/// failure is preserved across cancel — callers that want a follow-up
-/// ``translate(segments:direction:)`` call to succeed must explicitly
-/// invoke ``setConfiguredFailure(_:)`` with `nil` between calls.
+/// stream without throwing AND awaits the producer task's full tear-down
+/// before returning. By the time `await translator.cancel()` returns, the
+/// prior session is guaranteed to be fully done — the next
+/// ``translate(segments:direction:)`` call cannot race with a stale
+/// producer-task hop that would otherwise finish the new session's stream
+/// empty. The configured failure is preserved across cancel — callers
+/// that want a follow-up ``translate(segments:direction:)`` call to
+/// succeed must explicitly invoke ``setConfiguredFailure(_:)`` with
+/// `nil` between calls.
+///
+/// **Scheduling assumption.** The producer task body owns its
+/// `AsyncThrowingStream.Continuation` via closure capture and finishes
+/// the stream directly from the task — it does NOT re-enter the actor
+/// to do so. This is deliberate: re-entering the actor from inside the
+/// producer would deadlock against `cancel()` (which holds the actor
+/// while awaiting `task.value`). Actor-held refs (`activeTask`,
+/// `activeContinuation`) are cleared by `cancel()` only; the producer
+/// never mutates actor state after spawn.
+///
+/// **Named violation test:**
+/// `translate_burstThenCancelFinishesStreamWithoutError` exercises the
+/// reusability contract under cancel — drives a burst, cancels mid-stream,
+/// then issues a fresh `translate(...)` and asserts the new session emits
+/// its `.completed` event. Without the deterministic `cancel()`-awaits-tear-down
+/// contract above, the new session's continuation can be finished by the
+/// prior session's stale task hop under suite-level scheduler pressure.
 actor FakeTranslator: Translating {
     /// The currently observable warmup state. Tests inspect this via
     /// ``warmupState()`` to assert state transitions.
@@ -71,9 +93,12 @@ actor FakeTranslator: Translating {
         activeContinuation = continuation
 
         let failure = configuredFailure
-        let task = Task { [weak self] in
+        let task = Task {
+            // The producer owns the continuation via closure capture and
+            // finishes the stream directly — it does NOT re-enter the
+            // actor. See the type-level scheduling-assumption note.
             if let failure {
-                await self?.finishActiveStream(throwing: failure)
+                continuation.finish(throwing: failure)
                 return
             }
 
@@ -96,7 +121,7 @@ actor FakeTranslator: Translating {
                 continuation.yield(.completed(translated))
             }
 
-            await self?.finishActiveStream(throwing: nil)
+            continuation.finish()
         }
         activeTask = task
 
@@ -105,20 +130,14 @@ actor FakeTranslator: Translating {
 
     func cancel() async {
         activeContinuation?.finish()
-        activeTask?.cancel()
+        let task = activeTask
         activeContinuation = nil
         activeTask = nil
-    }
-
-    /// Helper isolated to the actor so the producer task can finish the
-    /// stream and clear the held continuation in one hop.
-    private func finishActiveStream(throwing error: TranslationError?) {
-        if let error {
-            activeContinuation?.finish(throwing: error)
-        } else {
-            activeContinuation?.finish()
-        }
-        activeContinuation = nil
-        activeTask = nil
+        task?.cancel()
+        // Await the producer task's full tear-down before returning so
+        // callers (and any follow-up `translate(...)` call) cannot race
+        // a stale post-cancel hop. Safe because the producer task body
+        // does not re-enter the actor — no deadlock against this hold.
+        await task?.value
     }
 }
