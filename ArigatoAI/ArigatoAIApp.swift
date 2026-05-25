@@ -34,11 +34,20 @@ struct ArigatoAIApp: App {
     /// launch; the body switches to ``StartupErrorView`` in that case.
     private let sharedModelContainer: ModelContainer?
 
+    /// The production SwiftData schema — the single source of truth for the
+    /// entity set registered in ``init()``. Extracted as a static factory so
+    /// `ArigatoAIAppTests.productionContainer_registersMeetingAndSentence` can
+    /// assert the registered entities without instantiating the App itself
+    /// (whose `init()` fires `startPrewarm()` background side effects).
+    static func makeAppSchema() -> Schema {
+        Schema([Meeting.self, Sentence.self])
+    }
+
     init() {
         let container: ModelContainer?
         var containerError: Error?
         do {
-            let schema = Schema([Item.self])
+            let schema = Self.makeAppSchema()
             let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             container = try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
