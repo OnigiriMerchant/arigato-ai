@@ -44,8 +44,8 @@ Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond 
 | 2.5 | Physical iPhone deployment | ⏸️ Deferred (triggers when Phase 4 needs real mic hardware) |
 | 3 | Audio capture foundation | ✅ Shipped |
 | 4 | WhisperKit streaming transcription | ✅ Shipped |
-| 5 | LFM2 translation | 🟡 Shipping — Groups A–D shipped via SDK v0.9.4 (legacy `Liquid4All/leap-ios` repo). B1.1 (model download) upstream-blocked on `Liquid4All/leap-sdk` issue #5 ([iOS] v0.10.6+ Launch Crash: broken @rpath dependency — framework-bundle path vs shipped plain-dylib form). Filed by project 2026-05-20; no maintainer engagement as of 2026-05-25. v0.9.4 is the deliberate workaround pin. |
-| 6 | SwiftData transcript storage | 🟡 Shipped in code / production wiring broken (B1.6) — Meeting/Sentence entities, MeetingStore @ModelActor, auto-save, history list, detail view, search, export, delete-all all shipped via Group D. Production SwiftData container registers `Schema([Item.self])` only — Meeting/Sentence absent. Fix tracked as B1.6. |
+| 5 | LFM2 translation | 🟡 Shipping — Groups A–D shipped via SDK v0.9.4 (legacy `Liquid4All/leap-ios` repo). **v0.9.4 is the MVP-1 ship channel per 2026-05-25 user decision.** v0.10.x migration deferred to v1.x (tracked in V3). |
+| 6 | SwiftData transcript storage | ✅ Shipped — Meeting/Sentence entities, MeetingStore @ModelActor, auto-save, history list, detail view, search, export, delete-all all shipped via Group D. Production SwiftData container schema fixed in B1.6 (`32abc3e`, 2026-05-25): now registers `Schema([Meeting.self, Sentence.self])`. |
 | 7 | UI polish | ⏳ Pending — minimal DesignSystem namespace shipped (Step 9b); V3 #22 ambient-intelligence pass not started |
 | 8 | Export + ShareLink | ✅ Shipped — Markdown bilingual export; active-view + detail-view ShareLink contexts. Multi-select context (UI #13) deferred. |
 | 9 | AI summary | ⏳ Pending — genuinely untouched |
