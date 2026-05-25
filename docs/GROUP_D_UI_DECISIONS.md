@@ -174,6 +174,8 @@ History is accessed via a history icon (clock or list icon) in the top-right of 
 
 ### 13. History — multi-select delete + share
 
+> **Update 2026-05-25:** MVP-1 ships with swipe-to-delete + undo toast only (per user decision). Multi-select deferred to v1.x — see V3_BACKLOG entry "Multi-select delete (Decision #13 deferred from MVP-1)".
+
 History view shows past meetings as a list, sorted newest first. Long-press enters multi-select mode. User taps multiple meetings via checkboxes. Bottom action bar shows "Share N" + "Delete N" actions.
 
 **Per-meeting card metadata to show in list:**

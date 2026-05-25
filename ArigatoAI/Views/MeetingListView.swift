@@ -69,6 +69,12 @@ struct MeetingListView: View {
     /// Held as `@State` so SwiftUI retains it across re-renders.
     @State private var model: MeetingListViewModel
 
+    /// Drives the commit-on-background edge case (MVP-1 feature #8). When
+    /// the scene leaves the foreground (`.background` / `.inactive`) any
+    /// pending deletion is committed immediately so an app-switch / lock
+    /// does not leave an un-committed delete dangling.
+    @Environment(\.scenePhase) private var scenePhase
+
     /// The actor-backed read source. Retained as a stored property so
     /// the Step 11 `.navigationDestination(for: MeetingSummary.self)` can
     /// hand it through to ``MeetingDetailView``'s production init.
@@ -102,7 +108,8 @@ struct MeetingListView: View {
     init(store: MeetingStore) {
         self.store = store
         _model = State(wrappedValue: MeetingListViewModel(
-            fetcher: { needle in try await store.fetchAll(searchText: needle) }
+            fetcher: { needle in try await store.fetchAll(searchText: needle) },
+            deleter: { id in try await store.deleteMeeting(meetingID: id) }
         ))
     }
 
@@ -116,7 +123,7 @@ struct MeetingListView: View {
 
     var body: some View {
         Group {
-            if model.meetings.isEmpty && model.loadError == nil {
+            if model.visibleMeetings.isEmpty && model.loadError == nil {
                 // Step 12: when the user has typed a query that produced
                 // zero results, the native iOS pattern is
                 // `ContentUnavailableView.search`. Step 6's "No meetings yet"
@@ -125,6 +132,12 @@ struct MeetingListView: View {
                 // bind value; the contract here is "user has typed
                 // anything" so the raw isEmpty check is correct (not the
                 // post-trim emptiness used by the store).
+                //
+                // Feature #8: the check uses `visibleMeetings` (not
+                // `meetings`) so swiping away the last row flips to the
+                // empty state behind the still-visible undo toast. That is
+                // intentional — the toast overlay below renders regardless
+                // of which branch this `Group` picks.
                 if model.searchText.isEmpty {
                     emptyState
                 } else {
@@ -133,6 +146,36 @@ struct MeetingListView: View {
             } else {
                 listContent
             }
+        }
+        // Feature #8: the undo toast is overlaid on the whole screen so it
+        // shows over both the list branch and the empty-state branch (last
+        // row swiped). The toast is dumb — it owns no timer; dismissal is
+        // driven by the model clearing `pendingDeletion`.
+        .overlay(alignment: .bottom) {
+            if let pending = model.pendingDeletion {
+                PendingDeletionToast(
+                    deadline: pending.deadline,
+                    window: model.undoWindowForToast,
+                    message: deletionMessage(for: pending.summary),
+                    onUndo: { model.undoPendingDeletion() }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: model.pendingDeletion)
+        // Feature #8: commit any pending deletion when the scene leaves the
+        // foreground so an app-switch / lock does not strand the delete.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background || newPhase == .inactive {
+                Task { await model.commitPendingDeletionNow() }
+            }
+        }
+        // Feature #8: leaving History (pop, or starting a new meeting,
+        // which requires leaving History) commits the pending deletion.
+        .onDisappear {
+            Task { await model.commitPendingDeletionNow() }
         }
         .navigationTitle("History")
         // Step 12: native iOS search bar two-way-bound to the VM's
@@ -180,6 +223,16 @@ struct MeetingListView: View {
         }
     }
 
+    /// Builds the undo-toast message for a pending deletion. Uses the
+    /// meeting title in quotes when non-empty, else a generic fallback.
+    private func deletionMessage(for summary: MeetingSummary) -> String {
+        let trimmed = summary.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return "Meeting deleted"
+        }
+        return "Deleted \"\(trimmed)\""
+    }
+
     /// Empty-state placeholder shown when the store has no meetings yet
     /// and no error has surfaced. Pure stock SwiftUI styling.
     private var emptyState: some View {
@@ -208,13 +261,25 @@ struct MeetingListView: View {
     /// Step 13.
     private var listContent: some View {
         List {
-            ForEach(model.meetings, id: \.id) { summary in
+            ForEach(model.visibleMeetings, id: \.id) { summary in
                 // Step 11: row-tap pushes the detail destination. The
                 // value-based form (over the closure-label form) lets
                 // SwiftUI route the value through `.navigationDestination`
                 // below so destination construction is centralized.
                 NavigationLink(value: summary) {
                     MeetingListRow(summary: summary)
+                }
+                // Feature #8: trailing swipe → soft-delete with a 5s undo
+                // window. `allowsFullSwipe` lets a long swipe trigger
+                // delete directly. The actual store delete is deferred by
+                // the model until the window closes (or another swipe
+                // supersedes it); see ``MeetingListViewModel/requestDelete(_:)``.
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) {
+                        model.requestDelete(summary)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
         }
@@ -294,6 +359,20 @@ extension MeetingSummary: Hashable {
 @MainActor
 @Observable
 final class MeetingListViewModel {
+    /// A single in-flight swipe-to-delete awaiting its undo window
+    /// (MVP-1 feature #8). Holds the removed summary so undo can restore
+    /// the row and commit can resolve the store delete, plus the absolute
+    /// `deadline` at which the window closes (consumed by
+    /// ``PendingDeletionToast`` for its shrinking progress bar).
+    struct PendingDeletion: Equatable {
+        /// The summary swiped away — still present in ``meetings`` but
+        /// filtered out of ``visibleMeetings`` until commit drops it.
+        let summary: MeetingSummary
+        /// Absolute wall-clock time the undo window closes. `.now +
+        /// undoWindow` at arming time.
+        let deadline: Date
+    }
+
     /// Last-loaded summaries, newest-first.
     private(set) var meetings: [MeetingSummary] = []
 
@@ -333,14 +412,95 @@ final class MeetingListViewModel {
     /// `searchText` mutation.
     private var pendingSearch: Task<Void, Never>?
 
+    // MARK: - Swipe-to-delete + undo (MVP-1 feature #8)
+
+    /// The single in-flight swipe-to-delete awaiting its undo window, or
+    /// `nil` when nothing is pending. **At most one** — a fresh swipe
+    /// commits any prior pending deletion immediately (last-wins) before
+    /// installing itself here. The view renders ``PendingDeletionToast``
+    /// while this is non-nil and iterates ``visibleMeetings`` so the
+    /// pending row stays hidden.
+    private(set) var pendingDeletion: PendingDeletion?
+
+    /// The single undo-window timer. Sleeps ``undoWindow`` then commits
+    /// the pending deletion. Cancelled by ``undoPendingDeletion()``,
+    /// ``commitPendingDeletionNow()``, and by a superseding
+    /// ``requestDelete(_:)``. Stored separately from ``pendingDeletion``
+    /// so cancellation is cheap and the value type stays `Equatable`.
+    private var deletionTimer: Task<Void, Never>?
+
+    /// Resolves the store-side delete when a pending deletion commits.
+    /// `nil` in fetcher-only test construction — committing then updates
+    /// only local state (drops the ID from ``meetings``) and skips the
+    /// store call. Production wiring closes over
+    /// ``MeetingStore/deleteMeeting(meetingID:)``.
+    private let deleter: (@Sendable (PersistentIdentifier) async throws -> Void)?
+
+    /// IDs whose store-side commit is currently in flight. Used as an
+    /// idempotency guard so the same ID is never handed to ``deleter``
+    /// twice when overlapping triggers (the 5s timer, the
+    /// `scenePhase`→background handler, and `.onDisappear`) all race to
+    /// commit the same pending deletion. An ID is inserted before the
+    /// `await deleter` and removed via `defer` after it returns;
+    /// ``visibleMeetings`` also filters on this set so the row stays
+    /// continuously hidden for the full duration of the in-flight commit
+    /// (the `pendingDeletion` slot is cleared synchronously before the
+    /// await, so the in-flight set is what keeps the row out of view
+    /// during the window between clear and store-completion).
+    private var committingIDs: Set<PersistentIdentifier> = []
+
+    /// Length of the undo window. Production leaves the 5-second default;
+    /// tests inject a short window to exercise the timeout-commit path
+    /// without a real 5-second wait.
+    private let undoWindow: Duration
+
+    /// Read-only view of ``undoWindow`` for ``PendingDeletionToast`` to
+    /// size its shrinking progress bar (`remaining / window`). Exposed
+    /// because the bar's denominator is the full window, and the toast is
+    /// dumb — it computes nothing about timing it isn't handed.
+    var undoWindowForToast: Duration {
+        undoWindow
+    }
+
+    /// Summaries the view should render: ``meetings`` with the
+    /// currently-pending deletion's ID filtered out AND any IDs whose
+    /// store-side commit is in flight (``committingIDs``). The view
+    /// iterates **this**, not ``meetings``, so a ``reload()`` fired by the
+    /// auto-save subscriber that re-fetches the not-yet-committed meeting
+    /// does NOT make the swiped row reappear — the row is hidden purely by
+    /// the pending-ID filter regardless of what ``meetings`` contains.
+    ///
+    /// The ``committingIDs`` term keeps the row hidden continuously while
+    /// ``commitPendingDeletionNow()`` clears ``pendingDeletion``
+    /// synchronously *before* its `await deleter`: without it, the row
+    /// would briefly reappear in the window between clearing the pending
+    /// slot and the store delete completing.
+    var visibleMeetings: [MeetingSummary] {
+        meetings.filter { $0.id != pendingDeletion?.summary.id && !committingIDs.contains($0.id) }
+    }
+
     /// Designated initializer.
     ///
-    /// - Parameter fetcher: The Sendable async closure called by
-    ///   ``reload()``. Production wiring closes over the
-    ///   ``MeetingStore`` actor handle (Step 12 wires
-    ///   ``MeetingStore/fetchAll(searchText:)``).
-    init(fetcher: @escaping @Sendable (String) async throws -> [MeetingSummary]) {
+    /// - Parameters:
+    ///   - fetcher: The Sendable async closure called by ``reload()``.
+    ///     Production wiring closes over the ``MeetingStore`` actor handle
+    ///     (Step 12 wires ``MeetingStore/fetchAll(searchText:)``).
+    ///   - deleter: Optional Sendable async closure called when a pending
+    ///     deletion commits. Production wires
+    ///     ``MeetingStore/deleteMeeting(meetingID:)``; `nil` in
+    ///     fetcher-only test construction (commit then updates local
+    ///     state only).
+    ///   - undoWindow: Length of the undo window. Defaults to 5 seconds
+    ///     (the UI contract); tests inject a short window to drive the
+    ///     timeout-commit path quickly.
+    init(
+        fetcher: @escaping @Sendable (String) async throws -> [MeetingSummary],
+        deleter: (@Sendable (PersistentIdentifier) async throws -> Void)? = nil,
+        undoWindow: Duration = .seconds(5)
+    ) {
         self.fetcher = fetcher
+        self.deleter = deleter
+        self.undoWindow = undoWindow
     }
 
     /// Pulls the latest summaries across the actor hop, passing the
@@ -408,6 +568,195 @@ final class MeetingListViewModel {
             guard !Task.isCancelled else { return }
             guard let self else { return }
             self.searchTrigger = UUID()
+        }
+    }
+
+    // MARK: - Swipe-to-delete + undo state machine
+
+    /// Handles a swipe-to-delete on `summary`. Installs `summary` as the
+    /// sole ``pendingDeletion`` and arms a single ``undoWindow`` timer
+    /// that commits the delete when it fires. The row vanishes
+    /// immediately (it is excluded from ``visibleMeetings``) but is not
+    /// committed to the store until the window closes or
+    /// ``commitPendingDeletionNow()`` runs; ``undoPendingDeletion()``
+    /// restores it.
+    ///
+    /// ## Scheduling assumption (Concurrency design discipline)
+    ///
+    /// This design assumes **at most one** pending deletion and **at most
+    /// one** timer `Task`. The armed `undoWindow` `Task` assumes no second
+    /// `requestDelete(_:)` arrives before it fires.
+    ///
+    /// **When that assumption is violated** (a second swipe arrives while
+    /// one is still pending), the policy is **last-wins**: the prior
+    /// pending deletion is committed *immediately* (its store delete is
+    /// awaited and its ID dropped from ``meetings`` on success), its timer
+    /// cancelled, and only the newest swipe becomes the undoable
+    /// ``pendingDeletion`` with a fresh window. Only the newest is ever
+    /// undoable; older swipes are already gone. ``undoPendingDeletion()``
+    /// and ``commitPendingDeletionNow()`` both cancel the timer so it
+    /// cannot double-fire.
+    ///
+    /// **Concurrent-trigger idempotency.** Beyond a superseding swipe, the
+    /// same pending deletion can be driven to commit by three overlapping
+    /// triggers — the undo-window timer, the `scenePhase`→background
+    /// handler, and `.onDisappear`. ``commitPendingDeletionNow()`` clears
+    /// ``pendingDeletion`` synchronously before its await (so a second
+    /// trigger early-outs on its `guard`) and ``commit(_:)`` guards on the
+    /// in-flight ``committingIDs`` set, so ``deleter`` fires **at most once
+    /// per ID** regardless of how the triggers interleave. The row stays
+    /// hidden continuously because ``visibleMeetings`` filters on
+    /// ``committingIDs`` for the in-flight duration. See
+    /// ``MeetingListDeleteTests/meetingListDelete_concurrentCommitNow_deletesExactlyOnce``.
+    ///
+    /// Named violation test:
+    /// ``MeetingListDeleteTests/meetingListDelete_rapidDoubleSwipe_firstCommitsImmediately_secondPends``
+    /// — issues two `requestDelete(_:)` calls back-to-back and asserts the
+    /// first ID is committed (recorded by the test deleter) while the
+    /// second is the sole `pendingDeletion`, not yet committed, with both
+    /// excluded from `visibleMeetings`.
+    func requestDelete(_ summary: MeetingSummary) {
+        // Last-wins: capture any prior pending deletion, then synchronously
+        // install the new one and arm its window so `visibleMeetings`
+        // hides the new row immediately and no commit-Task ordering race
+        // can leave the wrong row pending. The prior deletion's store
+        // commit is performed off the captured value (not via the live
+        // `pendingDeletion`, which now holds the new row).
+        let prior = pendingDeletion
+        deletionTimer?.cancel()
+        deletionTimer = nil
+        pendingDeletion = nil
+
+        armPendingDeletion(summary)
+
+        if let prior {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.commit(prior)
+            }
+        }
+    }
+
+    /// Installs `summary` as the pending deletion and arms the single
+    /// undo-window timer. Separated from ``requestDelete(_:)`` so the
+    /// supersede-then-arm ordering reads in one place.
+    private func armPendingDeletion(_ summary: MeetingSummary) {
+        let window = undoWindow
+        let deadline = Date.now.addingTimeInterval(Self.seconds(from: window))
+        pendingDeletion = PendingDeletion(summary: summary, deadline: deadline)
+        deletionTimer = Task { [weak self] in
+            try? await Task.sleep(for: window)
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            await self.commitPendingDeletionNow()
+        }
+    }
+
+    /// Converts a `Duration` to a `TimeInterval` (seconds) for `Date`
+    /// math. Uses the `Duration`'s attoseconds-precision components.
+    private static func seconds(from duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds)
+            + TimeInterval(components.attoseconds) / 1e18
+    }
+
+    /// Cancels the pending deletion before its window closes. The timer
+    /// `Task` is cancelled and ``pendingDeletion`` cleared; the row
+    /// reappears via ``visibleMeetings`` because it was never dropped from
+    /// ``meetings``. No store delete is performed.
+    func undoPendingDeletion() {
+        deletionTimer?.cancel()
+        deletionTimer = nil
+        pendingDeletion = nil
+    }
+
+    /// Commits the pending deletion right now — used by the timeout path,
+    /// by scene-backgrounding / view-disappear, and by a superseding
+    /// ``requestDelete(_:)``. Cancels the timer, clears ``pendingDeletion``
+    /// **synchronously** (so a second concurrent trigger early-outs on the
+    /// `guard`), then awaits the store commit via ``commit(_:)``.
+    ///
+    /// ## Concurrent-trigger convergence (Concurrency design discipline)
+    ///
+    /// Three triggers can fire for the same pending deletion: the 5-second
+    /// undo-window timer, the `scenePhase`→`.background`/`.inactive`
+    /// handler, and `.onDisappear`. Before this hardening they overlapped:
+    /// each cleared ``pendingDeletion`` only *after* its `await commit`
+    /// returned, so two could both pass the `guard let pending` and hand
+    /// the same ID to ``deleter`` twice. Now the slot is cleared
+    /// synchronously here (a second call early-outs on the `guard`) and
+    /// ``commit(_:)`` additionally guards on ``committingIDs`` so the
+    /// store delete fires **at most once per ID**. The row stays hidden
+    /// continuously because ``visibleMeetings`` filters on
+    /// ``committingIDs`` for the in-flight duration even after the pending
+    /// slot is cleared. All three triggers therefore converge
+    /// idempotently. Named violation test:
+    /// ``MeetingListDeleteTests/meetingListDelete_concurrentCommitNow_deletesExactlyOnce``.
+    ///
+    /// Idempotent and safe when nothing is pending — returns immediately.
+    /// On a store-side throw, the ID is **not** dropped from ``meetings``
+    /// (local state stays consistent with the store, where the meeting
+    /// still exists) and the error surfaces through ``loadError``; the row
+    /// reappears once ``committingIDs`` clears.
+    func commitPendingDeletionNow() async {
+        guard let pending = pendingDeletion else { return }
+        deletionTimer?.cancel()
+        deletionTimer = nil
+        // Clear the pending slot SYNCHRONOUSLY before the await so a second
+        // concurrent trigger (timer / background / disappear) early-outs on
+        // the `guard let pending` above. The row stays hidden across the
+        // in-flight commit because `commit(_:)` inserts the ID into
+        // `committingIDs` and `visibleMeetings` filters on that set.
+        pendingDeletion = nil
+        await commit(pending)
+    }
+
+    /// Performs the store-side commit for a captured ``PendingDeletion``:
+    /// awaits the ``deleter`` (skipped when `nil`) and, **on success**,
+    /// drops the committed ID from ``meetings``. Does **not** touch
+    /// ``pendingDeletion`` — the caller owns the pending slot, which lets
+    /// ``requestDelete(_:)`` commit a *prior* deletion while a newer one
+    /// already occupies the slot.
+    ///
+    /// ## Idempotency under concurrent triggers
+    /// Guards on ``committingIDs``: if this ID's commit is already in
+    /// flight the call returns immediately, so overlapping triggers never
+    /// invoke ``deleter`` twice for the same ID. The ID is inserted before
+    /// the await and removed via `defer` after it returns; ``visibleMeetings``
+    /// filters on this set so the row stays hidden for the in-flight
+    /// duration.
+    ///
+    /// ## Failure handling
+    /// On a ``deleter`` throw the ID is **left in** ``meetings`` (local
+    /// state stays consistent with the store, where the meeting still
+    /// exists) and the error is surfaced through ``loadError``. The row
+    /// reappears in ``visibleMeetings`` once the `defer` clears
+    /// ``committingIDs``. The `deleter == nil` (fetcher-only test) path
+    /// has no store to fail, so it drops the ID locally as a clean no-op.
+    private func commit(_ pending: PendingDeletion) async {
+        let id = pending.summary.id
+        // Idempotency guard: bail if this ID's commit is already in flight
+        // so overlapping triggers cannot double-invoke the deleter.
+        guard committingIDs.insert(id).inserted else { return }
+        defer { committingIDs.remove(id) }
+
+        guard let deleter else {
+            // Fetcher-only test path: no store to fail, drop locally.
+            meetings.removeAll { $0.id == id }
+            return
+        }
+
+        do {
+            try await deleter(id)
+            // Success: reconcile local state to match the store.
+            meetings.removeAll { $0.id == id }
+        } catch {
+            // The store delete failed — the meeting still exists. Keep it
+            // in `meetings` (consistent with the store) and surface the
+            // error. `pendingDeletion` is already cleared and the `defer`
+            // clears `committingIDs`, so the row reappears with the error
+            // shown through the existing `loadError` channel.
+            loadError = error
         }
     }
 }

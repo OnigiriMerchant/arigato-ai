@@ -1580,6 +1580,13 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **Why deferred (not done in the 2026-05-25 reconciliation pass):** those two files are outside that pass's 5-file scope (ROADMAP, CURRENT_STATE, PRE_MVP1_REVIEW, V3_BACKLOG, CLAUDE.md).
 - **Severity:** LOW — discoverability; prevents future sessions tripping on the stale assertions.
 
+### Multi-select delete (Decision #13 deferred from MVP-1)
+
+- **What:** Decision #13 (`docs/GROUP_D_UI_DECISIONS.md`) originally specced long-press → checkboxes → "Delete N" / "Share N" multi-select UX. Deferred 2026-05-25 in favor of swipe-to-delete + a 5-second undo toast for MVP-1 (shipped per-row, see ROADMAP MVP-1 feature #8). Multi-select is over-engineered for solo personal use; revisit if real meeting usage produces batch-cleanup friction.
+- **Trigger:** Real usage data showing >5 transcripts being deleted in a single session, OR user-reported friction with the single-delete workflow.
+- **Action when triggered:** Restore the Decision #13 spec, dispatch implementation.
+- **Severity:** LOW (post-MVP-1 polish).
+
 ## Post-MVP-1 portfolio polish
 
 ### End-of-project GitHub cleanup for portfolio

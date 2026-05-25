@@ -22,7 +22,7 @@ The 12 features that constitute MVP 1:
 5. Past meetings list, sorted by date — ⚠️ shipped in code (Step 6); broken in production wiring (B1.6)
 6. Meeting detail view, scrollable, copyable per line — ⚠️ shipped in code (Step 11); broken in production wiring (B1.6)
 7. Rename meeting (default: timestamp) — ❌ superseded by Decision #12 (no edit affordance in MVP-1)
-8. Delete with undo toast — ⚠️ bulk delete-all shipped via Settings (Step 15); per-meeting delete: `MeetingStore.deleteMeeting(meetingID:)` exists at `MeetingStore.swift:393` + tested, UI wiring missing; multi-select (Decision #13) explicitly not shipped
+8. Delete with undo toast — ✅ swipe-to-delete + 5-second undo toast per row; bulk delete-all via Settings (Step 15). Multi-select deferred to v1.x per V3 entry.
 
 **Export and post-process**
 9. Export as Markdown (bilingual or English-only toggle) — ⚠️ superseded by Decision #10 (bilingual-only with timestamps); no toggle planned
