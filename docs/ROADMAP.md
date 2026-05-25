@@ -10,25 +10,27 @@ MVP 1 ships when the app is usable for real meetings, personal use only, no App 
 
 The 12 features that constitute MVP 1:
 
+> **Status reflects 2026-05-25 reconciliation.** UI decisions doc (`docs/GROUP_D_UI_DECISIONS.md`) supersedes the original ROADMAP feature wording in several places; supersession trail noted per feature.
+
 **Core capture loop**
-1. Start/stop meeting button (single tap each)
-2. Live dual-line captions: Japanese on top, English below, last 3 lines visible
-3. Auto-save every line to SwiftData as it finalizes (crash-resilient)
-4. Pause/resume mid-meeting
+1. Start/stop meeting button (single tap each) — ✅ shipped (Steps 7, 8)
+2. Live dual-line captions: Japanese on top, English below, last 3 lines visible — ⚠️ superseded by Decision #1 scrolling split-screen (`TranscriptSplitScreenView`, Step 9a); the "last 3 lines" framing is obsolete
+3. Auto-save every line to SwiftData as it finalizes (crash-resilient) — ⚠️ shipped in code (Steps 1–3, 8); broken in production wiring (B1.6)
+4. Pause/resume mid-meeting — ⚠️ state machine + button morphing shipped; spec-vs-code divergence on whether capture halts (see V3 entry "Pause spec-vs-code divergence")
 
 **Meeting library**
-5. Past meetings list, sorted by date
-6. Meeting detail view, scrollable, copyable per line
-7. Rename meeting (default: timestamp)
-8. Delete with undo toast
+5. Past meetings list, sorted by date — ⚠️ shipped in code (Step 6); broken in production wiring (B1.6)
+6. Meeting detail view, scrollable, copyable per line — ⚠️ shipped in code (Step 11); broken in production wiring (B1.6)
+7. Rename meeting (default: timestamp) — ❌ superseded by Decision #12 (no edit affordance in MVP-1)
+8. Delete with undo toast — ⚠️ bulk delete-all shipped via Settings (Step 15); per-meeting delete: `MeetingStore.deleteMeeting(meetingID:)` exists at `MeetingStore.swift:393` + tested, UI wiring missing; multi-select (Decision #13) explicitly not shipped
 
 **Export and post-process**
-9. Export as Markdown (bilingual or English-only toggle)
-10. Share sheet integration
-11. AI summary on demand via Apple Foundation Models
+9. Export as Markdown (bilingual or English-only toggle) — ⚠️ superseded by Decision #10 (bilingual-only with timestamps); no toggle planned
+10. Share sheet integration — ✅ shipped (Step 13 + B1.4)
+11. AI summary on demand via Apple Foundation Models — ❌ not shipped; genuinely-new feature remaining for MVP-1
 
 **Settings**
-12. Single settings screen: model warmup toggle, default export format, transcript retention period, microphone input override
+12. Single settings screen: model warmup toggle, default export format, transcript retention period, microphone input override — ❌ superseded by Decision #19 (About + Storage only); four-toggle spec deferred to Phase 6+ polish
 
 Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond JA↔EN, cloud sync, live caption sharing to second device, custom glossary.
 
@@ -42,11 +44,11 @@ Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond 
 | 2.5 | Physical iPhone deployment | ⏸️ Deferred (triggers when Phase 4 needs real mic hardware) |
 | 3 | Audio capture foundation | ✅ Shipped |
 | 4 | WhisperKit streaming transcription | ✅ Shipped |
-| 5 | LFM2 translation | ⏳ Pending |
-| 6 | SwiftData transcript storage | ⏳ Pending |
-| 7 | UI polish | ⏳ Pending |
-| 8 | Export + ShareLink | ⏳ Pending |
-| 9 | AI summary | ⏳ Pending |
+| 5 | LFM2 translation | 🟡 Shipping — Groups A–D shipped via SDK v0.9.4 (legacy `Liquid4All/leap-ios` repo). B1.1 (model download) upstream-blocked on `Liquid4All/leap-sdk` issue #5 ([iOS] v0.10.6+ Launch Crash: broken @rpath dependency — framework-bundle path vs shipped plain-dylib form). Filed by project 2026-05-20; no maintainer engagement as of 2026-05-25. v0.9.4 is the deliberate workaround pin. |
+| 6 | SwiftData transcript storage | 🟡 Shipped in code / production wiring broken (B1.6) — Meeting/Sentence entities, MeetingStore @ModelActor, auto-save, history list, detail view, search, export, delete-all all shipped via Group D. Production SwiftData container registers `Schema([Item.self])` only — Meeting/Sentence absent. Fix tracked as B1.6. |
+| 7 | UI polish | ⏳ Pending — minimal DesignSystem namespace shipped (Step 9b); V3 #22 ambient-intelligence pass not started |
+| 8 | Export + ShareLink | ✅ Shipped — Markdown bilingual export; active-view + detail-view ShareLink contexts. Multi-select context (UI #13) deferred. |
+| 9 | AI summary | ⏳ Pending — genuinely untouched |
 | MVP 1 | All 12 features functional, used in real meetings | ⏳ Pending |
 | Post-MVP-1 | App Store submission (30 days personal + 3 colleague requests) | ⏳ Pending |
 
@@ -98,9 +100,19 @@ The dispatcher consumes authoritativeLanguage (not detectedLanguage) — never s
 
 Includes model warmup at app launch (5-line addition addressing cold-start glitches per the warmup behavior observed during pre-build vibe checks).
 
-### Phase 6 — SwiftData transcript storage (planned)
+### Phase 6 — SwiftData transcript storage (shipped in code via Group D / production wiring broken)
 
-Replaces the default Xcode `Item.swift` scaffold with `MeetingLine` and `Meeting` models. Persists transcripts locally, no iCloud (privacy stance). Each line carries timestamps, original + translated text, language confidence, and metadata for route changes. Ready for export and AI summary phases to consume.
+Originally scoped to replace the default Xcode `Item.swift` scaffold with `Meeting`/`Sentence` models (renamed from the earlier `MeetingLine`/`Meeting` framing per Decision #20). Persists transcripts locally, no iCloud (privacy stance). Each `Sentence` carries timestamps, original + translated text, source language, and the upstream Whisper segment ID.
+
+**Shipped via Phase 5 Group D (code + tests green):**
+- `Meeting` + `Sentence` `@Model` entities with cascade delete (Step 1, Decision #20).
+- `MeetingStore` `@ModelActor` — the single write/read seam; off-main init per Amendment 3 / FB13399899 (Steps 2, 8).
+- Continuous auto-save on every completed sentence (Steps 3, 8; Decision #6).
+- History list (Step 6), detail view (Step 11), full-content search (Step 12), Markdown export (Step 13), bulk delete-all + Settings storage section (Step 15).
+
+**Open ship-blocker — B1.6 (schema-registration mismatch):** the production SwiftData container is constructed with `Schema([Item.self])` (`ArigatoAIApp.swift:41`), and `MeetingStore` runs against that same container (`AppBootstrapper.swift:598`). `Meeting`/`Sentence` are absent from the production schema (they appear only in a `#if DEBUG` preview at `MeetingControlsView.swift:791`), so the first production insert will fail at runtime. The gap is currently masked by the B1.1 LFM2 block — store construction is gated on `lfm2Loader.warmup()` succeeding, which never happens while LFM2 is down. Every persistence test passes because each injects its own correctly-schema'd in-memory container. Fix tracked as **B1.6** in `docs/PRE_MVP1_REVIEW.md` Bucket 1 (replace the schema, delete `Item.swift`, add a production-container registration test). The legacy `Item.swift` scaffold removal is tracked alongside.
+
+Remaining genuine Phase 6 scope beyond B1.6: V3 #46 (local-only diagnostics for performance tuning). Ready for export and AI summary phases to consume once B1.6 lands.
 
 ### Phase 7 — UI polish (planned)
 

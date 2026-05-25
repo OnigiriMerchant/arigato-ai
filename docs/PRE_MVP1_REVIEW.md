@@ -4,7 +4,7 @@
 **Trigger**: end-of-Group-D three-reviewer gate complete, 0 BLOCKING.
 **Status**: approved by user; hardening sprint dispatches against this list.
 
-**Bucket counts**: B1 = 6 entries (incl. B1.0) · B2 = 2 entries · B3 = ~30 entries · B4 = 12 entries · Appendix (newly-filed) = 1 entry.
+**Bucket counts**: B1 = 7 entries (incl. B1.0, B1.6) · B2 = 2 entries · B3 = ~30 entries · B4 = 12 entries · Appendix (newly-filed) = 1 entry.
 
 **Sprint effort total**: 9.5–19h. Under 20h scope-drift ceiling, at top of 8–17h calibration band.
 
@@ -34,12 +34,13 @@
 |---|---|---|---|
 | **B1.0** | **LEAP SDK skill v0.10.4.3 phantom-version reconcile** (`.claude/skills/leap-sdk/SKILL.md`) | (d) soft variant. Pre-flight for B1.1 will read this skill to verify SDK API surface. Wrong version reference contaminates pre-flight findings. Must land BEFORE B1.1 doc-researcher dispatches. | ~30–60 min |
 | B1.1 | **LFM2 model download fix** (V3 `b851dad` + 3 amendments) | (a) App cannot launch. `StartupErrorView` fires every launch. | 4–12h (SDK-API-dependent) |
+| B1.6 | **SwiftData schema registration mismatch** — `ArigatoAIApp.swift:41` ships `Schema([Item.self])`; production `MeetingStore` is constructed against this Item-only container at `AppBootstrapper.swift:598`. `Meeting`/`Sentence` entities are absent from the production schema. First production insert will fail at runtime. Currently masked by B1.1 (store construction gated on LFM2 warmup). Fix: replace `Schema([Item.self])` with `Schema([Meeting.self, Sentence.self])`, delete the `Item.swift` scaffold, add a production-container test asserting `Meeting` + `Sentence` registration. | (a) App cannot persist meetings — broken in production wiring. | ~15–30 min |
 | B1.2 | ✅ **Swift 6 mode build warnings** (V3 `66d08b0`) — **SHIPPED 2026-05-21**, commit `d54bec3`. All 5 warnings cleared in ~1h actual (under the 2.5h budget). | (d) Three of five warnings are Swift 6 language mode errors. Build breaks when strict mode tightens. | ~2.5h |
 | B1.3 | ✅ **Cumulative-load timing race in cancellation-ordering tests** (V3 `395e104`, bundles `#16`) — **SHIPPED 2026-05-22**, commit `fd9cba0`. Two distinct root causes (NOT shared — pre-flight diagnosed correctly); two distinct fixes. 5/5 default-parallel runs of both target tests; serial full suite back to 398/0/2. | (d) soft variant. Suite-green signal can't be trusted at ~1-in-5 first-run flake. Bundles `TranslationProtocolTests.translate_burstThenCancel` + `MeetingPipelineTests.pipeline_stop_...` (same `FakeTranslator` root cause). | ~1–2h |
 | B1.4 | **UI #9 Context A — toolbar ShareLink + remove cluster Share no-op** | (c) Locked product decision shipped in contradicting state. Labeled "Share" button does nothing on tap. | ~1–2h |
 | B1.5 | ✅ **StartupErrorView debug bypass** (*new entry, see appendix*) — **SHIPPED 2026-05-17**, commit `2aba525`. | (d) soft variant. Unblocks parallel UI device testing while LFM2 fix proceeds. | ~30 min |
 
-**Sprint subtotal: 9.5–19h.**
+**Sprint subtotal: 9.5–19h** (+ ~15–30 min for B1.6, added 2026-05-25).
 
 ---
 
@@ -233,16 +234,19 @@ Grouped by trigger family. All entries have zero MVP-1 blocker criteria firing.
 ```
 1. B1.0  LEAP SDK skill v0.10.4.3 reconcile   ~30-60 min  ← MUST land before B1.1 pre-flight
 2. B1.5  StartupErrorView debug bypass        ~30 min     ← unblocks parallel UI device-test  ✅ SHIPPED 2026-05-17 (2aba525)
-3. B1.1  doc-researcher pre-flight dispatch   variable    ← gates B1.1 implementation effort
+3. B1.6  SwiftData schema-registration fix    ~15–30 min  ← independent of B1.1; MUST land before ANY feature dispatch (AI summary, per-meeting delete UI); unblocks all persistence smoke-testing
+4. B1.1  doc-researcher pre-flight dispatch   variable    ← gates B1.1 implementation effort
 ```
+
+> **B1.6 sequencing note (added 2026-05-25):** B1.6 is independent of the B1.1 upstream block and must land before any new feature is dispatched — both candidate next features (AI summary, per-meeting delete UI wiring) read/write through `MeetingStore`, and neither is smoke-testable until the production schema registers `Meeting`/`Sentence`. Land B1.6 first; it is the cheapest unblock on the board.
 
 **Sprint Days 2–3 (parallel-capable)**:
 ```
-4. B1.1  LFM2 model download fix              4–12h       ← biggest unknown
-5. B1.2  Swift 6 mode build warnings          ~2.5h       ← concurrency-annotation mindset  ✅ SHIPPED 2026-05-21 (d54bec3)
+5. B1.1  LFM2 model download fix              4–12h       ← biggest unknown
+6. B1.2  Swift 6 mode build warnings          ~2.5h       ← concurrency-annotation mindset  ✅ SHIPPED 2026-05-21 (d54bec3)
    B2.1  withLock unused-result warning       ~5 min      ← free-ride bundle with B1.2     ✅ SHIPPED 2026-05-21 (d54bec3)
-6. B1.3  Cumulative-load timing race          ~1–2h       ← test-discipline mindset        ✅ SHIPPED 2026-05-22 (fd9cba0)
-7. B1.4  UI #9 Context A toolbar ShareLink    ~1–2h       ← isolated, last                 ✅ SHIPPED 2026-05-21 (f018a71)
+7. B1.3  Cumulative-load timing race          ~1–2h       ← test-discipline mindset        ✅ SHIPPED 2026-05-22 (fd9cba0)
+8. B1.4  UI #9 Context A toolbar ShareLink    ~1–2h       ← isolated, last                 ✅ SHIPPED 2026-05-21 (f018a71)
 ```
 
 **During MVP-1 device test window (in-device, not a Claude Code dispatch)**:

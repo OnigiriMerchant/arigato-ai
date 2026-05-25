@@ -7,7 +7,7 @@ Personal use first, App Store later if it earns its way there.
 ## Stack
 - iOS 26.4+, Swift 6, SwiftUI, SwiftData, Swift Testing
 - WhisperKit via argmax-oss-swift v1.0.0+ (Apache-2.0) — Japanese + English ASR with auto language detection
-- LFM2-350M-ENJP-MT via LEAP iOS SDK — bidirectional JA↔EN translation
+- LFM2-350M-ENJP-MT via LEAP iOS SDK (pinned to `Liquid4All/leap-ios` v0.9.4; the unified `Liquid4All/leap-sdk` v0.10.x channel is upstream-blocked per issue #5 — see CURRENT_STATE "Upstream block status") — bidirectional JA↔EN translation
 - Apple Foundation Models (free, on-device) — Tier 1 post-meeting cleanup
 - Anthropic API (Claude Opus 4.7) — Tier 2 post-meeting cleanup
 - Bundle ID: com.jose.ArigatoAI
@@ -115,6 +115,7 @@ Checkpoint commits live on main alongside production commits. They are not pushe
 - When recommendations conflict with locked decisions, surface the collision before acting. The locked decision wins by default — it was made with full context. A recommendation overriding it requires explicit re-examination of the original reasoning.
 - Pin specific values explicitly. Do not rely on dynamic-recommendation APIs (e.g., recommendedRemoteModels()) for MVP — explicit pinning is more predictable and easier to debug.
 - Maintainer recommendations are general-purpose. Your use case may legitimately be in a niche the maintainer doesn't recommend on their front page. Phase 4 Decision 2 (large-v3-turbo) is an example — Argmax's README recommends 626MB non-turbo for accuracy, but our use case (live meeting captions) prioritizes latency, so turbo is the correct niche choice.
+- When verifying SDK or upstream state (versions, repo names, issue status, API surface), always fetch PRIMARY sources — the GitHub issue/releases/tags page and the official docs — not training data or doc summaries. Training data is stale for fast-moving SDKs (the phantom-`v0.10.4.3` and "v0.10.x doesn't exist" errors both came from trusting summaries over live sources). Canonical live-docs channels: for Liquid AI, the **`liquid-docs` MCP** (`https://docs.liquid.ai/mcp`; installed 2026-05-25 at project scope via `claude mcp add --transport http liquid-docs https://docs.liquid.ai/mcp`; tools `search_liquid_docs` + `query_docs_filesystem_liquid_docs`); for Apple frameworks, the `xcode` MCP's `DocumentationSearch`. MCP tools load at session start — restart Claude Code after installing one. When the MCP is unavailable, fall back to `WebFetch` against the official docs/GitHub URLs.
 
 ## Project rhythm
 - Plan first via @feature-planner. Implement second via @swift-implementer.

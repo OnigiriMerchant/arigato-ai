@@ -1428,7 +1428,7 @@ Findings surfaced during sprint-window dispatch work against the Bucket 1 list i
 
 ### LEAP SDK v0.10.x migration — upstream-blocked (P-2 attempt closed)
 
-- **What:** P-2 attempted v0.9.4 → v0.10.6 SDK migration, blocked on upstream XCFramework packaging bug. `libinference_engine.dylib` in both v0.10.5 and v0.10.6 records a dependency on `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` (framework-bundle form), but the SDK ships only `libinference_engine_llamacpp_backend.dylib` (plain dylib). dyld cannot resolve at app launch → crash before LFM2 reaches `.ready`. Affects both `LeapModelDownloader` and `LeapSDK` SPM products. v0.10.7 release notes explicitly retain the v0.10.6 dynamic-framework setup without addressing the @rpath mismatch.
+- **What:** P-2 attempted v0.9.4 → v0.10.6 SDK migration, blocked on upstream XCFramework packaging bug. `libinference_engine.dylib` in both v0.10.5 and v0.10.6 records a dependency on `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` (framework-bundle form), but the SDK ships only `libinference_engine_llamacpp_backend.dylib` (plain dylib). dyld cannot resolve at app launch → crash before LFM2 reaches `.ready`. Affects both `LeapModelDownloader` and `LeapSDK` SPM products. v0.10.7 release notes explicitly retain the v0.10.6 dynamic-framework setup without addressing the @rpath mismatch. (Affected-version scope: the public issue #5 reports v0.10.6+; the v0.10.5 affectedness here rests on the project's internal `otool -L` evidence.)
 - **Evidence baselines (parked worktrees):**
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints, builds clean, crashes at launch via `LeapModelDownloader.framework`'s inner dylib).
   - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints, builds clean, crashes at launch via `LeapSDK.framework`'s inner dylib — LeapSDK transitively linked via LeapModelDownloader product).
@@ -1517,6 +1517,68 @@ Five entries surfaced during the B1.4 dispatch (commit `f018a71`) and the three-
 - **Cost when triggered:** ~20 min including the cache + a test that asserts the file path is stable across renders for the same snapshot.
 - **Cross-references:** B1.4 commit `f018a71`; `TranscriptExporter.swift` type-level doc.
 - **Severity:** LOW.
+
+## Post-reconciliation findings (2026-05-25)
+
+Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verification of shipped-vs-claimed state against live primary sources) and the daily briefing. The schema-registration P0 itself is tracked as **B1.6** in `docs/PRE_MVP1_REVIEW.md` Bucket 1, not here; these are the adjacent process gaps, the open product question, and the B1.1 re-evaluation lead.
+
+### Pause spec-vs-code divergence — Decision #7 vs implementation
+
+- **What:** Decision #7 (`docs/GROUP_D_UI_DECISIONS.md:92–94`) specs PAUSE as "temporarily halts audio capture (Whisper stops receiving frames)." The actual implementation (`MeetingCoordinator.swift:67–73`, `pauseMeeting` `:187–189`) delegates only to `session.pause()` — the audio engine keeps capturing, Whisper keeps transcribing, and completed sentences keep persisting through pause (`MeetingSession.process` `:512–521`). The doc-comment at `MeetingSessionPhase.swift:24` says "audio capture is halted" — the opposite of the code. Pause is functionally cosmetic: it freezes the badge timer and swaps the button label.
+- **Why this is V3 and not immediately actionable:** open product question — which contract is correct, not a bug with one right answer.
+- **Trigger to revisit:** before any AI-summary, battery-profiling, or pause-related feature work dispatches. Must be locked before downstream work depends on pause semantics.
+- **Two options (require user decision):**
+  - **Option A — Honor Decision #7.** Add `pause()` / `resume()` to the `AudioCapturing` protocol; stop the mic + Whisper during pause. Better battery on long pauses (e.g., 15-min coffee breaks). ~1–2h effort.
+  - **Option B — Amend Decision #7.** Accept "pause = UI-cosmetic, capture continues" as the real contract and fix the stale `MeetingSessionPhase.swift:24` doc-comment to match. ~10 min effort. Battery cost remains real but bounded.
+- **Severity:** MED — product correctness gap.
+
+### Schema-registration test gap — production container path exercised by no test
+
+- **What:** Every persistence test injects its own `ModelContainer` with the correct schema (`Meeting` + `Sentence`). The production-container construction at `ArigatoAIApp.swift:41` + `AppBootstrapper.swift:598` is unreached by any test. This is why **B1.6** (the `Schema([Item.self])` mismatch) was not caught earlier.
+- **Trigger to revisit:** bundle with the B1.6 fix. The B1.6 dispatch must add a production-container test.
+- **Action when triggered:** add `AppBootstrapperTests.productionContainer_registersMeetingAndSentence` — instantiate `AppBootstrapper` with default init, await `meetingStore` publication, assert the resolved container's schema includes `Meeting` + `Sentence` entities.
+- **Severity:** MED — process gap that allowed the P0.
+
+### Item.swift scaffold removal — Phase 6 scope says replace, never removed
+
+- **What:** `ArigatoAI/Item.swift` is the default Xcode new-project scaffold. ROADMAP Phase 6 scope says it "replaces the default Item.swift scaffold," but the file remains in production sources and is the only entity registered in the production SwiftData schema (`ArigatoAIApp.swift:41`).
+- **Trigger to revisit:** bundle with the B1.6 fix.
+- **Action when triggered:** delete `Item.swift` after the B1.6 schema correction lands. Verify no references remain via grep.
+- **Severity:** LOW — cleanup.
+
+### leap-sdk v0.10.x migration path — re-evaluate B1.1 after issue #5 closes
+
+- **What:** When `Liquid4All/leap-sdk` issue #5 closes (a fixed XCFramework ships) OR the project commits to the workaround below, resume the v0.10.x migration. **This is a code rewrite of the LFM2 integration layer, not a version bump:** the v0.10.x Swift API differs fundamentally from the pinned v0.9.4 — `ModelDownloader.loadModel(modelName:, quantizationType:)` / `loadSimpleModel(model: ModelSource(…))` → `runner.createConversation(…)`, vs v0.9.4's `Leap.load(options:)` → `Conversation(modelRunner:history:)`. Verified live against docs.liquid.ai 2026-05-25 (via the `liquid-docs` MCP).
+- **Correction (2026-05-25):** an earlier draft of this entry claimed "the unified-repo path has not been attempted" and that docs.liquid.ai "403s — needs a human visit" — **both false.** The parked P-2 worktrees ARE the `leap-sdk` (unified-repo) attempts at v0.10.5/v0.10.6 (see the canonical block record "LEAP SDK v0.10.x migration — upstream-blocked (P-2 attempt closed)" above, and `PHASE_5_B1_1_MIGRATION_INVENTORY.md:4,49,169`), and docs.liquid.ai is fully fetchable (live-verified 2026-05-25 + reachable via the `liquid-docs` MCP). This entry therefore does NOT duplicate the block record — it tracks the *resumption* decision only.
+- **Affected-version nuance:** issue #5 reports v0.10.6+ (v0.10.6, v0.10.7); the project's internal `otool -L` evidence also implicates v0.10.5 (`PHASE_5_B1_1_MIGRATION_INVENTORY.md:305,312`).
+- **Workaround option (self-unblock without waiting on upstream):** add an `install_name_tool -change` build phase that rewrites the broken `@rpath/…framework/…` load command in `libinference_engine.dylib` to the plain-dylib form actually shipped. This lets the v0.10.x migration proceed before upstream fixes packaging; verify the rewritten install name with `otool -L`. Bounded by the +30-day cadence in "Issue #5 escalation cadence" below.
+- **Trigger to revisit:** after B1.6 + Item.swift cleanup land (persistence functional for smoke-testing) AND issue #5 closes, or the +30-day escalation cadence forces the workaround decision.
+- **Cross-references:** issue #5 (https://github.com/Liquid4All/leap-sdk/issues/5); "LEAP SDK v0.10.x migration — upstream-blocked (P-2 attempt closed)" (canonical block record — not duplicated here); "Issue #5 escalation cadence"; "Liquid Docs MCP — installed". No project memory on the LEAP SDK tag currently exists; create one pinning the channel reality (leap-ios v0.9.4 pin; leap-sdk v0.10.x is the live channel) when B1.1 is re-attempted.
+- **Severity:** HIGH — B1.1 is the only remaining MVP-1 blocker once B1.6 ships.
+
+### Issue #5 escalation cadence
+
+- **What:** `Liquid4All/leap-sdk` issue #5 ("[iOS] v0.10.6+ Launch Crash: Broken @rpath dependency…") is OPEN, filed by the project (OnigiriMerchant) 2026-05-20, with **zero maintainer engagement** as of 2026-05-25 (no assignees/labels/PRs/comments — live-verified).
+- **Cadence triggers:**
+  - **+14 days (2026-06-03):** if still no maintainer response, escalate — comment on the issue, post in the Liquid AI Discord, and/or @-mention on social.
+  - **+30 days (2026-06-19):** if still silent, commit to a path — either land the `install_name_tool -change` build-phase workaround (self-unblock; see the migration-path entry above) OR formally adopt a permanent v0.9.4 plan and close the v0.10.x migration arc.
+- **Cross-references:** issue #5; "LEAP SDK v0.10.x migration — upstream-blocked (P-2 attempt closed)"; "leap-sdk v0.10.x migration path — re-evaluate B1.1 after issue #5 closes".
+- **Severity:** MED — B1.1 is the last MVP-1 blocker; this bounds the open-ended wait on upstream.
+
+### Liquid Docs MCP — installed (live SDK-docs channel)
+
+- **What:** Liquid AI hosts a public MCP server at `https://docs.liquid.ai/mcp` (Mintlify-backed; tools `search_liquid_docs` + `query_docs_filesystem_liquid_docs`), giving Claude Code live, current access to Liquid AI docs + OpenAPI specs.
+- **Status:** ✅ INSTALLED 2026-05-25 at project-local scope (in `~/.claude.json` under this project; `claude mcp add --transport http liquid-docs https://docs.liquid.ai/mcp`). Verified ✓ Connected via `claude mcp list` and a live `tools/call`. **MCP tools activate on the next Claude Code session restart** (servers load at startup).
+- **Why it matters:** prevents the SDK-doc staleness that produced the phantom-`v0.10.4.3` and "v0.10.x doesn't exist" errors — future SDK-API questions resolve against live docs, not training data. Codified as a rule in CLAUDE.md "External dependency configuration".
+- **Optional follow-ups:** promote to project scope (`.mcp.json`, git-tracked) if the team wants it shared/reproducible across clones. The equivalent Apple-docs channel — the `xcode` MCP's `DocumentationSearch` — is already wired.
+- **Severity:** LOW — process improvement, done.
+
+### Banner the now-false "v0.10.x doesn't exist" assertions in the PHASE_5 research docs
+
+- **What:** `docs/PHASE_5_DOC_RESEARCH.md` (2026-05-12) and `docs/PHASE_5_B1_1_PRE_FLIGHT.md` (2026-05-17) assert "v0.10.x does not exist / v0.9.4 is latest / repo is `leap-ios`." Live sources — and the project's own `PHASE_5_B1_1_MIGRATION_INVENTORY.md` (2026-05-18) — prove these false: `Liquid4All/leap-sdk` v0.10.x exists, v0.10.7 is current. These are point-in-time research artifacts the team self-corrected, but they remain in the tree asserting a now-false repo/version reality.
+- **Action when triggered:** add a dated banner at the top of each file, e.g. *"⚠️ Superseded 2026-05-18 by PHASE_5_B1_1_MIGRATION_INVENTORY.md — the 'v0.10.x does not exist / v0.9.4 is latest' conclusions below were drawn against the archived leap-ios repo and are FALSE. Current SDK is Liquid4All/leap-sdk v0.10.7. Retained for historical context."*
+- **Why deferred (not done in the 2026-05-25 reconciliation pass):** those two files are outside that pass's 5-file scope (ROADMAP, CURRENT_STATE, PRE_MVP1_REVIEW, V3_BACKLOG, CLAUDE.md).
+- **Severity:** LOW — discoverability; prevents future sessions tripping on the stale assertions.
 
 ## Post-MVP-1 portfolio polish
 
