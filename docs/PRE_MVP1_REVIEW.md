@@ -4,6 +4,8 @@
 **Trigger**: end-of-Group-D three-reviewer gate complete, 0 BLOCKING.
 **Status**: approved by user; hardening sprint dispatches against this list.
 
+**Sprint outcome (2026-05-28): COMPLETE.** All Bucket 1 ship-blockers resolved or deferred. MVP-1 feature-complete (all 12 features shipped or deliberately superseded; see `docs/ROADMAP.md`). This doc is now a historical record of the pre-MVP-1 hardening sprint.
+
 **Bucket counts**: B1 = 6 entries (incl. B1.0, B1.6) · B2 = 2 entries · B3 = ~30 entries · B4 = 12 entries · Appendix (newly-filed) = 1 entry. (B1.1 downgraded out of Bucket 1 on 2026-05-25 — see note below the Bucket 1 table.)
 
 **Sprint effort total**: 5.5–7h (was 9.5–19h before B1.1's 4–12h was downgraded out of Bucket 1 on 2026-05-25). Well under the 20h scope-drift ceiling.
@@ -32,11 +34,11 @@
 
 | # | Entry | Trigger criterion | Effort |
 |---|---|---|---|
-| **B1.0** | **LEAP SDK skill v0.10.4.3 phantom-version reconcile** (`.claude/skills/leap-sdk/SKILL.md`) | (d) soft variant. Pre-flight for B1.1 will read this skill to verify SDK API surface. Wrong version reference contaminates pre-flight findings. Must land BEFORE B1.1 doc-researcher dispatches. | ~30–60 min |
+| **B1.0** | ⏸️ **LEAP SDK skill v0.10.4.3 phantom-version reconcile** (`.claude/skills/leap-sdk/SKILL.md`) — **DEFERRED to v1.x** alongside B1.1 (2026-05-25). B1.0's sole purpose was prepping B1.1's doc-researcher pre-flight; B1.1 is itself deferred to v1.x, so B1.0 defers with it. | (d) soft variant. Was: pre-flight for B1.1 needed the skill's SDK API surface to be correct. | ~30–60 min |
 | B1.6 | ✅ **SwiftData schema registration mismatch** — **SHIPPED 2026-05-25**, commit `32abc3e`. `ArigatoAIApp.swift:41` had shipped `Schema([Item.self])`; production `MeetingStore` was constructed against this Item-only container at `AppBootstrapper.swift:598`, with `Meeting`/`Sentence` absent from the production schema, so the first production insert would have failed at runtime. Was masked by B1.1 (store construction gated on LFM2 warmup). Fix landed: replaced `Schema([Item.self])` with `Schema([Meeting.self, Sentence.self])` behind a `makeAppSchema()` factory, deleted the `Item.swift` scaffold, added `ArigatoAIAppTests.productionContainer_registersMeetingAndSentence` asserting `Meeting` + `Sentence` registration. | (a) App cannot persist meetings — broken in production wiring. | ~15–30 min |
 | B1.2 | ✅ **Swift 6 mode build warnings** (V3 `66d08b0`) — **SHIPPED 2026-05-21**, commit `d54bec3`. All 5 warnings cleared in ~1h actual (under the 2.5h budget). | (d) Three of five warnings are Swift 6 language mode errors. Build breaks when strict mode tightens. | ~2.5h |
 | B1.3 | ✅ **Cumulative-load timing race in cancellation-ordering tests** (V3 `395e104`, bundles `#16`) — **SHIPPED 2026-05-22**, commit `fd9cba0`. Two distinct root causes (NOT shared — pre-flight diagnosed correctly); two distinct fixes. 5/5 default-parallel runs of both target tests; serial full suite back to 398/0/2. | (d) soft variant. Suite-green signal can't be trusted at ~1-in-5 first-run flake. Bundles `TranslationProtocolTests.translate_burstThenCancel` + `MeetingPipelineTests.pipeline_stop_...` (same `FakeTranslator` root cause). | ~1–2h |
-| B1.4 | **UI #9 Context A — toolbar ShareLink + remove cluster Share no-op** | (c) Locked product decision shipped in contradicting state. Labeled "Share" button does nothing on tap. | ~1–2h |
+| B1.4 | ✅ **UI #9 Context A — toolbar ShareLink + remove cluster Share no-op** — **SHIPPED 2026-05-21**, commit `f018a71`. | (c) Locked product decision shipped in contradicting state. Labeled "Share" button does nothing on tap. | ~1–2h |
 | B1.5 | ✅ **StartupErrorView debug bypass** (*new entry, see appendix*) — **SHIPPED 2026-05-17**, commit `2aba525`. | (d) soft variant. Unblocks parallel UI device testing while LFM2 fix proceeds. | ~30 min |
 
 **Sprint subtotal: 5.5–7h** (was 9.5–19h; B1.1's 4–12h removed when downgraded out of Bucket 1 on 2026-05-25; includes ~15–30 min for B1.6, added 2026-05-25).
@@ -127,7 +129,7 @@ Grouped by trigger family. All entries have zero MVP-1 blocker criteria firing.
 | LFM2 prompt cache effectiveness benchmark | ~1–2h instrumentation + analysis once data accumulates |
 | `#47` LFM2 cache strategy revisit | Needs `#46` + 5+ real meetings + >50% within-meeting cache hit rate |
 | SwiftData VersionedSchema migration | Files when entity-evolution actually fires |
-| Migrate meeting title generation to Foundation Models summarization | Files when title-rewrite follow-up dispatch lands |
+| Migrate meeting title generation to Foundation Models summarization | Files when title-rewrite follow-up dispatch lands. *Note (2026-05-28): Apple FoundationModels was dropped as the AI-summary path (4K context unsuitable for 30+ min meetings). This title-generation trigger remains theoretically valid — titles fit easily in 4K — but revisit only if title quality becomes a real need.* |
 | Migrate history search to SQLite FTS5 (Decision #14) | On-device latency >200ms at 15K sentences OR transcript volume >50K sentences |
 
 ### Phase 7 design language

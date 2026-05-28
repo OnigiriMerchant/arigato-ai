@@ -15,22 +15,22 @@ The 12 features that constitute MVP 1:
 **Core capture loop**
 1. Start/stop meeting button (single tap each) — ✅ shipped (Steps 7, 8)
 2. Live dual-line captions: Japanese on top, English below, last 3 lines visible — ⚠️ superseded by Decision #1 scrolling split-screen (`TranscriptSplitScreenView`, Step 9a); the "last 3 lines" framing is obsolete
-3. Auto-save every line to SwiftData as it finalizes (crash-resilient) — ⚠️ shipped in code (Steps 1–3, 8); broken in production wiring (B1.6)
+3. Auto-save every line to SwiftData as it finalizes (crash-resilient) — ✅ shipped (Steps 1–3, 8); production-wiring schema fix landed in B1.6 (`32abc3e`)
 4. Pause/resume mid-meeting — ⚠️ state machine + button morphing shipped; spec-vs-code divergence on whether capture halts (see V3 entry "Pause spec-vs-code divergence")
 
 **Meeting library**
-5. Past meetings list, sorted by date — ⚠️ shipped in code (Step 6); broken in production wiring (B1.6)
-6. Meeting detail view, scrollable, copyable per line — ⚠️ shipped in code (Step 11); broken in production wiring (B1.6)
+5. Past meetings list, sorted by date — ✅ shipped (Step 6); production-wiring schema fix landed in B1.6 (`32abc3e`)
+6. Meeting detail view — ✅ shipped: scrollable (Step 11); copyable via whole-transcript Copy button (`eea5abc`, 2026-05-28). The original "copyable *per line*" sub-spec was deliberately dropped — per-line `.textSelection(.enabled)` in a `List` can't drag across rows, and the Copy-everything button covers the workflow without touching locked UI #13. Production-wiring schema fix landed in B1.6 (`32abc3e`).
 7. Rename meeting (default: timestamp) — ❌ superseded by Decision #12 (no edit affordance in MVP-1)
 8. Delete with undo toast — ✅ swipe-to-delete + 5-second undo toast per row; bulk delete-all via Settings (Step 15). Multi-select deferred to v1.x per V3 entry.
 
 **Export and post-process**
 9. Export as Markdown (bilingual or English-only toggle) — ⚠️ superseded by Decision #10 (bilingual-only with timestamps); no toggle planned
 10. Share sheet integration — ✅ shipped (Step 13 + B1.4)
-11. Copy transcript (paste into Claude Max or external tool for summarization) — ✅ shipped: toolbar Copy button writes the full bilingual Markdown transcript to the clipboard. In-app AI summary deferred to V3.
+11. AI summary on demand — ⚠️ → ✅ Original spec (in-app AI summary) deferred to V3 (consolidated entry, 2026-05-28); redefined and shipped as **Copy transcript**: toolbar Copy button writes the full bilingual Markdown transcript to the clipboard for paste into Claude Max or any external tool (`eea5abc`).
 
 **Settings**
-12. Single settings screen: model warmup toggle, default export format, transcript retention period, microphone input override — ❌ superseded by Decision #19 (About + Storage only); four-toggle spec deferred to Phase 6+ polish
+12. Single settings screen — ⚠️ → ✅ Original four-toggle spec (model warmup toggle, default export format, transcript retention period, microphone input override) superseded by Decision #19 (About + Storage only); shipped at reduced scope (Step 15, `SettingsView.swift`).
 
 Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond JA↔EN, cloud sync, live caption sharing to second device, custom glossary.
 
@@ -49,7 +49,7 @@ Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond 
 | 7 | UI polish | ⏳ Pending — minimal DesignSystem namespace shipped (Step 9b); V3 #22 ambient-intelligence pass not started |
 | 8 | Export + ShareLink | ✅ Shipped — Markdown bilingual export; active-view + detail-view ShareLink contexts. Multi-select context (UI #13) deferred. |
 | 9 | AI summary | ⏸️ Deferred to V3 — in-app AI summary moved to V3 (consolidated entry). MVP-1 ships copy-transcript → external Claude workflow instead (feature #11). |
-| MVP 1 | All 12 features functional, used in real meetings | ⏳ Pending |
+| MVP 1 | All 12 features functional, used in real meetings | 🟡 Features implemented as of `eea5abc` (2026-05-28); pending real-meeting validation |
 | Post-MVP-1 | App Store submission (30 days personal + 3 colleague requests) | ⏳ Pending |
 
 ## Phase detail
@@ -110,9 +110,9 @@ Originally scoped to replace the default Xcode `Item.swift` scaffold with `Meeti
 - Continuous auto-save on every completed sentence (Steps 3, 8; Decision #6).
 - History list (Step 6), detail view (Step 11), full-content search (Step 12), Markdown export (Step 13), bulk delete-all + Settings storage section (Step 15).
 
-**Open ship-blocker — B1.6 (schema-registration mismatch):** the production SwiftData container is constructed with `Schema([Item.self])` (`ArigatoAIApp.swift:41`), and `MeetingStore` runs against that same container (`AppBootstrapper.swift:598`). `Meeting`/`Sentence` are absent from the production schema (they appear only in a `#if DEBUG` preview at `MeetingControlsView.swift:791`), so the first production insert will fail at runtime. The gap is currently masked by the B1.1 LFM2 block — store construction is gated on `lfm2Loader.warmup()` succeeding, which never happens while LFM2 is down. Every persistence test passes because each injects its own correctly-schema'd in-memory container. Fix tracked as **B1.6** in `docs/PRE_MVP1_REVIEW.md` Bucket 1 (replace the schema, delete `Item.swift`, add a production-container registration test). The legacy `Item.swift` scaffold removal is tracked alongside.
+**Resolved ship-blocker — B1.6 (schema-registration mismatch):** ✅ shipped at `32abc3e` (2026-05-25). The production SwiftData container had been constructed with `Schema([Item.self])` (the dead Xcode scaffold); the fix replaced it with `Schema([Meeting.self, Sentence.self])` behind a `makeAppSchema()` factory, deleted the `Item.swift` scaffold, and added a production-container registration test (`ArigatoAIAppTests.productionContainer_registersMeetingAndSentence`). The gap had been masked by the B1.1 LFM2 block (store construction gated on `lfm2Loader.warmup()`), so no on-device persistence path ever reached the original bug.
 
-Remaining genuine Phase 6 scope beyond B1.6: V3 #46 (local-only diagnostics for performance tuning). Ready for export and AI summary phases to consume once B1.6 lands.
+Remaining genuine Phase 6 scope: V3 #46 (local-only diagnostics for performance tuning). B1.6 landed (`32abc3e`); Phase 8 (Export + ShareLink) shipped; Phase 9 (AI summary) deferred to V3.
 
 ### Phase 7 — UI polish (planned)
 
