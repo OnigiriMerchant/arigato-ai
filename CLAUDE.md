@@ -8,8 +8,7 @@ Personal use first, App Store later if it earns its way there.
 - iOS 26.4+, Swift 6, SwiftUI, SwiftData, Swift Testing
 - WhisperKit via argmax-oss-swift v1.0.0+ (Apache-2.0) — Japanese + English ASR with auto language detection
 - LFM2-350M-ENJP-MT via LEAP iOS SDK (pinned to `Liquid4All/leap-ios` v0.9.4; the unified `Liquid4All/leap-sdk` v0.10.x channel is upstream-blocked per issue #5 — see CURRENT_STATE "Upstream block status") — bidirectional JA↔EN translation
-- Apple Foundation Models (free, on-device) — Tier 1 post-meeting cleanup
-- Anthropic API (Claude Opus 4.7) — Tier 2 post-meeting cleanup
+- Post-meeting AI summary: handled via an external workflow (Copy transcript → paste into the Claude app). No in-app AI integration in MVP-1; in-app summary via the Anthropic Claude API is tracked as a V3 entry.
 - Bundle ID: com.jose.ArigatoAI
 
 ## Documentation map
@@ -101,7 +100,7 @@ Checkpoint commits live on main alongside production commits. They are not pushe
 - No analytics. No tracking. No telemetry.
 - No cloud sync of transcripts. iCloud / CloudKit explicitly disabled.
 - API keys live in iOS Keychain or .env (gitignored). Never in source files.
-- Transcripts never leave the device unless user explicitly exports or chooses Tier 2 cleanup.
+- Transcripts never leave the device unless the user explicitly exports or copies them (Share / Copy write to the local share sheet / clipboard; the user chooses where to send them).
 
 ## Don't
 - Don't add cloud features without explicit instruction.

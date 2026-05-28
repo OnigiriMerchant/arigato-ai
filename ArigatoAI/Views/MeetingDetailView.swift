@@ -66,6 +66,11 @@ struct MeetingDetailView: View {
     /// `@State` so SwiftUI retains it across re-renders.
     @State private var model: MeetingDetailViewModel
 
+    /// Incremented each time the Copy toolbar button fires. Drives
+    /// `.sensoryFeedback(.success, trigger:)` — the only confirmation the
+    /// copy succeeded (no "Copied" toast; dropped from scope).
+    @State private var copyFeedbackTrigger = 0
+
     /// Production initializer — closes the VM over the actor-backed
     /// store via the convenience init on ``MeetingDetailViewModel``.
     ///
@@ -112,6 +117,24 @@ struct MeetingDetailView: View {
             await model.reload()
         }
         .toolbar {
+            // MVP-1 #11 — Copy the full transcript Markdown to the
+            // pasteboard. Same exporter body as the ShareLink below, so
+            // pasted text is byte-identical to the shared file. Gated
+            // identically (UI decision #4 "buttons exist only when
+            // usable."). Placed leading of the ShareLink so Share stays
+            // trailing-most, matching iOS convention.
+            ToolbarItem(placement: .topBarTrailing) {
+                if !model.sentences.isEmpty {
+                    Button {
+                        model.copyTranscript(summary: summary)
+                        copyFeedbackTrigger += 1
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .accessibilityLabel("Copy transcript")
+                    }
+                }
+            }
+
             // Step 13 — UI #9 Context B (detail-view share) + UI #10
             // (Markdown format). Hidden when the transcript is empty
             // (UI decision #4 "buttons exist only when usable.") OR
@@ -125,6 +148,7 @@ struct MeetingDetailView: View {
                 }
             }
         }
+        .sensoryFeedback(.success, trigger: copyFeedbackTrigger)
     }
 
     /// Synthesises the temp-file URL for the current transcript on
@@ -239,3 +263,88 @@ struct MeetingDetailView: View {
         }
     }
 }
+
+#if DEBUG
+    /// Preview fixture builder. `PersistentIdentifier` has no public
+    /// initializer, so both ``MeetingSummary`` and
+    /// ``MeetingDetail/SentenceProjection`` need a real identifier minted
+    /// from an in-memory container — the same pattern the tests use. The
+    /// throwing setup is isolated here and surfaced as an optional so the
+    /// `#Preview` can branch to a diagnostic fallback rather than
+    /// force-unwrap or silence the error.
+    @MainActor
+    private enum MeetingDetailPreviewFixture {
+        /// A ready-to-render fixture: a summary plus sample projections.
+        struct Sample {
+            let summary: MeetingSummary
+            let sentences: [MeetingDetail.SentenceProjection]
+        }
+
+        /// Mints a real identifier and builds 3 sample sentences spanning
+        /// both source languages so the preview exercises the JA/EN row
+        /// formatting. Returns `nil` if the in-memory container cannot be
+        /// built (the `#Preview` then renders a diagnostic placeholder).
+        static func make() -> Sample? {
+            do {
+                let config = ModelConfiguration(isStoredInMemoryOnly: true)
+                let container = try ModelContainer(
+                    for: Meeting.self, Sentence.self,
+                    configurations: config
+                )
+                let context = ModelContext(container)
+                let started = Date(timeIntervalSince1970: 1_700_000_000)
+                let meeting = Meeting(startedAt: started, title: "Design sync")
+                meeting.endedAt = started.addingTimeInterval(18 * 60)
+                context.insert(meeting)
+                try context.save()
+
+                let id = meeting.persistentModelID
+                let sentences = [
+                    MeetingDetail.SentenceProjection(
+                        id: id,
+                        timestamp: started.addingTimeInterval(5),
+                        sourceLanguage: "ja",
+                        sourceText: "おはようございます。始めましょう。",
+                        translatedText: "Good morning. Let's begin.",
+                        sourceSegmentID: UUID()
+                    ),
+                    MeetingDetail.SentenceProjection(
+                        id: id,
+                        timestamp: started.addingTimeInterval(20),
+                        sourceLanguage: "en",
+                        sourceText: "Sounds good — I'll share my screen.",
+                        translatedText: "いいですね。画面を共有します。",
+                        sourceSegmentID: UUID()
+                    ),
+                    MeetingDetail.SentenceProjection(
+                        id: id,
+                        timestamp: started.addingTimeInterval(42),
+                        sourceLanguage: "ja",
+                        sourceText: "ありがとうございます。",
+                        translatedText: "Thank you.",
+                        sourceSegmentID: UUID()
+                    ),
+                ]
+                return Sample(summary: MeetingSummary(from: meeting), sentences: sentences)
+            } catch {
+                return nil
+            }
+        }
+    }
+
+    #Preview {
+        NavigationStack {
+            if let sample = MeetingDetailPreviewFixture.make() {
+                MeetingDetailView(
+                    summary: sample.summary,
+                    viewModel: MeetingDetailViewModel(
+                        meetingID: sample.summary.id,
+                        fetcher: { _ in sample.sentences }
+                    )
+                )
+            } else {
+                Text("Preview fixture unavailable")
+            }
+        }
+    }
+#endif

@@ -1,6 +1,6 @@
 # Arigato AI — Roadmap
 
-On-device bidirectional Japanese↔English meeting translator for iPhone 17 Pro Max. Personal use first, App Store later if it earns it. Built with Swift 6 / SwiftUI / SwiftData on iOS 26.4+, WhisperKit for ASR, LFM2-350M for translation, Apple Foundation Models for cleanup tier 1, Anthropic API (Claude Opus 4.7) for cleanup tier 2.
+On-device bidirectional Japanese↔English meeting translator for iPhone 17 Pro Max. Personal use first, App Store later if it earns it. Built with Swift 6 / SwiftUI / SwiftData on iOS 26.4+, WhisperKit for ASR, LFM2-350M for translation. Post-meeting AI summary is handled via an external copy-transcript → Claude workflow (in-app AI integration deferred to V3).
 
 This file is the single source of truth for the project arc. New chat sessions and Claude Code agents read this to orient. When state changes, update this file alongside CURRENT_STATE.md.
 
@@ -27,7 +27,7 @@ The 12 features that constitute MVP 1:
 **Export and post-process**
 9. Export as Markdown (bilingual or English-only toggle) — ⚠️ superseded by Decision #10 (bilingual-only with timestamps); no toggle planned
 10. Share sheet integration — ✅ shipped (Step 13 + B1.4)
-11. AI summary on demand via Apple Foundation Models — ❌ not shipped; genuinely-new feature remaining for MVP-1
+11. Copy transcript (paste into Claude Max or external tool for summarization) — ✅ shipped: toolbar Copy button writes the full bilingual Markdown transcript to the clipboard. In-app AI summary deferred to V3.
 
 **Settings**
 12. Single settings screen: model warmup toggle, default export format, transcript retention period, microphone input override — ❌ superseded by Decision #19 (About + Storage only); four-toggle spec deferred to Phase 6+ polish
@@ -48,7 +48,7 @@ Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond 
 | 6 | SwiftData transcript storage | ✅ Shipped — Meeting/Sentence entities, MeetingStore @ModelActor, auto-save, history list, detail view, search, export, delete-all all shipped via Group D. Production SwiftData container schema fixed in B1.6 (`32abc3e`, 2026-05-25): now registers `Schema([Meeting.self, Sentence.self])`. |
 | 7 | UI polish | ⏳ Pending — minimal DesignSystem namespace shipped (Step 9b); V3 #22 ambient-intelligence pass not started |
 | 8 | Export + ShareLink | ✅ Shipped — Markdown bilingual export; active-view + detail-view ShareLink contexts. Multi-select context (UI #13) deferred. |
-| 9 | AI summary | ⏳ Pending — genuinely untouched |
+| 9 | AI summary | ⏸️ Deferred to V3 — in-app AI summary moved to V3 (consolidated entry). MVP-1 ships copy-transcript → external Claude workflow instead (feature #11). |
 | MVP 1 | All 12 features functional, used in real meetings | ⏳ Pending |
 | Post-MVP-1 | App Store submission (30 days personal + 3 colleague requests) | ⏳ Pending |
 
@@ -126,11 +126,11 @@ Open at kickoff: decide whether to introduce a @design-system subagent or extend
 
 AirDrop / Mail / Files / Notes via native iOS share sheet. Plain text, Markdown, PDF formats. Native iOS share sheet so users send transcripts wherever. No proprietary formats — interoperate with existing tools.
 
-### Phase 9 — AI summary (planned)
+### Phase 9 — AI summary (⏸️ deferred to V3)
 
-Two-tier post-meeting cleanup. Tier 1: Apple Foundation Models (free, on-device) generates summary, action items, key decisions. Tier 2: Claude Opus 4.7 via Anthropic API (~$0.30–0.50 per 2-hour transcript, premium quality, network required). User picks tier per meeting. Privacy stance: Tier 1 is the default, Tier 2 explicit opt-in.
+**Redirected 2026-05-28.** In-app AI summary is deferred to V3. MVP-1 ships feature #11 as **copy transcript → paste into the Claude app** (the user has a Claude Max subscription; copy-paste is sufficient for solo personal use). The original two-tier on-device-cleanup plan is dropped: Apple FoundationModels permanently abandoned (4096-token context window unsuitable for 30+ minute meetings), and in-app Anthropic Claude API integration consolidated into a single V3 entry ("In-app AI summary via Anthropic Claude API") with trigger conditions for revisit.
 
-After Phase 9 ships and all 12 MVP 1 features are functional in real meetings: MVP 1 milestone reached.
+With feature #11 shipped as copy-transcript, all MVP-1 features are implemented; the MVP-1 milestone is reached once the full feature set is exercised in real meetings.
 
 ## Trigger map (V3 entries by firing point)
 

@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftData
+import UIKit
 
 /// Observable view model that owns ``MeetingDetailView``'s reload
 /// pipeline and the small slice of state SwiftUI binds to.
@@ -55,6 +56,16 @@ final class MeetingDetailViewModel {
     /// passed to every ``reload()`` call. Stable for the VM's lifetime.
     private let meetingID: PersistentIdentifier
 
+    /// Injectable pasteboard writer — the seam ``copyTranscript(summary:)``
+    /// writes through. Production wiring defaults to
+    /// `UIPasteboard.general.string`; tests inject a closure that records
+    /// the written string so the copy contract is assertable without
+    /// touching the real system pasteboard.
+    ///
+    /// `@MainActor` because `UIPasteboard.general` mutation is UIKit
+    /// main-actor work and the enclosing type is already `@MainActor`.
+    private let writeToPasteboard: @MainActor (String) -> Void
+
     // MARK: - Observable state
 
     /// Last-loaded sentences, oldest-first by timestamp. Empty on
@@ -83,12 +94,17 @@ final class MeetingDetailViewModel {
     ///     wiring closes over ``MeetingStore/fetchSentences(meetingID:)``;
     ///     tests inject closures that synthesize fixed payloads, throw
     ///     errors, or sleep to simulate cancellation.
+    ///   - writeToPasteboard: Seam ``copyTranscript(summary:)`` writes the
+    ///     exported Markdown through. Defaults to the system pasteboard
+    ///     (`UIPasteboard.general.string`); tests inject a recorder.
     init(
         meetingID: PersistentIdentifier,
-        fetcher: @escaping @MainActor (PersistentIdentifier) async throws -> [MeetingDetail.SentenceProjection]
+        fetcher: @escaping @MainActor (PersistentIdentifier) async throws -> [MeetingDetail.SentenceProjection],
+        writeToPasteboard: @escaping @MainActor (String) -> Void = { UIPasteboard.general.string = $0 }
     ) {
         self.meetingID = meetingID
         self.fetcher = fetcher
+        self.writeToPasteboard = writeToPasteboard
     }
 
     /// Convenience initializer that closes over a live ``MeetingStore``
@@ -98,10 +114,21 @@ final class MeetingDetailViewModel {
     /// - Parameters:
     ///   - store: The actor-backed read source.
     ///   - meetingID: The owning meeting's `PersistentIdentifier`.
-    convenience init(store: MeetingStore, meetingID: PersistentIdentifier) {
-        self.init(meetingID: meetingID, fetcher: { id in
-            try await store.fetchSentences(meetingID: id)
-        })
+    ///   - writeToPasteboard: Seam ``copyTranscript(summary:)`` writes the
+    ///     exported Markdown through. Defaults to the system pasteboard
+    ///     (`UIPasteboard.general.string`); tests inject a recorder.
+    convenience init(
+        store: MeetingStore,
+        meetingID: PersistentIdentifier,
+        writeToPasteboard: @escaping @MainActor (String) -> Void = { UIPasteboard.general.string = $0 }
+    ) {
+        self.init(
+            meetingID: meetingID,
+            fetcher: { id in
+                try await store.fetchSentences(meetingID: id)
+            },
+            writeToPasteboard: writeToPasteboard
+        )
     }
 
     // MARK: - Reload
@@ -139,5 +166,27 @@ final class MeetingDetailViewModel {
     /// underlying state.
     func requestReload() {
         refreshTrigger = UUID()
+    }
+
+    // MARK: - Copy
+
+    /// Writes the meeting's transcript — rendered as Markdown by
+    /// ``TranscriptExporter/markdownBody(summary:sentences:)`` — to the
+    /// injected pasteboard seam.
+    ///
+    /// The exported body is byte-identical to what the detail view's
+    /// `ShareLink` exports (both go through the same exporter). The view
+    /// supplies `summary` because the VM holds only ``sentences``, not the
+    /// meeting metadata. Synchronous — no actor hop and no `Task`; the
+    /// exporter is a pure value transform and the pasteboard write is
+    /// already on the main actor.
+    ///
+    /// - Parameter summary: Meeting metadata for the Markdown header.
+    func copyTranscript(summary: MeetingSummary) {
+        let body = TranscriptExporter.markdownBody(
+            summary: summary,
+            sentences: sentences
+        )
+        writeToPasteboard(body)
     }
 }

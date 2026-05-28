@@ -195,6 +195,67 @@ struct MeetingDetailViewModelTests {
         #expect(vm.loadError == nil)
     }
 
+    // MARK: - MVP1-11-copy-1
+
+    /// **MVP1-11-copy-1** — ``MeetingDetailViewModel/copyTranscript(summary:)``
+    /// writes EXACTLY the exporter's Markdown to the injected pasteboard
+    /// seam. Proves the VM (a) renders via
+    /// ``TranscriptExporter/markdownBody(summary:sentences:)`` over its
+    /// current ``MeetingDetailViewModel/sentences`` and (b) hands that
+    /// string to the pasteboard writer — the byte-identity guarantee the
+    /// Copy button relies on (same body the `ShareLink` exports).
+    @Test func copyTranscript_writesExporterMarkdownToPasteboard() async throws {
+        let container = try Self.makeContainer()
+        let context = ModelContext(container)
+        let started = Date(timeIntervalSince1970: 1_700_000_000)
+        let meeting = Meeting(startedAt: started, title: "Copy fixture")
+        meeting.endedAt = started.addingTimeInterval(60)
+        context.insert(meeting)
+        try context.save()
+        let summary = MeetingSummary(from: meeting)
+        let id = meeting.persistentModelID
+
+        let payload = [
+            Self.makeProjection(
+                id: id,
+                timestamp: started.addingTimeInterval(1),
+                sourceLanguage: "ja",
+                sourceText: "こんにちは",
+                translatedText: "Hello"
+            ),
+            Self.makeProjection(
+                id: id,
+                timestamp: started.addingTimeInterval(2),
+                sourceLanguage: "en",
+                sourceText: "Goodbye",
+                translatedText: "さようなら"
+            ),
+        ]
+
+        // Fake pasteboard writer records the written string. The closure
+        // is `@MainActor`-isolated like the seam, and the test suite is
+        // `@MainActor`, so a plain box would suffice — but the project's
+        // Swift 6 fake-state rule prefers `OSAllocatedUnfairLock` for any
+        // recorder that could be read across isolation, and it costs
+        // nothing here.
+        let recorded = OSAllocatedUnfairLock<String?>(initialState: nil)
+        let vm = MeetingDetailViewModel(
+            meetingID: id,
+            fetcher: { _ in payload },
+            writeToPasteboard: { value in recorded.withLock { $0 = value } }
+        )
+        await vm.reload()
+        #expect(vm.sentences.count == 2)
+
+        vm.copyTranscript(summary: summary)
+
+        let expected = TranscriptExporter.markdownBody(
+            summary: summary,
+            sentences: payload
+        )
+        #expect(recorded.withLock { $0 } == expected)
+    }
+
     // MARK: - D11-T-vm-5
 
     /// **D11-T-vm-5** — The `convenience init(store:meetingID:)` closes

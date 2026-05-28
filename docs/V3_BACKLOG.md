@@ -1587,6 +1587,23 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **Action when triggered:** Restore the Decision #13 spec, dispatch implementation.
 - **Severity:** LOW (post-MVP-1 polish).
 
+### In-app AI summary via Anthropic Claude API
+
+- **What:** Currently shipped as a copy-transcript → paste-into-Claude workflow (MVP-1 feature #11) — sufficient for solo personal use with a Claude Max subscription. Future option: build an integrated in-app summary using `URLSession` + `POST /v1/messages` with **Claude Sonnet 4.6** (1M context — handles any realistic meeting in one call; ~$0.03–0.07 per 30-min meeting). Phase 0 verification (2026-05-28): there is **no official Anthropic Swift SDK** (official SDKs are Python/TS/Go/Java/Ruby/C#/PHP only) — URLSession + JSON is the canonical iOS path; a community package (`jamesrochabrun/SwiftAnthropic`) exists but isn't worth a dependency for one call. Architecture sketch:
+  - `MeetingSummarizing` protocol + `ClaudeAPISummarizer` implementation
+  - xcconfig-sourced API key (`.gitignored`); migrate to Anthropic Console (team account + spending caps + key rotation) if shipping to others
+  - `Meeting.summary: String?` field (schema addition is non-disruptive per the B1.6 `makeAppSchema()` test pattern)
+  - VM state machine: `idle | generating(Task) | error | complete` (last-wins on rapid taps; cancellable)
+  - Markdown summary section rendered above the transcript when present
+  - Error model: 400 / 401 / 402 billing / 403 / 404 / 413 / 429 (+`retry-after`) / 500 / 504 / 529; refusal via `stop_reason:"refusal"` + `stop_details`. iOS: `beginBackgroundTask` around the in-flight request; attempt-first (no pre-flight reachability check, per Apple DTS guidance).
+- **Triggers (any one):**
+  - User finds the copy-paste workflow disruptive across 10+ summary requests (real friction signal), OR
+  - User ships to ≥3 colleagues who lack Claude Max (they need in-app summary — also fires the Anthropic Console migration), OR
+  - User wants an automatic summary on meeting-end (auto-trigger flow).
+- **Estimated effort:** 1–2 days for the Anthropic API path; 3–5 days if a Gemma 4 privacy-mode option is needed for sensitive on-device-only meetings.
+- **Notes:** Apple FoundationModels dropped permanently (4096-token hard context limit, confirmed unchangeable — unsuitable for 30+ minute meetings). Re-evaluate the Apple path only if a future iOS expands the on-device context window past ~32K tokens. Supersedes the discarded-build plans (the FoundationModels two-tier cleanup + fallback-ladder entries were never committed).
+- **Severity:** LOW (current copy workflow works); rises to MED if any trigger fires.
+
 ## Post-MVP-1 portfolio polish
 
 ### End-of-project GitHub cleanup for portfolio
