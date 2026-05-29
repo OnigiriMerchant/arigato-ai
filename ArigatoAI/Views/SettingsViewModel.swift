@@ -209,4 +209,67 @@ final class SettingsViewModel {
         }
         await load()
     }
+
+    #if DEBUG
+        /// `true` while a developer-tool seed is in flight. Re-entry guard for
+        /// ``seedSampleData()`` and a disable signal for the DEBUG "Developer"
+        /// section buttons in ``SettingsView``.
+        ///
+        /// DEBUG-only — the entire developer-seeding surface (this flag plus
+        /// ``seedSampleData()`` and ``clearAllData()``) is compiled out of
+        /// Release builds, alongside ``DebugMeetingSeeder`` itself.
+        private(set) var isSeeding: Bool = false
+
+        /// Seeds the simulator store with ``DebugMeetingSeeder``'s sample
+        /// meetings so the history list / detail view / copy-share-export /
+        /// swipe-to-delete can be evaluated against realistic JA↔EN data.
+        ///
+        /// **Re-entry guarded** on ``isSeeding`` (set true on entry, reset via
+        /// `defer`) so a stray double-tap cannot drive two overlapping seeds.
+        /// This is the serialization ``DebugMeetingSeeder/seed(into:)``
+        /// documents it requires; the Settings buttons are additionally
+        /// `.disabled` while any busy flag is set. Kept fully separate from
+        /// the production ``PendingAction`` / ``confirmPending()`` path — this
+        /// is throwaway dev tooling, not a user-facing destructive action.
+        ///
+        /// Seeding is intentionally **not** idempotent: repeat invocations
+        /// stack data rather than clearing first, so a real recording is never
+        /// destroyed. Use ``clearAllData()`` to reset.
+        ///
+        /// Failures surface through ``lastActionResult`` as `.failure(message:)`
+        /// (matching the production destructive-op idiom); on completion the
+        /// transcript-count stat is refreshed via ``load()``.
+        func seedSampleData() async {
+            guard !isSeeding, !isClearingCache, !isDeletingAll else { return }
+            isSeeding = true
+            defer { isSeeding = false }
+            do {
+                try await DebugMeetingSeeder.seed(into: meetingStore)
+            } catch {
+                lastActionResult = .failure(message: error.localizedDescription)
+            }
+            await load()
+        }
+
+        /// Deletes **all** meetings (the DEBUG "Clear all sample data" button).
+        ///
+        /// Calls the existing ``MeetingStore/deleteAllMeetings()``. Note this
+        /// removes *every* meeting, not only seeded ones — acceptable for
+        /// throwaway dev tooling. Re-entry guarded on the same busy flags as
+        /// ``seedSampleData()``; surfaces success as `.deleted(count:)` and
+        /// failure as `.failure(message:)`, matching the production idiom, then
+        /// refreshes the stat via ``load()``.
+        func clearAllData() async {
+            guard !isSeeding, !isClearingCache, !isDeletingAll else { return }
+            isSeeding = true
+            defer { isSeeding = false }
+            do {
+                let count = try await meetingStore.deleteAllMeetings()
+                lastActionResult = .deleted(count: count)
+            } catch {
+                lastActionResult = .failure(message: error.localizedDescription)
+            }
+            await load()
+        }
+    #endif
 }
