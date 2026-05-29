@@ -64,3 +64,13 @@ On-device bidirectional Japanese↔English live meeting translator for iPhone 17
 ## 7. The standing rule
 
 **Verify, don't assert.** No shortcuts, no pattern-matching, only real work. When uncertain, fetch the primary source or read the actual code. A correct "I need to check" beats a confident wrong answer — the latter has cost this project real time.
+
+## 8. Before migrating to a new Claude.ai chat
+
+This doc is only as good as its freshness at migration time. Before switching to a new chat, run a pre-migration refresh so the new chat reads accurate state:
+
+1. In the CURRENT chat, confirm all work is committed + pushed to `origin/main` (0 ahead / 0 behind).
+2. Dispatch to Claude Code: *"Pre-migration refresh: reconcile `CURRENT_STATE.md` to HEAD, then update `HANDOFF.md` Section 4 snapshot to match. Verify, don't assert. Stop before commit."* Review, commit, push.
+3. THEN open the new chat. First message: *"Read `HANDOFF.md` at the repo root, then follow its read-first sequence."*
+
+The durable sections (0, 2, 3, 5, 6, 7) rarely change. Section 4 (snapshot) is the one that drifts — the refresh above keeps it honest. This protocol exists because a prior un-refreshed migration caused severe context loss.

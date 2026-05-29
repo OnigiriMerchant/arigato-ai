@@ -1554,7 +1554,13 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **Workaround option (self-unblock without waiting on upstream):** add an `install_name_tool -change` build phase that rewrites the broken `@rpath/…framework/…` load command in `libinference_engine.dylib` to the plain-dylib form actually shipped. This lets the v0.10.x migration proceed before upstream fixes packaging; verify the rewritten install name with `otool -L`. Bounded by the +30-day cadence in "Issue #5 escalation cadence" below.
 - **Trigger to revisit:** after B1.6 + Item.swift cleanup land (persistence functional for smoke-testing) AND issue #5 closes, or the +30-day escalation cadence forces the workaround decision.
 - **Cross-references:** issue #5 (https://github.com/Liquid4All/leap-sdk/issues/5); "LEAP SDK v0.10.x migration — upstream-blocked (P-2 attempt closed)" (canonical block record — not duplicated here); "Issue #5 escalation cadence"; "Liquid Docs MCP — installed". No project memory on the LEAP SDK tag currently exists; create one pinning the channel reality (leap-ios v0.9.4 pin; leap-sdk v0.10.x is the live channel) when B1.1 is re-attempted.
-- **Severity:** HIGH — B1.1 is the only remaining MVP-1 blocker once B1.6 ships.
+- **Severity:** LOW (migration deferred to v1.x; B1.6 shipped at `32abc3e` and B1.1 was downgraded out of MVP-1 on 2026-05-25, shipping on LEAP v0.9.4 — this entry is no longer blocking anything).
+
+### Adopt Dynamic Workflows for the v0.10.x LEAP migration
+
+- **What:** Claude Code's Dynamic Workflows (research preview as of 2026-05-28, available on Max plan) runs hundreds of parallel subagents for codebase-scale migrations with the test suite as the bar. Right tool for the deferred v0.10.x LEAP SDK migration (different API surface, code rewrite of the LFM2 integration layer) — NOT for incremental UI/feature work (which needs human-in-the-loop phase gates).
+- **Trigger:** When issue #5 unblocks AND the v0.10.x migration is greenlit. Also watch for Dynamic Workflows reaching GA (currently research preview).
+- **Severity:** LOW (migration deferred to v1.x).
 
 ### Issue #5 escalation cadence
 
@@ -1603,6 +1609,12 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **Estimated effort:** 1–2 days for the Anthropic API path; 3–5 days if a Gemma 4 privacy-mode option is needed for sensitive on-device-only meetings.
 - **Notes:** Apple FoundationModels dropped permanently (4096-token hard context limit, confirmed unchangeable — unsuitable for 30+ minute meetings). Re-evaluate the Apple path only if a future iOS expands the on-device context window past ~32K tokens. Supersedes the discarded-build plans (the FoundationModels two-tier cleanup + fallback-ladder entries were never committed).
 - **Severity:** LOW (current copy workflow works); rises to MED if any trigger fires.
+
+### Watch Apple post-WWDC 2026 AI strategy for on-device summary viability
+
+- **What:** Apple FoundationModels was dropped as the AI-summary path (4096-token context, unsuitable for 30+ min meetings). Apple's AI strategy is in flux (Jan 2026 Apple→Gemini partnership for cloud models; on-device models still Apple-built). WWDC 2026 (June) will likely clarify direction.
+- **Trigger:** After WWDC 2026 — if Apple announces a materially larger on-device context window (>~32K tokens) or a changed on-device model story, re-evaluate Apple FoundationModels for the AI-summary path.
+- **Severity:** LOW (current copy-paste workflow works).
 
 ## Post-MVP-1 portfolio polish
 
