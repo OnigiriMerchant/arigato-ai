@@ -1616,6 +1616,11 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **Trigger:** After WWDC 2026 — if Apple announces a materially larger on-device context window (>~32K tokens) or a changed on-device model story, re-evaluate Apple FoundationModels for the AI-summary path.
 - **Severity:** LOW (current copy-paste workflow works).
 
+### DEBUG seeder — concurrency violation test deliberately skipped
+- **What:** `DebugMeetingSeeder.seed(into:)` drives the `@ModelActor` `MeetingStore` in an `await`ed loop and its doc-comment declares the scheduling assumption "no concurrent invocation" (concurrent calls would stack duplicate meeting sets — harmless, no corruption). The CLAUDE.md concurrency-design-discipline gate normally requires a forced-overlap violation test for such code. That test was **deliberately skipped** for `DebugMeetingSeeder` / `SettingsViewModel.seedSampleData()` per the user-approved option-(b) decision: this is throwaway DEBUG-only dev tooling (compiled out of Release), the only failure mode is duplicate data, and the defenses are the `SettingsViewModel.isSeeding` re-entry guard plus the Settings "Developer" buttons being `.disabled` while any busy flag is set.
+- **Trigger:** If the seeder is ever promoted beyond throwaway DEBUG tooling (e.g. ships in Release, or becomes a user-facing import path) OR a concurrent-seed bug is actually observed, add the forced-overlap re-entry violation test (two overlapping `seedSampleData()` / `seed(into:)` invocations) and assert the `isSeeding` guard serializes them.
+- **Severity:** LOW (DEBUG-only tooling; UI-disabled + `isSeeding` guard are the defenses).
+
 ## Post-MVP-1 portfolio polish
 
 ### End-of-project GitHub cleanup for portfolio
