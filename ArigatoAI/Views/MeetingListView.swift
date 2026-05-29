@@ -177,6 +177,19 @@ struct MeetingListView: View {
         .onDisappear {
             Task { await model.commitPendingDeletionNow() }
         }
+        #if DEBUG
+            // DEBUG-only: the two `.task(id:)` reloads below fire only when
+            // `searchTrigger` / `refreshTrigger` change. Pushing then popping
+            // `SettingsView` mutates neither, so a `DebugMeetingSeeder` seed
+            // performed from the Settings "Developer" section would NOT appear
+            // when the developer pops back to History without this. `.onAppear`
+            // fires on the pop-back re-appearance; `requestReload()` is the
+            // blessed reload trigger (it bumps `refreshTrigger` without touching
+            // `searchText`, so an active search filter survives). Gated to DEBUG
+            // because it exists solely to make seeded data visible — production
+            // history has no out-of-band writer that pop-back must reconcile.
+        .onAppear { model.requestReload() }
+        #endif
         .navigationTitle("History")
         // Step 12: native iOS search bar two-way-bound to the VM's
         // `searchText`. Mutations there schedule a 300ms debounce that
