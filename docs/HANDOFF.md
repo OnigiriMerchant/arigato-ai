@@ -6,7 +6,7 @@
 
 The exact order to get oriented:
 
-1. This file (`HANDOFF.md`) — workflow, rules, landmines.
+1. This file (`docs/HANDOFF.md`) — workflow, rules, landmines.
 2. `docs/CURRENT_STATE.md` — authoritative live state (what's done, what's next, recent commits).
 3. `docs/ROADMAP.md` — the phase plan + MVP-1 feature list.
 4. `docs/V3_BACKLOG.md` — deferred decisions with trigger conditions.
@@ -32,7 +32,7 @@ On-device bidirectional Japanese↔English live meeting translator for iPhone 17
 - **`docs/V3_BACKLOG.md`** → deferred decisions, future work, each with a trigger condition. Nothing here is active until its trigger fires.
 - **`CLAUDE.md`** → project rules, stack, conventions, the "Don't" list. Claude Code's rules file.
 - **`docs/PRE_MVP1_REVIEW.md`** → historical record of the pre-MVP-1 hardening sprint. Reference only, not live.
-- **`HANDOFF.md` (this file)** → orientation + workflow + behavioral guide. Semi-static.
+- **`docs/HANDOFF.md` (this file)** → orientation + workflow + behavioral guide. Semi-static.
 
 ## 4. Current state snapshot (defers to `CURRENT_STATE.md` for detail)
 
@@ -72,7 +72,7 @@ On-device bidirectional Japanese↔English live meeting translator for iPhone 17
 This doc is only as good as its freshness at migration time. Before switching to a new chat, run a pre-migration refresh so the new chat reads accurate state:
 
 1. In the CURRENT chat, confirm all work is committed + pushed to `origin/main` (0 ahead / 0 behind).
-2. Dispatch to Claude Code: *"Pre-migration refresh: reconcile `CURRENT_STATE.md` to HEAD, then update `HANDOFF.md` Section 4 snapshot to match. Verify, don't assert. Stop before commit."* Review, commit, push.
-3. THEN open the new chat. First message: *"Read `HANDOFF.md` at the repo root, then follow its read-first sequence."*
+2. Dispatch to Claude Code: *"Pre-migration refresh: reconcile `CURRENT_STATE.md` to HEAD, then update `docs/HANDOFF.md` Section 4 snapshot to match. Verify, don't assert. Stop before commit."* Review, commit, push.
+3. THEN open the new chat. First message: *"Read `docs/HANDOFF.md`, then follow its read-first sequence."*
 
 The durable sections (0, 2, 3, 5, 6, 7) rarely change. Section 4 (snapshot) is the one that drifts — the refresh above keeps it honest. This protocol exists because a prior un-refreshed migration caused severe context loss.
