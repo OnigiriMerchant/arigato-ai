@@ -40,6 +40,8 @@ On-device bidirectional Japanese↔English live meeting translator for iPhone 17
 - **Zero ship-blockers** — B1.6 (SwiftData schema-registration mismatch) shipped at `32abc3e`; B1.1 (LFM2 v0.10.x) downgraded to v1.x, shipping on LEAP v0.9.4.
 - **Remaining gate:** real-meeting validation (not build work).
 - **Next build phase:** Phase 7 (UI polish, V3 #22) — not started, not blocking.
+- **HEAD = this pre-migration-refresh commit** — no app-code change since `eea5abc`; the commits since are docs/tooling: HANDOFF.md add (`32c2a75`), Section 8 + two V3 entries (`6c1b81d`), subagent upgrade (`14846d5`), and this refresh.
+- **Tooling (2026-05-29):** Claude Code v2.1.156 on Opus 4.8; subagent stack on Opus 4.8 via the `opus` alias except `git-historian` (Haiku 4.5) — `doc-researcher` + `test-writer` upgraded `sonnet`→`opus` at `14846d5`.
 
 > For live detail (test counts, recent commits, working-tree status), **always read `docs/CURRENT_STATE.md`** — this snapshot may lag.
 
