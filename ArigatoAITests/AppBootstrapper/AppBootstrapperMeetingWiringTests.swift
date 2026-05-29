@@ -97,6 +97,66 @@ private final actor WiringFakeAudioCapture: AudioCapturing {
 
 private struct WiringStubError: Error {}
 
+#if DEBUG
+    /// Test-local fake LFM2 engine whose `warmupCanary` **throws**. Used by
+    /// the DEBUG-seeder reachability test to reproduce the fresh-simulator
+    /// path where the LFM2 model is absent: `LFM2ModelLoader.loadIfNeeded`
+    /// succeeds (the engine loads) but `warmup()` fails, driving
+    /// `startPrewarm`'s LFM2 `.failed` branch and its early return — so the
+    /// real Step 8 meeting-wiring block never publishes `meetingStore`.
+    private final class WiringFailingWarmupLFM2Engine: LFM2Engine, @unchecked Sendable {
+        func warmupCanary(direction _: TranslationDirection) async throws {
+            throw WiringStubError()
+        }
+
+        func translate(
+            userText _: String,
+            direction _: TranslationDirection
+        ) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
+            AsyncThrowingStream { continuation in
+                continuation.finish()
+            }
+        }
+    }
+
+    /// Constructs an ``AppBootstrapper`` whose LFM2 **warmup fails** (the
+    /// engine loads but `warmupCanary` throws), reproducing the
+    /// fresh-simulator early-return in `startPrewarm`. Mirrors
+    /// ``makeWiringBootstrapper(container:whisperFactory:)`` but swaps the
+    /// LFM2 engine factory for one that returns a failing-warmup engine.
+    @MainActor
+    private func makeWarmupFailingBootstrapper(
+        container: ModelContainer?
+    ) -> AppBootstrapper {
+        let whisperLoader = WhisperModelLoader(factory: { _ in WiringFakeWhisperClient() })
+        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in WiringFailingWarmupLFM2Engine() })
+        return AppBootstrapper(
+            loader: whisperLoader,
+            lfm2Loader: lfm2Loader,
+            container: container,
+            capture: WiringFakeAudioCapture()
+        )
+    }
+
+    /// Polls until ``AppBootstrapper/meetingStore`` is published or the
+    /// timeout elapses. Mirrors ``waitForCoordinator(on:timeout:)`` but
+    /// targets `meetingStore` — the DEBUG-seeder reachability path publishes
+    /// the store *without* a coordinator, so the coordinator poller would
+    /// never observe success.
+    @MainActor
+    private func waitForMeetingStore(
+        on bootstrapper: AppBootstrapper,
+        timeout: Duration = .seconds(2)
+    ) async -> Bool {
+        let start = ContinuousClock().now
+        while ContinuousClock().now - start < timeout {
+            if bootstrapper.meetingStore != nil { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return bootstrapper.meetingStore != nil
+    }
+#endif
+
 /// Stop-when-coordinator-published polling helper. Mirrors
 /// `waitForLoaderState` from ``AppBootstrapperTests``; isolated here so
 /// the wiring suite stays self-contained.
@@ -393,4 +453,85 @@ struct AppBootstrapperMeetingWiringTests {
             "Expected coordinator to be unchanged across second startPrewarm; got a different instance (idempotency guard regressed)"
         )
     }
+
+    #if DEBUG
+        /// **DEBUG-seeder reachability + store-only convergence (violation
+        /// test for ``AppBootstrapper/debugPublishMeetingStoreIfNeeded()``).**
+        ///
+        /// Reproduces the fresh-simulator failure: LFM2 warmup throws
+        /// (`WiringFailingWarmupLFM2Engine.warmupCanary`), so
+        /// `startPrewarm`'s LFM2 `.failed` branch returns early — the real
+        /// Step 8 block never publishes `meetingStore`. Then
+        /// `debugPublishMeetingStoreIfNeeded()` publishes the store on its
+        /// own.
+        ///
+        /// Both publishers are kicked off so the two detached tasks race;
+        /// this is also the concurrency violation test for the new method's
+        /// documented idempotency / convergence contract. The load-bearing
+        /// assertion is **`meetingStore != nil` AND `coordinator == nil`** —
+        /// the store-only outcome on the warmup-fail path. (The real path
+        /// returns before its `coordinator == nil`-guarded publish, and the
+        /// DEBUG method never touches `coordinator`, so a coordinator must
+        /// never appear here.)
+        ///
+        /// A `seed` + `fetchAll` round-trip proves the published store is a
+        /// live, writable/readable persistence actor (not a dead reference).
+        ///
+        /// **What this test would catch.** A regression where the DEBUG
+        /// method (a) fails to publish on the warmup-fail path (seeder stays
+        /// unreachable), or (b) constructs a coordinator (wiring a dead
+        /// LFM2 translate path), or (c) publishes a store that is not
+        /// actually backed by the container.
+        @Test("debugPublishMeetingStore on warmup failure publishes store only")
+        func debugPublishMeetingStore_onWarmupFailure_publishesStoreOnly() async throws {
+            let container = try makeWiringContainer()
+            let bootstrapper = makeWarmupFailingBootstrapper(container: container)
+
+            // Race the two publishers: the real path (which will fail
+            // warmup and never publish) and the DEBUG store-only path.
+            bootstrapper.startPrewarm()
+            bootstrapper.debugPublishMeetingStoreIfNeeded()
+
+            // Confirm the real path actually took the warmup-fail early
+            // return, so we know the store we observe came from the DEBUG
+            // method, not from a (non-existent) successful Step 8 publish.
+            let start = ContinuousClock().now
+            while ContinuousClock().now - start < .seconds(1) {
+                if case .failed = bootstrapper.lfm2LoaderState { break }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            if case .failed = bootstrapper.lfm2LoaderState {
+                // Expected — fresh-simulator reproduction.
+            } else {
+                Issue.record(
+                    "Expected LFM2 to reach .failed (warmup-fail reproduction); got \(bootstrapper.lfm2LoaderState)"
+                )
+            }
+
+            let published = await waitForMeetingStore(on: bootstrapper)
+            #expect(published, "Expected debugPublishMeetingStoreIfNeeded to publish meetingStore within timeout")
+
+            // Give any racing detached task a beat to (incorrectly)
+            // construct a coordinator.
+            try? await Task.sleep(for: .milliseconds(100))
+
+            // Load-bearing assertion: store-only on the warmup-fail path.
+            guard let store = bootstrapper.meetingStore else {
+                Issue.record("meetingStore should be non-nil after DEBUG publish")
+                return
+            }
+            #expect(
+                bootstrapper.coordinator == nil,
+                "Expected coordinator to remain nil on the warmup-fail path (store-only publish)"
+            )
+
+            // Round-trip: prove the published store is writable + readable.
+            try await DebugMeetingSeeder.seed(into: store)
+            let summaries = try await store.fetchAll(searchText: "")
+            #expect(
+                summaries.count == DebugMeetingSeeder.samples.count,
+                "Expected \(DebugMeetingSeeder.samples.count) seeded meetings; got \(summaries.count)"
+            )
+        }
+    #endif
 }
