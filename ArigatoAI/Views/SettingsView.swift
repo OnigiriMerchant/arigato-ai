@@ -66,6 +66,9 @@ struct SettingsView: View {
         List {
             aboutSection
             storageSection
+            #if DEBUG
+                developerSection
+            #endif
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -169,4 +172,28 @@ struct SettingsView: View {
         guard let stats = model.stats else { return "—" }
         return SettingsFormatter.bytes(stats.lfm2CacheBytes)
     }
+
+    #if DEBUG
+        /// DEBUG-only developer tooling — seeds / clears realistic sample
+        /// meetings for evaluating history, detail, copy-share-export, and
+        /// swipe-to-delete in the simulator. Compiled out of Release builds
+        /// alongside ``DebugMeetingSeeder`` and the view-model's seeding API.
+        ///
+        /// No confirmation dialog (dev convenience). Both buttons are
+        /// `.disabled` while any busy flag is set, which is also the
+        /// serialization ``DebugMeetingSeeder/seed(into:)`` requires.
+        private var developerSection: some View {
+            Section("Developer") {
+                Button("Seed sample meetings") {
+                    Task { await model.seedSampleData() }
+                }
+                .disabled(model.isSeeding || model.isClearingCache || model.isDeletingAll)
+
+                Button("Clear all sample data", role: .destructive) {
+                    Task { await model.clearAllData() }
+                }
+                .disabled(model.isSeeding || model.isClearingCache || model.isDeletingAll)
+            }
+        }
+    #endif
 }
