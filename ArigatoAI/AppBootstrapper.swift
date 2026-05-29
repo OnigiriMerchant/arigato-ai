@@ -666,6 +666,90 @@ final class AppBootstrapper {
     private func setLFM2Progress(_ progress: Double?) {
         lfm2DownloadProgress = progress
     }
+
+    #if DEBUG
+        /// **DEBUG-only.** Publishes ``meetingStore`` directly, independent
+        /// of the LFM2 warmup chain, so the history surface (and the
+        /// Settings gear it gates) is reachable on a fresh simulator where
+        /// the LFM2 model is absent.
+        ///
+        /// ## Why this exists
+        /// On a fresh simulator the LFM2 model file is not present, so
+        /// ``startPrewarm(variant:)``'s LFM2 `loadIfNeeded` / `warmup()`
+        /// fails and the detached task **returns early** — before the
+        /// Step 8 meeting-wiring block that constructs and publishes
+        /// ``meetingStore``. Because ``ContentView`` gates the History
+        /// clock icon (and ``MeetingListView`` gates the Settings gear) on
+        /// `meetingStore != nil`, a warmup failure leaves the seeder
+        /// completely unreachable. This method publishes the store on its
+        /// own so the history / detail / export / delete paths — which need
+        /// only the store, not the coordinator — light up. The live
+        /// recording controls correctly stay `.disabled()` while
+        /// `coordinator == nil`; this method intentionally does **not**
+        /// construct a coordinator (a coordinator with LFM2 down would wire
+        /// a dead translate path).
+        ///
+        /// ## Off-main initialization (Amendment 3 — FB13399899)
+        /// The store is constructed **inside the detached task** (not inside
+        /// `MainActor.run`), exactly as ``startPrewarm(variant:)`` does it,
+        /// so `@ModelActor`'s synthesized `DefaultSerialModelExecutor` binds
+        /// to a background queue rather than the main thread. See the
+        /// ``meetingStore`` property's "Off-main initialization" note for
+        /// the full FB13399899 / Apple Developer Forums 736226 rationale.
+        /// Only the `meetingStore = store` publication hops to the main
+        /// actor. Constructing the store inside `MainActor.run` would
+        /// re-introduce the bug, so it is deliberately avoided here.
+        ///
+        /// ## Scheduling assumption + violation behavior
+        /// Fire-and-forget detached task. The only mutation is a
+        /// MainActor-guarded `meetingStore` assignment. The method is
+        /// **idempotent**: the synchronous `meetingStore == nil` guard
+        /// below short-circuits a second call, and the post-hop
+        /// `meetingStore == nil` re-check inside `MainActor.run` closes the
+        /// window between the two detached tasks racing. A second call (or
+        /// a call after a real publication) is therefore a **no-op** — it
+        /// never overwrites an existing store.
+        ///
+        /// ## Interaction with ``startPrewarm(variant:)``
+        /// If real LFM2 warmup later succeeds, `startPrewarm`'s Step 8
+        /// block (guarded on `coordinator == nil`, which this method never
+        /// sets) constructs a *second* ``MeetingStore`` plus a
+        /// ``MeetingCoordinator`` and reassigns `meetingStore`. That
+        /// overwrite is benign: both assignments run on the main actor,
+        /// both stores wrap the **same** ``ModelContainer``, so no data is
+        /// lost or corrupted — the second store simply reads the same
+        /// backing file. On the fresh-simulator path warmup never recovers,
+        /// so `startPrewarm`'s block never fires and this store is the only
+        /// one published.
+        ///
+        /// This method is compiled only under `#if DEBUG` and is called
+        /// only from a `#if DEBUG` block in ``ArigatoAIApp/init()``; Release
+        /// builds contain zero references to it.
+        ///
+        /// The race-and-converge behavior described above (this method
+        /// against `startPrewarm`, both publishing to `meetingStore`) is
+        /// exercised by the named violation test
+        /// `debugPublishMeetingStore_onWarmupFailure_publishesStoreOnly`
+        /// in `AppBootstrapperMeetingWiringTests`, which fails LFM2 warmup,
+        /// calls both publishers, and asserts convergence to a non-nil
+        /// store with `coordinator == nil`.
+        func debugPublishMeetingStoreIfNeeded() {
+            guard meetingStore == nil else { return }
+            guard let container = container else { return }
+            Task.detached(priority: .userInitiated) { [weak self] in
+                // Construct off-main (NOT inside MainActor.run) so the
+                // @ModelActor executor binds to a background queue —
+                // Amendment 3 / FB13399899. See doc-comment above.
+                let store = MeetingStore(modelContainer: container)
+                await MainActor.run { [weak self] in
+                    guard let strong = self, strong.meetingStore == nil else { return }
+                    // Publish the store ONLY. `coordinator` is left nil so
+                    // the live controls stay disabled while LFM2 is down.
+                    strong.meetingStore = store
+                }
+            }
+        }
+    #endif
 }
 
 /// Private trampoline that mediates the LFM2 loader's progress handler.
