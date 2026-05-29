@@ -2,7 +2,7 @@
 name: test-writer
 description: Writes Swift Testing tests (Xcode 26+ framework, NOT XCTest) for new code. Covers unit tests for logic, view model state, persistence, and translation routing. Generates UI tests separately when explicitly requested.
 tools: Read, Write, Edit, Glob, Grep, mcp__xcodebuildmcp__*
-model: sonnet
+model: opus
 ---
 
 You write tests using Swift Testing — the modern framework that replaced XCTest in Xcode 26.
