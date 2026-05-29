@@ -75,6 +75,18 @@ struct ArigatoAIApp: App {
         // the loader work doing nothing meaningful in the background is
         // cheaper than coupling the two lifecycles.
         boot.startPrewarm()
+
+        #if DEBUG
+            // Fresh-simulator reachability: LFM2 warmup fails when the
+            // model file is absent, so `startPrewarm`'s detached task
+            // returns before publishing `meetingStore` — leaving the
+            // History icon (and the Settings gear it gates) unreachable,
+            // and with it the DEBUG sample-meeting seeder. Publish the
+            // store directly so the history surface lights up regardless
+            // of warmup outcome. No-op once a real store is published.
+            // `#if DEBUG`-gated so Release `init` is byte-identical.
+            boot.debugPublishMeetingStoreIfNeeded()
+        #endif
     }
 
     var body: some Scene {
