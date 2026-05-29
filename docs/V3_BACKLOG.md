@@ -1633,3 +1633,15 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **Cost when triggered:** ~2-3 hours total. README is the biggest chunk; the rest is mechanical.
 - **Cross-references:** none yet — this entry will accrue cross-references as MVP-1 ships and the portfolio-shape question crystallizes.
 - **Severity:** LOW (portfolio polish, not functional). The repo as-is is fine for a private personal project; this is upgrade work for whenever the repo becomes externally visible.
+
+## Post-MVP-1 quality gate
+
+### Scoped Opus 4.8 code audit of high-risk surfaces
+
+- **What:** Run a focused code audit using Opus 4.8 (whose flaw-detection is ~4x better at catching code issues than 4.7) over the codebase, which was built largely on 4.7 and earlier. Scope **TIGHTLY** — do **NOT** review all 407 tests or the whole codebase. Target high-risk surfaces only:
+  - Concurrency / state machines: meeting session lifecycle, delete-undo flow, audio capture pipeline
+  - Persistence layer (SwiftData — recently fixed in B1.6, worth a fresh look)
+  - Error handling paths
+- **What it won't catch:** real-meeting UX issues (latency feel, flow) — that's real-device validation, a separate gate.
+- **Trigger:** After 1–2 real meetings (so the audit can be informed by any rough edges real usage surfaces), OR whenever the user wants a quality gate before App Store consideration. Best done as its own dedicated session with fresh context.
+- **Severity:** LOW (quality improvement, not a blocker; MVP-1 is feature-complete without it).
