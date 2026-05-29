@@ -4,13 +4,16 @@ Last updated: 2026-05-29 — **MVP-1 FEATURE-COMPLETE**, pending real-meeting va
 
 **MVP-1 status: FEATURE-COMPLETE.** All 12 features shipped or deliberately superseded (zero pending). Zero ship-blockers remain (B1.6 shipped `32abc3e`; B1.1 downgraded to v1.x, shipping on LEAP v0.9.4). Remaining gate: exercise the full feature set in real meetings. Next build-work phase is Phase 7 (UI polish, V3 #22) — not started, not blocking. After real-meeting validation, the suggested next *quality* step is the scoped Opus 4.8 code audit of high-risk surfaces (concurrency/state machines, persistence, error handling) — see `docs/V3_BACKLOG.md` ("Scoped Opus 4.8 code audit of high-risk surfaces").
 
-**Post-feature-complete tooling/docs (2026-05-29).** No app-code change since `eea5abc`; MVP-1 remains feature-complete and real-meeting validation is still the only remaining gate. Three docs/tooling commits landed since the MVP-1 reconcile (`92af934`): HANDOFF.md added (`32c2a75`), Section 8 pre-migration-refresh protocol + two V3 entries (`6c1b81d`), and the subagent stack upgraded — `doc-researcher` + `test-writer` moved `sonnet` → `opus` (`14846d5`). Dev surface: Claude Code **v2.1.156** on **Opus 4.8** (session default); 10 of 11 subagents resolve to Opus 4.8 via the floating `opus` alias, `git-historian` stays on Haiku 4.5; subagent effort inherits the session (xhigh), no per-agent `effort:` pins. Last commit before this refresh: `14846d5`; this pre-migration-refresh commit is HEAD.
+**Post-feature-complete tooling/docs (2026-05-29).** No app-code change since `eea5abc`; MVP-1 remains feature-complete and real-meeting validation is still the only remaining gate. Six docs/tooling commits landed since the MVP-1 reconcile (`92af934`): HANDOFF.md added (`32c2a75`), Section 8 pre-migration-refresh protocol + two V3 entries (`6c1b81d`), the subagent stack upgraded — `doc-researcher` + `test-writer` moved `sonnet` → `opus` (`14846d5`), the 2026-05-29 pre-migration refresh (`96ea3b2`), HANDOFF.md moved to `docs/` for project-knowledge indexing (`40f68ab`), and the scoped Opus 4.8 code-audit V3 entry (`0692523`). Dev surface: Claude Code **v2.1.156** on **Opus 4.8** (session default); 10 of 11 subagents resolve to Opus 4.8 via the floating `opus` alias, `git-historian` stays on Haiku 4.5; subagent effort inherits the session (xhigh), no per-agent `effort:` pins. Most recent pushed commit is `0692523` (scoped Opus 4.8 code-audit V3 entry); this `/update-state` refresh is the current HEAD, local-only pending push.
 
 **P0 finding (2026-05-25) — ✅ RESOLVED (B1.6, `32abc3e`):** the production SwiftData container had registered `Schema([Item.self])` only (`ArigatoAIApp.swift:41`); `Meeting`/`Sentence` were absent from the container `MeetingStore` runs against (`AppBootstrapper.swift:598`), so the shipped persistence wiring would have failed at first insert. It was masked by the B1.1 LFM2 block (store construction is gated on `lfm2Loader.warmup()` succeeding), so no on-device persistence path ever reached the bug. Fixed 2026-05-25 (`32abc3e`): the schema now registers `Meeting` + `Sentence` via a `makeAppSchema()` factory. Was tracked as **B1.6** in `docs/PRE_MVP1_REVIEW.md` Bucket 1; full detail in the "Production wiring gap discovered 2026-05-25" section below.
 
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
 ## Most recent commit
+- 0692523 docs(v3): capture scoped Opus 4.8 code-audit as a backlog entry
+- 40f68ab docs(handoff): move HANDOFF.md to docs/ for project-knowledge indexing
+- 96ea3b2 docs(handoff): pre-migration refresh — reconcile to HEAD (14846d5)
 - 14846d5 chore(agents): upgrade doc-researcher + test-writer to Opus 4.8
 - 6c1b81d docs: HANDOFF migration protocol (Section 8) + two V3 entries
 - 32c2a75 docs(handoff): add HANDOFF.md — fresh-chat orientation doc
@@ -294,69 +297,53 @@ Last updated: 2026-05-29 — **MVP-1 FEATURE-COMPLETE**, pending real-meeting va
 - 392 test runs / 0 failures (386 unit + 6 UI runs across 3 unique UI methods; 389 unique test methods). 0 errors, 0 NEW warnings introduced by Step 15 (5 pre-existing per V3 `66d08b0`). All six Phase 5 architectural decisions remain locked. LEAP iOS SDK v0.9.4 pinned. LFM2-350M-ENJP-MT quantization `Q5_K_M`.
 
 ## Next planned action
-- **End-of-Group-D three-reviewer gate — next session.** Group D 15-step plan COMPLETE. Queued reviewer-gate items (already enumerated in the "End-of-Group-D reviewer-gate items" section below): state-machine audit, LFM2 commit-trail squash candidate, Step 8 commit-trail squash candidate, V3 hygiene grouping, baseline drift reconciliation (392 runs / 389 unique vs originally-projected 392 unique), V3 entry grouping. After reviewer gate: pre-MVP-1 V3 holistic review (1h) then pre-MVP-1 hardening bundle (LFM2 portal fix + Swift 6 warnings + cumulative-load timing race, 8–17h total).
-- **Plan structure**: Phase 1 (persistence + session core, Steps 1–5) ✅ COMPLETE → Phase 2 (UI shell + transcript view, Steps 6–10) ✅ COMPLETE (Steps 6 ✅, 7 ✅, 8 ✅, 9b ✅, 9a ✅; Step 10 absorbed into Step 11 per Step-10-closure) → Phase 3 (history/search/export/onboarding/settings, Steps 11–15) ✅ **COMPLETE** (Steps 11 ✅, 12 ✅, 13 ✅, 14 ✅, 15 ✅) → three-reviewer gate **QUEUED**. Checkpoint commits per step per "Rollback safety."
-- **Group D queued V3 entries (file at execution time, not pre-emptively)**:
-  - "Migrate meeting title generation from first-sentence to Foundation Models summarization" — fires when title-rewrite follow-up dispatch lands (decision #12). *Note (2026-05-28): Apple FoundationModels was dropped as the AI-summary path (4K context unsuitable for 30+ min meetings). This title-generation trigger remains theoretically valid — titles fit easily in 4K — but revisit only if title quality becomes a real need.*
-  - ~~"Migrate history search to SQLite FTS5"~~ — ✅ FILED in Step 12 Commit 2 with concrete simulator latency reading (27.78ms at 15K rows). Trigger: on-device latency >200ms at 15K sentences OR transcript volume >50K sentences.
-  - ~~"First-launch download UX measurement"~~ — ✅ FILED via Step 14 Commit 2 (UI decision #16 shipped).
-  - "SwiftData VersionedSchema migration" — to be filed when entity-evolution actually fires (Phase 6+; the empty-store MVP-1 does not need a versioned schema yet).
+- **Remaining gate is non-code: real-meeting validation.** MVP-1 is feature-complete (`eea5abc`); the milestone is reached once the full feature set is exercised in real Japanese↔English meetings. No build work blocks this — it needs the app run live. Everything below is optional or trigger-gated, secondary to validation.
+- **Next build-work phase (when chosen): Phase 7 — UI polish** (V3 #22). Not started, not blocking. Requires a Claude.ai design-planning session first (design tokens + component library + the @design-system-subagent decision), then bundles the deferred Group D visual concerns (V3 #40).
+- **Suggested next *quality* step (post-validation): scoped Opus 4.8 code audit of high-risk surfaces** (V3 "Scoped Opus 4.8 code audit of high-risk surfaces") — concurrency/state machines, persistence, error handling. Triggered after 1–2 real meetings OR before App Store consideration. Quality gate, not a blocker.
+- **Owed test debt:** #16, #25, #26, #38, #48 — concurrency/cancellation violation tests + the `withLock` warning. #26 (LanguageRouter scheduling-assumption test) and #48 (LFM2 mid-load cancellation test) are the load-bearing concurrency tests CLAUDE.md mandates; still owed.
 
-## Active prerequisites for Phase 5 Group D Step 1
-- **None blocking.** Pre-flight gate satisfied. Plan + amendments approved. All three queued docs commits pushed.
-- @swift-implementer must follow CLAUDE.md "swift-implementer scope-and-decision discipline" — absolute file scope from the plan; STOP-and-surface on any out-of-scope question; written diagnosis required for discarded tests; doc-comment claims naming a specific test ID must be verified against the named test's actual behavior.
-- @code-reviewer applies "Concurrency design discipline" — every actor/AsyncStream/Task addition must doc-comment its scheduling assumption AND have a named violation test that actually enforces it. Step 1 has no concurrency surface but later steps do — track this through the chain.
-- Push protocol active: `git log origin/main..HEAD` before any push; targeted push after the three-reviewer gate at end-of-Group-D.
-- CLAUDE.md sections active: Rollback safety, Concurrency design discipline, feature-planner output discipline, swift-implementer scope-and-decision discipline, code-reviewer auto-BLOCKING "Doc-researcher pre-flight discipline", "Xcode MCP server dependency."
+## Active prerequisites for next build work
+- **None blocking.** MVP-1 is feature-complete; the remaining gate (real-meeting validation) has no code prerequisites. Phase 5 Group D shipped in full (see Phase status above) and its end-of-group three-reviewer gate completed 2026-05-17 (see reviewer-gate section below).
+- When the next build phase (Phase 7 or the scoped audit) starts, the standing CLAUDE.md disciplines apply: Rollback safety (checkpoint commits), Concurrency design discipline (scheduling-assumption doc-comments + named violation tests), feature-planner output discipline, swift-implementer scope-and-decision discipline, code-reviewer auto-BLOCKING "Doc-researcher pre-flight discipline", "Xcode MCP server dependency".
+- Push protocol active: push is ALWAYS separately gated per CLAUDE.md "Don't" rule — `git log origin/main..HEAD` before any push; explicit user authorization required each time.
 
 ## V3 backlog items relevant to upcoming work
-- **Group D Step 1 (next session):**
-  - **#22 design language direction + @design-system subagent decision** — Step 9 (split-screen `TranscriptLiveView` refactor) is the trigger.
-  - **#40 Group D UI deferred concerns** (7 visual concerns from Group C end-of-group gate).
-  - **7 Group C end-of-group entries filed 2026-05-16** (V3_BACKLOG.md "Phase 5 Group C follow-ups"): TranslationActor queue cap revisit, ModelRunner exclusive ownership invariant, TranscriptionActor C16 test-seam backport, LEAP SDK cancellation semantics confirmation, SentenceBuffer clock-injectable refactor, SentenceBuffer multi-boundary provenance accuracy, TranslationProtocolTests post-cancel reusability flake.
-- **Reference material — skim before related Group D work:**
-  - **#51 Swift Concurrency cancellation bridging — three-mechanism gotcha** — relevant for Step 5 (`MeetingSession` undo-window Task) and Step 8 (bridge `AsyncThrowingStream` → `AsyncStream`).
-- **Pre-MVP-1 hardening:**
+- **Phase 7 kickoff (next build phase):**
+  - **#22 design language direction + @design-system subagent decision** — the gating Claude.ai design-planning session.
+  - **#40 Group D UI deferred concerns** — visual concerns from the end-of-Group-D ui-review gate; several closed in Step 9b, remainder deferred to Phase 7.
+  - **#32 user-tunable latency/accuracy slider** — may fire later (after ~5 real meetings if defaults prove wrong).
+- **Post-validation quality gate:**
+  - **Scoped Opus 4.8 code audit of high-risk surfaces** — concurrency/state machines, persistence, error handling. Triggered after 1–2 real meetings or before App Store consideration.
+- **Pre-MVP-1 test debt (still owed):**
   - #16 TranscribingProtocolTests cancel-test timing race
-  - #25 TranscriptionActor.awaitUpstreamDrained → DEBUG-only extension (Group C TranscriptionActor backport entry has concrete reference pattern)
+  - #25 TranscriptionActor.awaitUpstreamDrained → DEBUG-only extension (TranscriptionActor backport)
   - #26 LanguageRouter scheduling-assumption violation test
   - #38 TranscriptionActorTests withLock unused-result warning
   - #48 LFM2ModelLoader mid-load cancellation violation test
-- **Next workflow automation pass** (not blockers for Phase 5):
-  - #41 / #42 / #43 / #44 — dispatch-implementer slash command pre-flight + agent prompt hygiene + rules-as-pointers refactor
-- **Phase 6 kickoff:**
-  - #46 Local-only diagnostics for performance tuning (bundles with SwiftData work landing in Group D)
-  - **LFM2 prompt cache effectiveness benchmark** — Phase 6 verifies whether `maxEntries: 1000` in Caches/ delivers measurable speedup
-- **Phase 7 kickoff:**
-  - #22 design language direction + @design-system subagent decision (also relevant to Group D)
-  - #40 Group D UI deferred concerns
-- **Calendar trigger:**
-  - #18 Quarterly platform sanity review — August 2026
-- **Monitored:**
-  - #21 WhisperKit model variant — locked at turbo-632MB
-  - #23 Subagent MCP-inheritance — fallback rule in CLAUDE.md
-  - #45 Liquid AI / LFM2 model updates — weekly brief
-  - xcode MCP SessionStart hook monitoring — watch for friction
-- **Recently resolved (2026-05-15 to 2026-05-16):**
-  - #49 Re-enable TPC + MTC ✅
-  - #50 xcode MCP startup failure ✅
-  - LFM2 cache strategy SUPERSEDED by xcframework-driven Decision 4 revision ✅
+- **Post-MVP-1 (triggered by real-meeting evidence):**
+  - #5 LFM2 fine-tuning on Roche terminology — after 5+ meetings reveal consistent terminology errors.
+  - #6 Speaker diarization — after 5+ meetings where "who said what?" is the top pain.
+- **LEAP SDK issue #5 escalation cadence:** +14 days (2026-06-03) escalate if still silent; +30 days (2026-06-19) commit to the `install_name_tool` workaround OR a permanent v0.9.4 plan. See "Upstream block status" below.
+- **Next workflow automation pass** (not blocking): #41 / #42 / #43 / #44 — dispatch-implementer slash-command pre-flight + agent-prompt hygiene + rules-as-pointers refactor.
+- **Phase 6 kickoff:** #46 local-only diagnostics; LFM2 prompt-cache effectiveness benchmark (does `maxEntries: 1000` in Caches/ deliver measurable speedup).
+- **Calendar trigger:** #18 quarterly platform sanity review — August 2026.
+- **Monitored:** #21 WhisperKit variant (locked turbo-632MB); #23 subagent MCP-inheritance (fallback rule in CLAUDE.md); #45 Liquid AI / LFM2 model updates (weekly brief); xcode MCP SessionStart hook (watch for friction).
+- **Portfolio:** end-of-project GitHub cleanup (README rewrite, doc archival, media) — triggers ~2–4 weeks into real personal-use stabilization.
 
 ## Process trim (still active)
-- Doc-researcher pre-flight mandatory for third-party tool config changes per V3 #41 + code-reviewer Step 11 BLOCKING rule. Group D pre-flight executed (4 researchers, findings filed in `docs/PHASE_5_GROUP_D_DOC_RESEARCH.md`).
+- Doc-researcher pre-flight mandatory for third-party tool config changes per V3 #41 + code-reviewer Step 11 BLOCKING rule.
 - Screenshot cadence: hard pauses, decision points, surprises only.
-- V3 backlog hygiene: log entries as encountered. Group C's 7 follow-ups filed within session. Group D's 4 queued entries fire at step-execution time.
-- Checkpoint discipline: every step that builds + tests clean commits as `checkpoint(group-N-step-M)` before next dispatch. Group C produced 10 checkpoints + 3 fix commits + 1 docs commit; Group D plan calls for ~15 checkpoints.
-- Concurrency design discipline: explicit scheduling assumptions in doc-comments + at least one violation test per actor/AsyncStream/Task-spawning design. Group D's concurrency table maps each new actor/Task to its scheduling assumption + named violation test (see plan: `MeetingStore` burst test, `MeetingAutoSaver` greedy-producer test, `MeetingSession` undo-race test, debounced-search rapid-typing test, bridge router-throws test).
-- Test seams `#if DEBUG`-gated up-front (Group C convention): `pendingSentenceCount()`, `droppedNewestCount()`, `awaitUpstreamDrained()` on `TranslationActor` all wrapped in `#if DEBUG`. TranscriptionActor backport pending. Step 7 will add `TranslationEvent.queueOverflow(sourceSegmentID:)` — a new event, not a `#if DEBUG` seam.
-- Process finding from Step 3: dispatch brief STOP rules vs session-level decisiveness — see V3 backlog "Phase 5 Group D follow-ups" → "Dispatch brief STOP rules supersede session-level 'make the reasonable call' system-reminder" for precedence work. Revisit before Step 4 dispatch.
+- V3 backlog hygiene: log entries as encountered.
+- Checkpoint discipline: every step that builds + tests clean commits as `checkpoint(group-N-step-M)` before next dispatch (per CLAUDE.md "Rollback safety").
+- Concurrency design discipline: explicit scheduling assumptions in doc-comments + at least one violation test per actor/AsyncStream/Task-spawning design (per CLAUDE.md "Concurrency design discipline").
+- Test seams `#if DEBUG`-gated up-front (Group C/D convention): e.g. `pendingSentenceCount()`, `droppedNewestCount()`, `awaitUpstreamDrained()` on `TranslationActor`.
 
 ## Working tree
 - Clean.
 - Branch: main
-- Origin/main: **0 ahead, 0 behind** (verified 2026-05-29 after pushing this refresh) — all commits pushed, including the final MVP-1 features (swipe-to-delete `93d15a6`, copy-transcript `eea5abc`), the three post-feature-complete docs/tooling commits (HANDOFF.md `32c2a75`, Section 8 `6c1b81d`, agent upgrade `14846d5`), and **this pre-migration-refresh commit (HEAD)**. `git log origin/main..main` is empty.
+- Origin/main: all prior commits **pushed (0 ahead / 0 behind through `0692523`)** — including the final MVP-1 features (swipe-to-delete `93d15a6`, copy-transcript `eea5abc`) and the post-feature-complete docs/tooling chain (HANDOFF.md add `32c2a75`, Section 8 `6c1b81d`, agent upgrade `14846d5`, pre-migration refresh `96ea3b2`, HANDOFF.md → `docs/` `40f68ab`, scoped 4.8 audit entry `0692523`). **This `/update-state` refresh commit is local-only — 1 ahead of origin pending push authorization.**
 - **Sprint correction:** the prior CURRENT_STATE.md headers (8455cac, 7e5bb73) incorrectly listed B1.5 as a remaining sprint item. B1.5 in fact shipped at `2aba525` on 2026-05-17 (well before the B1.2/B1.3/B1.4 work) and was already on origin/main at the time those headers were written. The error originated in the B1.2 docs commit (`8455cac`) and propagated unchanged into the B1.3 docs commit (`7e5bb73`). PRE_MVP1_REVIEW.md's Bucket 1 row + sequencing block also lacked the ✅ marker; corrected in this commit.
-- **Push protocol:** the `docs(handoff): pre-migration refresh` commit covering this 2026-05-29 pass is **committed and pushed** (authorized 2026-05-29); future commits remain gated on explicit authorization per CLAUDE.md "Don't" rule.
+- **Push protocol:** the post-feature-complete docs/tooling chain through `0692523` is **committed and pushed** (authorized 2026-05-29). This `/update-state` refresh commit is **local-only, awaiting push authorization**; push is always separately gated per CLAUDE.md "Don't" rule.
 - **P-2 LEAP SDK migration (2026-05-20)** — attempted v0.9.4 → v0.10.6, BLOCKED on upstream XCFramework packaging bug (`libinference_engine.dylib` records `@rpath/inference_engine_llamacpp_backend.framework/...` framework-form dependency but ships plain-dylib form; dyld cannot resolve, crash at launch). Bug affects BOTH v0.10.5 and v0.10.6 — not a v0.10.6-specific regression (note: the public issue #5 scopes its report to v0.10.6+; v0.10.5 affectedness rests on the project's internal `otool -L` evidence, `PHASE_5_B1_1_MIGRATION_INVENTORY.md:305,312`). v0.10.7 retains the same broken `@rpath`. GitHub issue filed: https://github.com/Liquid4All/leap-sdk/issues/5. Two evidence worktrees parked for resumption when upstream ships a fix:
   - `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints)
   - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints)
