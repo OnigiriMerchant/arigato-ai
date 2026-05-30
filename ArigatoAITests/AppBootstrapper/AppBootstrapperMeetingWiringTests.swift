@@ -126,9 +126,12 @@ private struct WiringStubError: Error {}
     /// LFM2 engine factory for one that returns a failing-warmup engine.
     @MainActor
     private func makeWarmupFailingBootstrapper(
-        container: ModelContainer?
+        container: ModelContainer?,
+        whisperFactory: @escaping @Sendable (WhisperModelVariant) async throws -> any WhisperClient = { _ in
+            WiringFakeWhisperClient()
+        }
     ) -> AppBootstrapper {
-        let whisperLoader = WhisperModelLoader(factory: { _ in WiringFakeWhisperClient() })
+        let whisperLoader = WhisperModelLoader(factory: whisperFactory)
         let lfm2Loader = LFM2ModelLoader(factory: { _, _ in WiringFailingWarmupLFM2Engine() })
         return AppBootstrapper(
             loader: whisperLoader,
