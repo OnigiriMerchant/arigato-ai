@@ -44,10 +44,12 @@ import SwiftUI
 /// This is a **deliberate expansion** of the custom-font scope beyond the
 /// wordmark to the onboarding tagline — not drift. Both faces are Latin-only,
 /// scoped to this hero, and never touch transcript / body / metadata text
-/// (those stay system per the locked rule; see ``BrandFont``). The disabled
-/// continue-button rendering uses
-/// `.tint(.secondary)` + `.disabled(true)` per UI #16's explicit
-/// exception to the button-morphing-no-disabled-states principle.
+/// (those stay system per the locked rule; see ``BrandFont``). Both onboarding
+/// buttons use ``PrimaryActionButtonStyle`` (the monochrome "Mono Key" CTA); the
+/// continue button's disabled appearance is that style's
+/// `@Environment(\.isEnabled)` branch (a dimmed `.primary.opacity(0.6)` fill),
+/// driven by `.disabled(!isEnabled)`, per UI #16's explicit exception to the
+/// button-morphing-no-disabled-states principle.
 @MainActor
 struct OnboardingView: View {
     @State private var viewModel: OnboardingViewModel
@@ -155,12 +157,8 @@ struct OnboardingView: View {
                 Task { await viewModel.advance() }
             } label: {
                 Text("Get Started")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .buttonBorderShape(.capsule)
+            .buttonStyle(PrimaryActionButtonStyle())
             .padding(.horizontal, 32)
             .padding(.bottom, 24)
         }
@@ -245,13 +243,8 @@ struct OnboardingView: View {
                 Text(OnboardingFormatter.continueButtonLabel(
                     lfm2State: bootstrapper.lfm2LoaderState
                 ))
-                .font(.headline)
-                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .buttonBorderShape(.capsule)
-            .tint(isEnabled ? .accentColor : .secondary)
+            .buttonStyle(PrimaryActionButtonStyle())
             .disabled(!isEnabled)
             .padding(.horizontal, 32)
             .padding(.bottom, 24)
