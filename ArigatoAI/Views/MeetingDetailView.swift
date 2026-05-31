@@ -111,6 +111,7 @@ struct MeetingDetailView: View {
                 sentenceList
             }
         }
+        .accessibilityIdentifier("meeting.detail.root")
         .navigationTitle(summary.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: model.refreshTrigger) {
@@ -132,6 +133,7 @@ struct MeetingDetailView: View {
                         Image(systemName: "doc.on.doc")
                             .accessibilityLabel("Copy transcript")
                     }
+                    .accessibilityIdentifier("meeting.detail.copyButton")
                 }
             }
 
@@ -145,6 +147,7 @@ struct MeetingDetailView: View {
                         Image(systemName: "square.and.arrow.up")
                             .accessibilityLabel("Share transcript")
                     }
+                    .accessibilityIdentifier("meeting.detail.shareButton")
                 }
             }
         }

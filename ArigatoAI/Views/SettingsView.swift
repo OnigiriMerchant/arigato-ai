@@ -153,6 +153,7 @@ struct SettingsView: View {
             LabeledContent("Transcripts") {
                 Text(SettingsFormatter.transcriptCountLabel(model.stats?.transcriptCount ?? 0))
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("settings.storage.transcriptCount")
             }
             Button("Clear cache", role: .destructive) {
                 model.requestClearCache()
@@ -163,6 +164,7 @@ struct SettingsView: View {
                 model.requestDeleteAll()
             }
             .disabled(model.isClearingCache || model.isDeletingAll)
+            .accessibilityIdentifier("settings.storage.deleteAllButton")
         }
     }
 
@@ -188,11 +190,13 @@ struct SettingsView: View {
                     Task { await model.seedSampleData() }
                 }
                 .disabled(model.isSeeding || model.isClearingCache || model.isDeletingAll)
+                .accessibilityIdentifier("settings.developer.seedButton")
 
                 Button("Clear all sample data", role: .destructive) {
                     Task { await model.clearAllData() }
                 }
                 .disabled(model.isSeeding || model.isClearingCache || model.isDeletingAll)
+                .accessibilityIdentifier("settings.developer.clearButton")
             }
         }
     #endif

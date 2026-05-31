@@ -206,6 +206,7 @@ struct ContentView: View {
                             Image(systemName: "clock")
                                 .accessibilityLabel("History")
                         }
+                        .accessibilityIdentifier("history.toolbarButton")
                     }
                 }
                 // B1.4 / UI #9 Context A — active-view toolbar Share.

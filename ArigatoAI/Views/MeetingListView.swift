@@ -248,6 +248,7 @@ struct MeetingListView: View {
                         Image(systemName: "gear")
                             .accessibilityLabel("Settings")
                     }
+                    .accessibilityIdentifier("settings.gear")
                 }
             }
         }
@@ -279,6 +280,7 @@ struct MeetingListView: View {
                 .padding(.horizontal, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("meeting.list.emptyState")
     }
 
     /// Main list content. Each row is a
@@ -309,8 +311,17 @@ struct MeetingListView: View {
                         Label("Delete", systemImage: "trash")
                     }
                 }
+                // UI-test harness hook. Combine children so XCUITest
+                // resolves the row as one queryable cell regardless of
+                // element type (Apple DTS guidance for composite list rows;
+                // an identifier on the container can otherwise land on a
+                // child). All rows share this identifier; tests disambiguate
+                // by the title `staticText` within the matching cell.
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("meeting.list.row")
             }
         }
+        .accessibilityIdentifier("meeting.list.root")
     }
 }
 
