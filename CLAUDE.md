@@ -46,6 +46,16 @@ app fails to load LFM2 at launch.
 - No force-unwraps in production code. Use guard/if-let.
 - No fatalError to silence errors. Find the real cause.
 
+## Design language (Phase 7)
+Locked design language for all SwiftUI views. Full spec: `.claude/skills/swiftui-design/SKILL.md`. Verified iOS 26 API basis + the 5 collisions behind these rules: `docs/PHASE_7_DESIGN_RESEARCH.md`. Decisions: `docs/V3_BACKLOG.md` "Design language direction" (V3 #22). **@ui-reviewer owns enforcement.** Tokens live in `ArigatoAI/Design/DesignSystem.swift` (source of truth; thin `Color.*` forwarders in `DesignTokens.swift`) — use a token where one exists.
+
+- **Source-led, per-line transcript hierarchy.** Each row leads with the spoken language (driven per line by `Sentence.sourceLanguage`, never hardcoded): source = `DesignSystem.Colors.transcriptSource` (primary), translation = `transcriptTranslation` (secondary). **Color-only** differentiation — same `.body` size AND weight, no weight/size delta, no italics/boxes. Metadata (timestamp + JA/EN tag) = `DesignSystem.Typography.metadataText` (SF Mono) + `Colors.metadataForeground`, tertiary.
+- **Content surfaces are solid** — `DesignSystem.Colors.surfaceContent`. Never `.ultraThinMaterial` on content; `.ultraThinMaterial` is NOT Liquid Glass.
+- **Liquid Glass = chrome/navigation only.** Standard toolbar items receive it **system-automatically** (iOS 26) — do NOT hand-apply `.glassEffect` to standard toolbar items (doubles the system glass, violates Apple perf guidance). Custom `.glassEffect` is only for genuine custom floating chrome, never content.
+- **Ambient / particles: minimalist, non-content surfaces only** (onboarding hero / empty state / warmup orb) — never behind content. Any custom ambient must hand-build light/dark parity + a reduced-motion "calm" mode + hold 60fps.
+- **Fonts.** System (SF Pro + Hiragino Sans, incl. CJK) for all text; SF Mono (`.monospaced` system design) for technical readouts/timestamps/tags. Geist Pixel is reserved for the "ARIGATO AI" wordmark + app icon ONLY (deferred to the brand-moment step) — no bundled font in content or chrome.
+- **Light-first.** Design and verify light mode first, then confirm dark parity; prefer semantic system colors so light/dark + accessibility adaptation come free. Only the locked recording accents (`recordingActive`/`recordingReady`) are hard-coded RGB — WCAG-AA-check both modes by hand. Real Liquid Glass material renders fully only on device (Phase 2.5 check).
+
 ## Swift 6 concurrency
 - New types default to `nonisolated` unless they touch main-actor UI state.
 - Use `Sendable` for value types passed across actor boundaries.
