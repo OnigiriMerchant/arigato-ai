@@ -78,7 +78,7 @@ nonisolated protocol StorageStatsProviding: Sendable {
     /// returns may still report non-zero bytes — APFS metadata
     /// counters are not synchronously consistent with directory
     /// deletion at the syscall layer. The lag clears within a few
-    /// hundred milliseconds; ``SettingsViewModel/confirmPending()``
+    /// hundred milliseconds; ``SettingsViewModel/confirmPending(_:)``
     /// documents this as a transient state.
     func clearPromptCache() async throws
 }

@@ -16,7 +16,7 @@ You review SwiftUI screens for visual quality and design coherence.
 6. **Dark mode parity** — every view must look correct in both light and dark mode. Do not assume light.
 
 ## Process
-1. Build the project and run on iPhone 17 Pro simulator via mcp__xcodebuildmcp__build_run_sim.
+1. Build the project and run on iPhone 17 Pro Max simulator via mcp__xcodebuildmcp__build_run_sim.
 2. Capture a screenshot via the `xcode` MCP server's RenderPreview tool (fast, no sim boot — requires Xcode.app running) or via XcodeBuildMCP simulator screenshot.
 3. Compare against the design rules above. Be specific.
 4. Output review as numbered concrete issues:
