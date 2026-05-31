@@ -20,6 +20,16 @@ Three pieces of work landed and were pushed this session (each verified present 
 
 **Step 10 closure (2026-05-16):** Step 10 was originally scoped to "auto-save subscriber chain (UI #6)" but that work was absorbed by Steps 3 + 9a. Row-tap navigation wiring (the genuine remaining Phase 2 closure work) folded into Step 11's brief. State-machine audit deferred to end-of-Group-D reviewer-gate (see new section below). Live-chunk display V3 entry stays open — Step 10 declined to absorb (see V3 entry annotation).
 
+## 2026-05-31 — Phase 7 (UI polish) kickoff
+
+Phase 7 has kicked off. **Docs/config only so far — no production Swift, no design tokens authored yet.**
+
+- **Pre-flight research committed:** `docs/PHASE_7_DESIGN_RESEARCH.md` (commit `ae2cb15`) — an adversarially-verified doc-researcher pre-flight that surfaced **5 collisions (A–E)** between the original V3 #22 intent and verified iOS 26 / locked-decision reality, plus a full codebase + brand-moment inventory and a doc-vs-code drift finding in `.claude/skills/swiftui-design/SKILL.md`.
+- **Design decisions 1–4 LOCKED (2026-05-31):** (1) hierarchy = **source-led per line** (lead with `Sentence.sourceLanguage`, one weight + one color step, same size; SF Mono tag + timestamp tertiary) — supersedes the old fixed JA/EN framing; (2) Liquid Glass = **chrome-only**, content stays solid (`.ultraThinMaterial` ≠ Liquid Glass); (3) ambient/particles = **minimalist, non-content only** (onboarding hero / empty state / warmup orb; never behind content; custom ambient must hand-build light-dark parity + reduced-motion calm mode + 60fps); (4) fonts = **system everywhere incl. CJK + SF Mono for readouts**, Geist Pixel reserved for the wordmark/app-icon only and deferred to the brand-moment step. Full record + cross-refs: `docs/V3_BACKLOG.md` "Design language direction" (V3 #22) → "Phase 7 reconciliation".
+- **swiftui-design skill reconciled:** `.claude/skills/swiftui-design/SKILL.md` rewritten to encode decisions 1–4 and fix the pre-flight's drift (inverted JA/EN hierarchy vs shipped code; three non-existent tokens removed; `.ultraThinMaterial`/Liquid Glass conflation corrected).
+- **Subagent decision (V3 #22 open question — RESOLVED):** EXTEND `@ui-reviewer` to own the design language; no new `@design-system` subagent. The mandate rewrite + CLAUDE.md design-rules update are DEFERRED until the design tokens exist (so they reference real token names).
+- **Next:** design-token authoring, then the detail-view restyle (source-led migration). **The shipped detail view still hardcodes Japanese-primary** (`MeetingDetailView.swift`) — that's the next dispatch, not this one.
+
 ## Most recent commit
 - 04e2ded docs(v3): record 2026-05-31 AppBootstrapper combined-run flake data point + quarantine/stabilize option
 - 80b267f docs(state): reflect 2026-05-31 session — navigation fix, XCUITest QA harness (Groups A–D), confirmationDialog bug fix

@@ -151,6 +151,15 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 ### Design language direction — Arigato AI visual identity (Phase 7)
 - **What:** Phase 7 (UI polish) should implement a coherent visual language combining several 2026 AI-native aesthetics. Codified below as the design intent and the explicit anti-patterns to avoid.
 
+- **Phase 7 reconciliation — LOCKED (2026-05-31).** Design decisions locked and the doc-vs-code drift the pre-flight found is being reconciled. Basis: `docs/PHASE_7_DESIGN_RESEARCH.md` (collisions A–E, commit `ae2cb15`). Several of the original "design opportunities" below are superseded; the locked direction is:
+  1. **Hierarchy = source-led, per line.** Each transcript row leads with the spoken-language text (driven by `Sentence.sourceLanguage`) as primary and the translation as secondary — differentiated by one weight step + one color step, **same size**, no boxes/italics; an SF Mono language tag + timestamp form a tertiary metadata cluster on the source line. **Supersedes** the old fixed Japanese-vs-English framing. (Shipped detail view still hardcodes Japanese-primary; migrates in the Phase 7 detail-view restyle dispatch.)
+  2. **Glass = chrome-only.** Liquid Glass (`.regular` via `glassEffect`) on navigation/controls only (toolbar, nav bar, Copy/Share, scroll-to-top, sheets); content surfaces stay solid. `.ultraThinMaterial` is NOT Liquid Glass — never conflate. Basis: collisions A & B.
+  3. **Ambient/particles = minimalist, non-content only.** Relocated to onboarding hero, empty state, and the model-warmup orb; never behind the transcript or any content surface (detail view = zero particles). Any custom ambient must hand-build light/dark parity + a reduced-motion calm mode + hold 60fps. Basis: collisions C & E.
+  4. **Fonts = system everywhere (incl. CJK) + SF Mono for technical readouts.** Geist Pixel reserved for the "ARIGATO AI" wordmark + app-icon design ONLY (Latin-only; verified no documented CJK coverage), activated at the brand-moment step — NOT now. Detail view ships with no custom-font dependency. Basis: collision D + GROUP_D Decision #18.
+  - **Subagent question (posed below) — RESOLVED:** EXTEND `@ui-reviewer`'s mandate to own the design language; do **NOT** create a new `@design-system` subagent. The mandate rewrite **and** the CLAUDE.md design-rules update are DEFERRED until the design tokens exist (so they reference real token names) — recorded only, not done now.
+  - **Skill reconciled:** `.claude/skills/swiftui-design/SKILL.md` rewritten to encode decisions 1–4 and fix the pre-flight's drift findings — inverted JA/EN hierarchy vs shipped code, three non-existent tokens (`captionPrimary`/`captionSecondary`/`surfaceFloating`), and the `.ultraThinMaterial`≠Liquid Glass conflation.
+  - **Next dispatches:** design-token authoring → detail-view restyle (the source-led migration). No production Swift changed at reconciliation time.
+
 **Aesthetic direction (target style):**
 - Neo Terminal Typography — monospace technical readouts (model names, language tags, latency, confidence values)
 - Cyber-Minimalism / Neo-Retrofuturistic Tech — clean and calm with purposeful retrofuturistic accents (dot matrices, soft neon/cyber accents, sci-fi-inspired typography), balanced so it never feels dated or over-the-top
@@ -180,7 +189,7 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 - Dot-matrix orb as model warmup state visualization (cold/warming/ready/failed) — different particle behaviours per state
 - Monospace technical readouts for Whisper language tag, model variant, latency
 - Ambient background reacts to transcription pipeline state — calm when idle, subtle pulse during active capture, denser activity during inference
-- Glassmorphic transcript bubbles layered over dark particle background, with semantic color for JA vs EN
+- ~~Glassmorphic transcript bubbles layered over dark particle background, with semantic color for JA vs EN~~ — **SUPERSEDED (Phase 7, 2026-05-31):** glass is chrome-only and content surfaces stay solid; ambient backgrounds are relocated to non-content brand moments (hero / empty state / warmup orb). See `docs/PHASE_7_DESIGN_RESEARCH.md` collisions A & B and the "Phase 7 reconciliation" block above.
 
 **Hard technical requirements:**
 - Native light AND dark mode parity, flawless — the design language must work in both modes, not just dark mode where it photographs better. Light mode is harder; design from light-mode-first to force the discipline.
