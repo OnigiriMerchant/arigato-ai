@@ -79,7 +79,13 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Clear", role: .destructive) {
-                Task { await model.confirmPending() }
+                // Capture the pending action SYNCHRONOUSLY at tap time:
+                // dismissing the dialog flips the binding, whose setter
+                // synchronously runs `cancelPending()` (pending = nil)
+                // before this deferred Task runs — so we must read it now.
+                if let action = model.pending {
+                    Task { await model.confirmPending(action) }
+                }
             }
             Button("Cancel", role: .cancel) {
                 model.cancelPending()
@@ -93,7 +99,12 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                Task { await model.confirmPending() }
+                // Capture the pending action SYNCHRONOUSLY at tap time —
+                // see the symmetric Clear-cache button above for why the
+                // deferred Task cannot read `model.pending` itself.
+                if let action = model.pending {
+                    Task { await model.confirmPending(action) }
+                }
             }
             Button("Cancel", role: .cancel) {
                 model.cancelPending()

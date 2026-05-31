@@ -112,7 +112,7 @@ struct SettingsViewModelTests {
         // so reload reflects the new figure.
         model.requestClearCache()
         await provider.setStats(StorageStats(lfm2CacheBytes: 0, transcriptCount: 0))
-        await model.confirmPending()
+        await model.confirmPending(.clearCache)
 
         let clearCount = await provider.clearCallCount
         #expect(clearCount == 1)
@@ -146,7 +146,7 @@ struct SettingsViewModelTests {
         // After delete, the provider's stats are mutated to reflect zero
         // transcripts so the post-action reload publishes the new figure.
         await provider.setStats(StorageStats(lfm2CacheBytes: 0, transcriptCount: 0))
-        await model.confirmPending()
+        await model.confirmPending(.deleteAll)
 
         #expect(model.pending == nil)
         #expect(model.isDeletingAll == false)
@@ -164,11 +164,17 @@ struct SettingsViewModelTests {
 
     /// **Concurrency design discipline — violation test for Assumption 1.**
     ///
-    /// Spawns two concurrent ``confirmPending()`` calls against a fake
+    /// Spawns two concurrent ``confirmPending(_:)`` calls against a fake
     /// whose `clearPromptCache` blocks on a signal. The first call wins
-    /// the re-entry guard and reaches the await; the second call sees
-    /// `isClearingCache == true` and returns immediately. Result: the
+    /// the re-entry guard (sets `isClearingCache = true` with no
+    /// intervening `await` before the gated `clearPromptCache`) and
+    /// reaches the await; the second call sees `isClearingCache == true`
+    /// at the guard's first line and returns immediately. Result: the
     /// provider records exactly one invocation regardless of timing.
+    ///
+    /// The action is now passed in (`.clearCache`) rather than read from
+    /// ``pending``, so this enforces the re-entry contract via the
+    /// busy-flag guard alone — exactly the post-fix safety mechanism.
     @Test
     func confirmPending_whileInFlight_isNoOp() async throws {
         let (_, meetingStore) = try Self.makeStore()
@@ -177,11 +183,10 @@ struct SettingsViewModelTests {
         await provider.blockClear()
 
         let model = SettingsViewModel(statsProvider: provider, meetingStore: meetingStore)
-        model.requestClearCache()
 
         // Spawn the first confirm in a detached task — its `clearPromptCache`
         // will block on the gate.
-        let first = Task { await model.confirmPending() }
+        let first = Task { await model.confirmPending(.clearCache) }
 
         // Wait briefly for the first task to enter `performClearCache` and
         // flip `isClearingCache = true` so the second invocation observes
@@ -191,10 +196,9 @@ struct SettingsViewModelTests {
             await MainActor.run { model.isClearingCache }
         }
 
-        // Re-request before signaling — second confirm hits the re-entry
-        // guard.
-        model.requestClearCache()
-        await model.confirmPending()
+        // Second confirm hits the re-entry guard while the first is still
+        // in flight — must be a no-op via the busy flag.
+        await model.confirmPending(.clearCache)
 
         // Now release the first task.
         await provider.releaseClear()

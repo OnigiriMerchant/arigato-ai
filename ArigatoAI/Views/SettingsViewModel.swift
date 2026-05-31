@@ -16,22 +16,35 @@ import Foundation
 ///
 /// ## Scheduling assumption — re-entry guard
 ///
-/// ``confirmPending()`` is **re-entry guarded**. If a clear-cache or
+/// ``confirmPending(_:)`` is **re-entry guarded**. If a clear-cache or
 /// delete-all call is already in flight (`isClearingCache ||
-/// isDeletingAll`), a subsequent invocation is a no-op. SwiftUI's
-/// confirmation-dialog button cannot in practice produce concurrent
-/// taps, but a test-driven race that calls `confirmPending()` twice
-/// from independent tasks must observe exactly one downstream call
-/// (one `clearPromptCache` on the provider OR one `deleteAllMeetings`
-/// on the store). Named violation test:
-/// ``confirmPending_whileInFlight_isNoOp`` — spawns two concurrent
-/// `confirmPending()` calls against a fake provider whose
-/// `clearPromptCache` blocks until externally signaled, and asserts
-/// the provider observed exactly one invocation.
+/// isDeletingAll`), a subsequent invocation is a no-op. The action is
+/// captured **synchronously at the dialog button tap** and passed in,
+/// rather than read from ``pending`` — SwiftUI dismisses the
+/// confirmation dialog by flipping the `isPresented` binding, whose
+/// setter synchronously runs ``cancelPending()`` (`pending = nil`)
+/// BEFORE the button's deferred `Task` runs `confirmPending`. Reading
+/// `pending` inside the method would therefore observe `nil` and
+/// no-op. Passing the snapshot in side-steps that dismiss-cancel race.
+///
+/// SwiftUI's confirmation-dialog button cannot in practice produce
+/// concurrent taps, but a test-driven race that calls
+/// `confirmPending(_:)` twice from independent tasks must observe
+/// exactly one downstream call (one `clearPromptCache` on the provider
+/// OR one `deleteAllMeetings` on the store). The re-entry safety now
+/// rests on the busy-flag guard (`isClearingCache || isDeletingAll`,
+/// checked as the first line) combined with `@MainActor` serialization
+/// — `performClearCache`/`performDeleteAll` set their busy flag with no
+/// intervening `await`, so a second `@MainActor` invocation that runs
+/// before the first suspends still observes the flag set. Named
+/// violation test: ``confirmPending_whileInFlight_isNoOp`` — spawns two
+/// concurrent `confirmPending(.clearCache)` calls against a fake
+/// provider whose `clearPromptCache` blocks until externally signaled,
+/// and asserts the provider observed exactly one invocation.
 ///
 /// ## Scheduling assumption — stats reload sequencing
 ///
-/// After a successful destructive op, ``confirmPending()`` calls
+/// After a successful destructive op, ``confirmPending(_:)`` calls
 /// ``load()`` to refresh ``stats``. APFS metadata-cache lag may cause
 /// the immediately-subsequent ``StorageStatsProviding/currentStats()``
 /// to report non-zero `lfm2CacheBytes` for a few hundred milliseconds
@@ -78,12 +91,15 @@ final class SettingsViewModel {
 
     /// Pending destructive action — drives the two confirmation
     /// dialogs in ``SettingsView``. Mutated by ``requestClearCache()``,
-    /// ``requestDeleteAll()``, ``cancelPending()``, and cleared at
-    /// the head of ``confirmPending()``.
+    /// ``requestDeleteAll()``, and ``cancelPending()``. The view reads
+    /// this synchronously at the destructive button's tap to capture the
+    /// action to hand to ``confirmPending(_:)`` (the dialog dismissal
+    /// clears it via ``cancelPending()`` before the deferred confirm
+    /// `Task` runs).
     private(set) var pending: PendingAction?
 
     /// `true` while a clear-cache call is in flight. Re-entry guard
-    /// on ``confirmPending()`` consults this + ``isDeletingAll``.
+    /// on ``confirmPending(_:)`` consults this + ``isDeletingAll``.
     private(set) var isClearingCache: Bool = false
 
     /// `true` while a delete-all-transcripts call is in flight.
@@ -104,7 +120,7 @@ final class SettingsViewModel {
     ///     (production) or a fake (tests). Production: a
     ///     ``FileManagerStorageStatsProvider``.
     ///   - meetingStore: The actor-backed persistence used by
-    ///     ``confirmPending()`` for the delete-all path. Same actor the
+    ///     ``confirmPending(_:)`` for the delete-all path. Same actor the
     ///     stats provider reads transcript count from per D15-3.
     init(statsProvider: any StorageStatsProviding, meetingStore: MeetingStore) {
         self.statsProvider = statsProvider
@@ -151,14 +167,25 @@ final class SettingsViewModel {
         pending = nil
     }
 
-    /// Executes the currently pending action.
+    /// Executes the supplied destructive action.
+    ///
+    /// - Parameter action: The action to perform, captured
+    ///   **synchronously at the dialog button tap** by ``SettingsView``
+    ///   and passed in. It is NOT read from ``pending`` because SwiftUI
+    ///   dismisses the confirmation dialog by flipping the `isPresented`
+    ///   binding, whose setter synchronously runs ``cancelPending()``
+    ///   (`pending = nil`) BEFORE this method's deferred `Task` runs.
+    ///   Reading `pending` here would therefore observe `nil` and no-op;
+    ///   passing the snapshot in side-steps that dismiss-cancel race.
     ///
     /// **Re-entry guard.** No-op when any destructive op is already in
-    /// flight (`isClearingCache || isDeletingAll`). The clearing of
-    /// ``pending`` happens BEFORE the await so a re-entry that races
-    /// past the busy-flag check still sees `pending == nil` and
-    /// short-circuits at the `guard let action` line. Named violation
-    /// test: ``confirmPending_whileInFlight_isNoOp``.
+    /// flight (`isClearingCache || isDeletingAll`). This busy-flag check
+    /// is the FIRST line; combined with `@MainActor` serialization and
+    /// the fact that `performClearCache`/`performDeleteAll` set their
+    /// busy flag with no intervening `await`, a second `@MainActor`
+    /// invocation that runs before the first suspends still observes the
+    /// flag set and short-circuits. Named violation test:
+    /// ``confirmPending_whileInFlight_isNoOp``.
     ///
     /// **Reload after success.** Calls ``load()`` so the UI reflects
     /// the post-op state. APFS metadata-cache lag (documented on the
@@ -169,12 +196,13 @@ final class SettingsViewModel {
     /// **Failure surface.** A throwing provider/store call populates
     /// ``lastActionResult`` with `.failure(message:)` and leaves
     /// ``stats`` intact (subsequent `load()` runs unconditionally).
-    func confirmPending() async {
-        // Re-entry guard: ignore concurrent invocations.
+    func confirmPending(_ action: PendingAction) async {
+        // Re-entry guard: ignore concurrent invocations. Must stay the
+        // first line — it is the sole re-entry defense now that the
+        // action no longer comes from `pending`.
         guard !isClearingCache, !isDeletingAll else { return }
-        // Snapshot + clear the pending value before awaiting so the
-        // dialog binding dismisses promptly.
-        guard let action = pending else { return }
+        // Defensively clear any lingering pending value (idempotent —
+        // the dialog dismiss already cleared it via cancelPending()).
         pending = nil
 
         switch action {
@@ -229,7 +257,7 @@ final class SettingsViewModel {
         /// This is the serialization ``DebugMeetingSeeder/seed(into:)``
         /// documents it requires; the Settings buttons are additionally
         /// `.disabled` while any busy flag is set. Kept fully separate from
-        /// the production ``PendingAction`` / ``confirmPending()`` path — this
+        /// the production ``PendingAction`` / ``confirmPending(_:)`` path — this
         /// is throwaway dev tooling, not a user-facing destructive action.
         ///
         /// Seeding is intentionally **not** idempotent: repeat invocations
