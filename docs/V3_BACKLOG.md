@@ -1171,6 +1171,7 @@ Cost estimate: ~15 min.
 
 ### Onboarding visual identity polish — replace SF Symbol hero with custom illustration
 
+- **✅ LARGELY SHIPPED (Phase 7 Step 5, 2026-05-31 — `161800a`/`18b11da`/`c7577a2`, pushed):** the SF-Symbol hero is replaced by the bundled **Geist Pixel "ARIGATO AI" wordmark + Geist Mono tagline + reusable Mono Key button (`PrimaryActionButtonStyle`) + a "terminal power-on" type-on entrance animation** — monochrome, light/dark parity, reduce-motion calm mode, pixel-identical settled state. This closes the **onboarding** brand moment. **Still open** under this V3 #22 brand-moment bundle: the `MeetingListView` empty state, the `StartupErrorView` icon, and the **app icon** (the Geist Pixel wordmark moment). The original SF-Symbol/illustration framing below is retained as historical context (the wordmark route was taken instead of a commissioned illustration).
 - **What:** Step 14 ships Screen 1 with an `Image(systemName: "text.bubble.fill")` hero at 64pt tinted with `.tint`. The visual is functional but visually flat — every iOS app with onboarding leans on SF Symbols, and Arigato AI has no visual identity moment on first launch.
 - **Why this is V3 and not Step 14 scope:** custom illustration is a brand polish concern, not a functional one. Step 14 explicitly STOPped on this per pre-authorized STOP #4 (`Need to introduce V3 #22 visual identity`).
 - **Bundle with:** V3 #22 design language pass (Phase 7). The hero illustration is one moment among several that need brand treatment (`MeetingListView` empty state, `StartupErrorView` icon, app icon).
@@ -1181,6 +1182,25 @@ Cost estimate: ~15 min.
   - V3 #22 (Phase 7 design language pass)
   - V3 entry "Step 7's MeetingControlsView consumes Phase-4 DesignTokens" — same Phase-7 scope.
   - Step 14 dispatch brief pre-authorized STOP #4
+
+### Phase 7 follow-ups — app-wide Mono Key rollout + token convergence (filed 2026-05-31)
+
+- **What:** Two low-risk cleanups left after the Phase 7 onboarding hero shipped:
+  1. **App-wide `PrimaryActionButtonStyle` rollout.** The reusable monochrome "Mono Key" button style (`ArigatoAI/Design/PrimaryActionButtonStyle.swift`, shipped `18b11da`) is applied to the two onboarding buttons only. Adopt it on the other primary CTAs — `StartupErrorView`, `AudioCaptureView` (×2), `MeetingControlsView` primary — so the monochrome CTA language is consistent app-wide. Secondary / `.bordered` actions are out of scope until a companion style exists.
+  2. **`timestampForeground` → `metadataForeground` token convergence.** `DesignSystem.Colors.timestampForeground` (split-screen consumer) and `metadataForeground` (Phase 7 source-led metadata role) resolve to the **same** `.tertiaryLabel` value; the split-screen layout still references the older token. Converge the call site onto `metadataForeground` and retire `timestampForeground` (the convergence is already noted inline in `DesignSystem.swift`).
+- **Why V3 / deferred:** both are mechanical cleanups with no user-visible behavior change; bundle into a Phase 7 polish pass rather than expanding the onboarding-hero dispatches.
+- **Trigger to revisit:** the Phase 7 cleanup bundle (suggested as an ultracode pass alongside the V3 #40 deferred concerns).
+- **Cost estimate:** rollout ~30–45 min (4 call sites + per-mode render/AA re-check); convergence ~10 min (one call site + token retire + test).
+- **Cross-references:** V3 #22 (design language), V3 #40 (deferred Group-D UI concerns — same cleanup bundle).
+
+### @ui-reviewer measurement discipline — flag spatial/contrast for measurement, not assertion (filed 2026-05-31)
+
+- **What:** Tighten the `@ui-reviewer` mandate (`.claude/agents/ui-reviewer.md`, and/or the CLAUDE.md design-review rules) so the agent frames **precise spatial** (size / position / alignment) and **contrast** (WCAG-ratio) concerns as *"flag for measurement"* rather than asserting numbers it cannot compute.
+- **Why:** the subagent can `Read` images but **cannot run pixel or numeric measurements**, so any such figure is a visual estimate. It produced two confident-but-wrong BLOCKs in one session (2026-05-31), both refuted by direct pixel measurement: (a) disabled-button contrast — asserted ≈2.85:1 via a wrong alpha-composite; measured **5.74:1** (passes); (b) onboarding wordmark "≈1.7× size-pop + re-center" — measured identical (cap 66px, left x=100, span x[100..588] in both typing-complete and settled). False BLOCKs cost real cycles to overturn.
+- **How:** in the mandate, instruct the agent to (1) state spatial/contrast observations as hypotheses to verify, (2) name the exact frames/elements to measure, and (3) NOT assert a specific px/ratio as fact. The main session verifies via stdlib `zlib` PNG decode + the WCAG luminance formula (PIL/ffmpeg are not installed in this env; `qlmanage -t` extracts a poster frame).
+- **Distinct from V3 #23** (the `@ui-reviewer` *MCP-inheritance* tooling gap) — this is an *estimation-discipline* concern, not a tool-surface one.
+- **Trigger to revisit:** the Phase 7 cleanup bundle.
+- **Cost estimate:** ~20 min mandate edit + a CLAUDE.md note.
 
 ### Onboarding A/B copy testing — is "Continue without translation" framing too soft for the Roche audience?
 

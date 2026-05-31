@@ -114,13 +114,13 @@ Originally scoped to replace the default Xcode `Item.swift` scaffold with `Meeti
 
 Remaining genuine Phase 6 scope: V3 #46 (local-only diagnostics for performance tuning). B1.6 landed (`32abc3e`); Phase 8 (Export + ShareLink) shipped; Phase 9 (AI summary) deferred to V3.
 
-### Phase 7 — UI polish (planned)
+### Phase 7 — UI polish (in progress)
 
 Caption-first hierarchy. Dark mode parity. Recording state visual language. SwiftUI animations using `withAnimation` and `matchedGeometryEffect`. Accessibility (Dynamic Type, VoiceOver, contrast). Live captions sliding up like a teleprompter. The "feels like a real product" pass.
 
 Hard requirements per V3 #22: light AND dark mode parity, iOS 26.4+ primitives only, WCAG AA, 60fps. Anti-patterns: rainbow color, unnecessary animation, chrome that competes with captions during live sessions.
 
-Open at kickoff: decide whether to introduce a @design-system subagent or extend @ui-reviewer's mandate. Lean toward extension unless workload justifies a new subagent.
+Subagent decision — RESOLVED (2026-05-31): extended `@ui-reviewer`'s mandate to own the design language; no new `@design-system` subagent. The mandate + CLAUDE.md design rules were authored against the shipped token names.
 
 ### Phase 8 — Export + ShareLink (planned)
 
@@ -229,7 +229,7 @@ Estimated total: ~3–4 hours. Items share scope (the dispatch-implementer pre-f
 | test-writer | Writes Swift Testing tests for new code |
 | ui-reviewer | Captures simulator screenshots, audits hierarchy/color/typography/a11y |
 
-No design agent exists. Decision deferred to Phase 7 kickoff per V3 #22.
+No separate design agent — RESOLVED (Phase 7, 2026-05-31): `@ui-reviewer`'s mandate was extended to own the design language instead (per V3 #22).
 
 ## How to use this file
 
