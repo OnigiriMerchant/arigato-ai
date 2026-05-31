@@ -44,6 +44,8 @@
 **Sprint subtotal: 5.5–7h** (was 9.5–19h; B1.1's 4–12h removed when downgraded out of Bucket 1 on 2026-05-25; includes ~15–30 min for B1.6, added 2026-05-25).
 
 > **B1.1 downgrade note (added 2026-05-25):** B1.1 was downgraded 2026-05-25 — MVP-1 ships on v0.9.4 per user decision. See `docs/V3_BACKLOG.md` `LEAP SDK v0.10.x migration` entry (around line 1429) and the issue #5 escalation cadence entry. B1.1 (LFM2 model download — upstream-blocked on `Liquid4All/leap-sdk` issue #5) is no longer a Bucket 1 ship-blocker; the v0.10.x migration is deferred to v1.x.
+>
+> **Update (2026-05-31):** the issue #5 @rpath block **cleared upstream in v0.10.9 (2026-05-29)**; the escalation cadence is now **closed/moot**. The project is **not** adopting v0.10.9 (decision locked — no material benefit). v0.9.4 is the deliberate channel, not a blocked fallback. See `docs/V3_BACKLOG.md` "LEAP SDK v0.10.x migration — upstream fix shipped (v0.10.9), NOT adopting".
 
 ---
 

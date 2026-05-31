@@ -3,7 +3,7 @@ name: leap-sdk
 description: Integration patterns for LFM2-350M-ENJP-MT via the LEAP iOS SDK. Use whenever adding, modifying, or debugging Japanese-English translation calls. Covers SDK setup, system prompt requirements, model loading, async streaming, and concurrency constraints.
 ---
 
-> **This skill reflects v0.9.4 (pinned via `Liquid4All/leap-ios`).** P-2 attempted to migrate to v0.10.6 and was blocked on an upstream XCFramework packaging bug — `libinference_engine.dylib` records a `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` (framework-bundle form) dependency, but the SDK ships only `libinference_engine_llamacpp_backend.dylib` (plain dylib). dyld cannot resolve at app launch. The bug exists in both v0.10.5 and v0.10.6. See GitHub issue [Liquid4All/leap-sdk#5](https://github.com/Liquid4All/leap-sdk/issues/5). When upstream ships a fixed XCFramework, restore the v0.10.6 surface by rebasing the parked worktree `~/AI-projects/arigato-ai-p2` (branch `p2-leap-migration`, HEAD `d8e65d9`) onto current main.
+> **This skill reflects v0.9.4 (pinned via `Liquid4All/leap-ios`) — and that is the deliberate ship channel, not a stopgap.** P-2 attempted a v0.10.6 migration and hit an upstream XCFramework packaging bug (`libinference_engine.dylib` recorded a `@rpath/inference_engine_llamacpp_backend.framework/inference_engine_llamacpp_backend` framework-bundle dependency while the SDK shipped only the plain `libinference_engine_llamacpp_backend.dylib`; dyld could not resolve at launch). **That bug is FIXED upstream in leap-sdk v0.10.9 (2026-05-29)** — see [Liquid4All/leap-sdk#5](https://github.com/Liquid4All/leap-sdk/issues/5) (still open but stale) and the v0.10.9 release notes (ref #265); _caveat:_ release-notes-asserted, not binary/device-verified by us. **The project is NOT adopting v0.10.9 (decision locked 2026-05-31):** no v0.10.x iOS feature benefits a JA↔EN translator, and SDK version does not affect translation quality (that is model-side). Upgrade only if a future release materially benefits THIS app. Full reconciliation + the breaking-change budget: `docs/V3_BACKLOG.md` → "LEAP SDK v0.10.x migration — upstream fix shipped (v0.10.9), NOT adopting".
 
 # LEAP iOS SDK — LFM2-350M-ENJP-MT integration
 
@@ -18,7 +18,7 @@ The user turn is the text to translate. Single-turn conversations only — do no
 
 **Package URL:** `https://github.com/Liquid4All/leap-ios.git`
 
-**Pinned product:** `LeapSDK` — single SPM product in v0.9.4. (v0.10.0+ splits into multiple products; not yet adopted due to upstream block.)
+**Pinned product:** `LeapSDK` — single SPM product in v0.9.4. (v0.10.0+ splits into multiple products; **not adopted — by decision, not block:** the upstream @rpath block cleared in v0.10.9, but v0.10.x offers no benefit to this app. See top banner.)
 
 **Swift import:** `import LeapSDK`
 
@@ -143,22 +143,22 @@ _ = try? await translate("おはようございます", direction: .jaToEn)
 - Long-form (>3 paragraphs) — chunk first
 - Single-turn only — do not feed it multi-turn history
 
-## Migration to v0.10.6 — BLOCKED (upstream)
+## Migration to v0.10.x — upstream fix shipped (v0.10.9); NOT adopting [decision 2026-05-31]
 
-P-2 attempted the v0.9.4 → v0.10.6 migration and surfaced an upstream XCFramework packaging bug affecting both v0.10.5 and v0.10.6. Issue: [Liquid4All/leap-sdk#5](https://github.com/Liquid4All/leap-sdk/issues/5).
+P-2 attempted the v0.9.4 → v0.10.6 migration and surfaced an upstream XCFramework packaging bug affecting **v0.10.5–v0.10.8**. **That bug is now fixed upstream in leap-sdk v0.10.9 (2026-05-29)** (release notes, ref #265; resolves the `@rpath/…framework/…` dyld launch crash). Issue [Liquid4All/leap-sdk#5](https://github.com/Liquid4All/leap-sdk/issues/5) is still open but stale — open ≠ unfixed. **Decision (locked 2026-05-31): the project is NOT migrating** — no v0.10.x iOS feature benefits a JA↔EN translator and SDK version does not change translation quality; MVP-1 ships on v0.9.4. _Caveat:_ the v0.10.9 fix is release-notes-asserted, not binary/device-verified by us.
 
-The completed migration code is parked as evidence baselines:
-- `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints, builds clean, crashes at launch with dyld error)
-- `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints, same crash via `LeapSDK.framework`'s inner dylib)
+The completed migration code is parked as evidence baselines (retained only if the standing material-benefit trigger ever revives the migration):
+- `~/AI-projects/arigato-ai-p2` — v0.10.6 attempt, branch `p2-leap-migration`, HEAD `d8e65d9` (5 checkpoints, builds clean, crashed at launch with dyld error — pre-v0.10.9)
+- `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints, same crash via `LeapSDK.framework`'s inner dylib — pre-v0.10.9)
 
 Full call-site inventory and P-2 execution results: `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` (sections 1–5).
 
-When upstream ships a fixed XCFramework, the parked worktrees are the resumption point. Most behavioral changes (B1, B2, B3, B6, B9) were verified at both v0.10.5 and v0.10.6 via `.swiftinterface` grep and remain correct.
+If the migration is ever revived: rebase a parked worktree, **re-verify the `.swiftinterface` against the then-current release** (the B1/B2/B3/B6/B9 changes were verified at v0.10.5/v0.10.6 but predate v0.10.9), budget the v0.10.9 breaking Swift changes (`ModelDownloader` rename + dynamic framework + dual-import guard from v0.10.6; `LeapDownloaderConfig.with` #262; throwing image/audio factories #264/#267), and **validate on a PHYSICAL iPhone** (community reports sim-vs-device divergence).
 
 ## Sources Consulted
 
 - https://github.com/Liquid4All/leap-ios (v0.9.4 pinned baseline)
 - https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF (model + manifest)
 - https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/main/leap/Q5_K_M.json (authoritative manifest schema for Q5_K_M)
-- https://github.com/Liquid4All/leap-sdk/issues/5 (upstream block tracking P-2)
+- https://github.com/Liquid4All/leap-sdk/issues/5 (P-2 block tracking; resolved upstream in v0.10.9 / 2026-05-29, issue still open/stale)
 - `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` §5 (P-2 execution results, swiftinterface findings)

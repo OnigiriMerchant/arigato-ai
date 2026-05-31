@@ -44,7 +44,7 @@ Excluded from MVP 1, deferred to v2: speaker diarization, multi-language beyond 
 | 2.5 | Physical iPhone deployment | ⏸️ Deferred (triggers when Phase 4 needs real mic hardware) |
 | 3 | Audio capture foundation | ✅ Shipped |
 | 4 | WhisperKit streaming transcription | ✅ Shipped |
-| 5 | LFM2 translation | 🟡 Shipping — Groups A–D shipped via SDK v0.9.4 (legacy `Liquid4All/leap-ios` repo). **v0.9.4 is the MVP-1 ship channel per 2026-05-25 user decision.** v0.10.x migration deferred to v1.x (tracked in V3). |
+| 5 | LFM2 translation | 🟡 Shipping — Groups A–D shipped via SDK v0.9.4 (legacy `Liquid4All/leap-ios` repo). **v0.9.4 is the ship channel per 2026-05-25 user decision.** The v0.10.x @rpath block cleared upstream in v0.10.9 (2026-05-29), but the project is **NOT** adopting it (decision locked 2026-05-31 — no material benefit to a JA↔EN translator; SDK version ≠ translation quality). Revisit only on the standing material-benefit principle (tracked in V3). |
 | 6 | SwiftData transcript storage | ✅ Shipped — Meeting/Sentence entities, MeetingStore @ModelActor, auto-save, history list, detail view, search, export, delete-all all shipped via Group D. Production SwiftData container schema fixed in B1.6 (`32abc3e`, 2026-05-25): now registers `Schema([Meeting.self, Sentence.self])`. |
 | 7 | UI polish | ⏳ Pending — minimal DesignSystem namespace shipped (Step 9b); V3 #22 ambient-intelligence pass not started |
 | 8 | Export + ShareLink | ✅ Shipped — Markdown bilingual export; active-view + detail-view ShareLink contexts. Multi-select context (UI #13) deferred. |

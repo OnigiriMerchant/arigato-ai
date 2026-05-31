@@ -323,7 +323,7 @@ Last updated: 2026-05-29 — **MVP-1 FEATURE-COMPLETE**, pending real-meeting va
 - **Post-MVP-1 (triggered by real-meeting evidence):**
   - #5 LFM2 fine-tuning on Roche terminology — after 5+ meetings reveal consistent terminology errors.
   - #6 Speaker diarization — after 5+ meetings where "who said what?" is the top pain.
-- **LEAP SDK issue #5 escalation cadence:** +14 days (2026-06-03) escalate if still silent; +30 days (2026-06-19) commit to the `install_name_tool` workaround OR a permanent v0.9.4 plan. See "Upstream block status" below.
+- **LEAP SDK issue #5 — RESOLVED upstream (2026-05-31):** the @rpath crash is fixed in leap-sdk v0.10.9 (2026-05-29); the escalation cadence + `install_name_tool` workaround are now **moot**. Decision locked: not adopting v0.10.9 (MVP-1 stays on v0.9.4). See "Upstream status" below.
 - **Next workflow automation pass** (not blocking): #41 / #42 / #43 / #44 — dispatch-implementer slash-command pre-flight + agent-prompt hygiene + rules-as-pointers refactor.
 - **Phase 6 kickoff:** #46 local-only diagnostics; LFM2 prompt-cache effectiveness benchmark (does `maxEntries: 1000` in Caches/ deliver measurable speedup).
 - **Calendar trigger:** #18 quarterly platform sanity review — August 2026.
@@ -349,18 +349,21 @@ Last updated: 2026-05-29 — **MVP-1 FEATURE-COMPLETE**, pending real-meeting va
   - `~/AI-projects/arigato-ai-p2-v0.10.5` — v0.10.5 retry, branch `p2-v0.10.5-attempt`, HEAD `3b72378` (2 checkpoints)
   Sprint workstream status: **B1.1 closed-with-upstream-block**; B1.2, B1.3, B1.4 remain in-scope and unblocked. Full execution results in `docs/PHASE_5_B1_1_MIGRATION_INVENTORY.md` §5; v0.9.4 baseline reality restored in `.claude/skills/leap-sdk/SKILL.md` (v0.10.x guidance removed pending upstream fix).
 
-## Upstream block status — Liquid4All/leap-sdk issue #5
+## Upstream status — Liquid4All/leap-sdk issue #5 (block CLEARED 2026-05-29; not adopting)
 
-B1.1 (LFM2 model download / v0.10.x SDK migration) is blocked on a single upstream defect.
+The v0.10.x upstream block is **cleared**: the @rpath launch crash is fixed in **leap-sdk v0.10.9 (2026-05-29)**. The project is **not** migrating (decision locked 2026-05-31) — MVP-1 ships on v0.9.4. Full reconciliation in `docs/V3_BACKLOG.md` → "LEAP SDK v0.10.x migration — upstream fix shipped (v0.10.9), NOT adopting".
 
-> **2026-05-25 update:** MVP-1 will ship on v0.9.4. B1.1 downgraded from ship-blocker to deferred migration. Escalation cadence still active per V3 entry.
+> **2026-05-31 update:** Upstream fix CONFIRMED in the v0.10.9 release notes (attributed to ref #265) — resolves the `@rpath/inference_engine_llamacpp_backend.framework` dyld crash affecting v0.10.5–v0.10.8. v0.10.x is no longer a dead end. **Caveat:** release-notes-asserted, NOT binary/device-verified by us. **Decision locked:** not adopting v0.10.9 — no v0.10.x iOS feature benefits a JA↔EN translator, and SDK version does not affect translation quality (model-side, LFM2-350M-ENJP-MT). The escalation cadence and the `install_name_tool` self-unblock workaround are both **moot** (upstream fixed the dylib). Verified against primary sources (leap-sdk releases/tag + issue #5 GitHub API); briefs #35/#36.
+>
+> **2026-05-25 update (historical):** MVP-1 will ship on v0.9.4. B1.1 downgraded from ship-blocker to deferred migration.
 
 - **Issue:** "[iOS] v0.10.6+ Launch Crash: Broken @rpath dependency in libinference_engine.dylib (Framework vs Dylib mismatch)" — https://github.com/Liquid4All/leap-sdk/issues/5
-- **Status (live-verified 2026-05-25):** OPEN. Filed by the project (OnigiriMerchant) 2026-05-20. **Zero maintainer engagement** — no assignees, no labels, no linked PRs, no comments.
-- **Defect:** `libinference_engine.dylib` records an `@rpath/inference_engine_llamacpp_backend.framework/…` (framework-bundle) load command, but the SDK ships only the plain `libinference_engine_llamacpp_backend.dylib`; dyld cannot resolve it → launch crash. Public issue scopes affected versions to **v0.10.6+** (v0.10.6, v0.10.7); the project's internal `otool -L` evidence also implicates **v0.10.5** (`PHASE_5_B1_1_MIGRATION_INVENTORY.md:305,312`).
-- **Current pin / workaround:** v0.9.4 on the legacy `Liquid4All/leap-ios` repo — superseded per docs.liquid.ai (which declares leap-ios "no longer the source-of-truth"; the repo itself is **not** archive-flagged). A self-unblock option exists — an `install_name_tool -change` build phase — tracked in V3.
-- **Escalation cadence** (V3 "Issue #5 escalation cadence"): +14 days (2026-06-03) escalate if still silent; +30 days (2026-06-19) commit to the `install_name_tool` workaround OR a permanent v0.9.4 plan.
-- **Live-docs channel:** the `liquid-docs` MCP (installed 2026-05-25, project-local scope) is now the canonical way to check Liquid SDK docs against live sources rather than training data.
+- **Issue state (2026-05-31):** still **OPEN** but **stale** — the maintainer shipped the fix in v0.10.9 without closing it. Its 3 comments are all the reporter's own (OnigiriMerchant), dated 2026-05-20; none references v0.10.9. Open state is NOT evidence the bug is unfixed.
+- **Fix (v0.10.9, 2026-05-29):** release notes state the embedded `libinference_engine.dylib` now references the dylib that's actually shipped, so apps no longer crash at startup; the resolved-crash scope is **v0.10.5–v0.10.8** (matches the project's internal `otool -L` evidence that v0.10.5 was affected). Attributed to ref #265 in the notes (could not be resolved as a discrete PR object via the GitHub API — reported as an unverified object).
+- **Defect (historical):** `libinference_engine.dylib` recorded an `@rpath/inference_engine_llamacpp_backend.framework/…` (framework-bundle) load command while the SDK shipped only the plain `libinference_engine_llamacpp_backend.dylib`; dyld could not resolve it → launch crash.
+- **Current pin:** v0.9.4 on the legacy `Liquid4All/leap-ios` repo — retained **by decision** for MVP-1 (not by block). Upgrade only under the standing material-benefit principle (see V3).
+- **If adoption is ever revived — validate on a PHYSICAL iPhone:** community reports v0.10.x crashed in the simulator but behaved differently on-device; v0.10.9 carries breaking Swift changes (`ModelDownloader` rename + dynamic framework + dual-import guard from v0.10.6; `LeapDownloaderConfig.with` #262; throwing image/audio factories #264/#267). Detail in V3.
+- **Live-docs channel:** the `liquid-docs` MCP (installed 2026-05-25, project-local scope) is the canonical way to check Liquid SDK docs against live sources rather than training data.
 
 ## Production wiring gap discovered 2026-05-25 — ✅ RESOLVED (B1.6, `32abc3e`)
 
