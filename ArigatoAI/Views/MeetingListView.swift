@@ -14,9 +14,16 @@ import SwiftUI
 ///
 /// Renders a list of past meetings sorted newest-first, each row drawn by
 /// ``MeetingListRow`` against a ``MeetingSummary`` DTO. Each row is wrapped
-/// in a `NavigationLink(value: summary)` that pushes ``MeetingDetailView``
-/// via the `.navigationDestination(for: MeetingSummary.self)` modifier
-/// attached to the list content (Step 11). Swipe actions land in Step 13.
+/// in a `NavigationLink(value: AppRoute.meetingDetail(summary))`, and the
+/// gear toolbar item is a `NavigationLink(value: AppRoute.settings)`. Both
+/// resolve against the single `.navigationDestination(for: AppRoute.self)`
+/// at ``ContentView``'s `NavigationStack` root — no destination is
+/// registered in this pushed view. (Earlier the History/Settings toolbar
+/// links were closure-form `NavigationLink { destination }`; mixed with the
+/// value-based row links, the closure-form History link re-fired on a row
+/// tap and pushed a duplicate History list on top of the detail. All four
+/// links are now value-based — see ``AppRoute``.) Swipe actions land in
+/// Step 13.
 ///
 /// ## Scheduling assumption (Concurrency design discipline)
 ///
@@ -75,12 +82,16 @@ struct MeetingListView: View {
     /// does not leave an un-committed delete dangling.
     @Environment(\.scenePhase) private var scenePhase
 
-    /// The actor-backed read source. Retained as a stored property so
-    /// the Step 11 `.navigationDestination(for: MeetingSummary.self)` can
-    /// hand it through to ``MeetingDetailView``'s production init.
-    /// Optional because the test-only `init(model:)` does not need a
-    /// live store — when `nil`, the destination resolves to an empty
-    /// view (tap-navigation is a render-time-only concern under tests).
+    /// The actor-backed read source. Retained as a stored property for the
+    /// list's data path (the production `init(store:)` closes the view
+    /// model's fetcher/deleter over it). It is no longer consumed by a
+    /// `.navigationDestination` in this view: that destination moved to
+    /// ``ContentView``'s `NavigationStack` root, which resolves the store
+    /// from ``AppBootstrapper/meetingStore`` instead (see the inline comment
+    /// after `.navigationTitle` in ``body`` for why the destination moved).
+    /// Optional because the test-only `init(model:)` does not need a live
+    /// store — tests drive the view model directly and do not exercise the
+    /// navigation push.
     private let store: MeetingStore?
 
     /// Bootstrapper threaded in from ``ArigatoAIApp`` via the SwiftUI
@@ -191,6 +202,17 @@ struct MeetingListView: View {
         .onAppear { model.requestReload() }
         #endif
         .navigationTitle("History")
+        // No `.navigationDestination` is registered in this pushed view.
+        // All navigation is value-based and resolved by the single
+        // `.navigationDestination(for: AppRoute.self)` at ``ContentView``'s
+        // `NavigationStack` root. (The History/Settings toolbar links were
+        // formerly closure-form `NavigationLink { destination }`; mixed with
+        // the value-based row links — and re-evaluated constantly inside
+        // `.toolbar` — the closure-form History link re-fired on a row tap
+        // and pushed a duplicate History list on top of the detail, with an
+        // intermittent invalid-navigation crash. Converting all links to
+        // `NavigationLink(value:)` resolved by one root destination fixed it
+        // — see ``AppRoute``.)
         // Step 12: native iOS search bar two-way-bound to the VM's
         // `searchText`. Mutations there schedule a 300ms debounce that
         // ultimately bumps `searchTrigger`; SwiftUI's `.task(id:)` below
@@ -221,13 +243,8 @@ struct MeetingListView: View {
         // for Step 13's swipe-action surface and any future affordances.
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                if let store = bootstrapper.meetingStore {
-                    NavigationLink {
-                        SettingsView(
-                            statsProvider: bootstrapper.storageStatsProvider,
-                            meetingStore: store
-                        )
-                    } label: {
+                if bootstrapper.meetingStore != nil {
+                    NavigationLink(value: AppRoute.settings) {
                         Image(systemName: "gear")
                             .accessibilityLabel("Settings")
                     }
@@ -264,22 +281,20 @@ struct MeetingListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Main list content. Each row is a `NavigationLink(value:)` that
-    /// pushes ``MeetingDetailView`` via the
-    /// `.navigationDestination(for: MeetingSummary.self)` modifier
-    /// attached below — the iOS 16+ "attach close to source" idiom keeps
-    /// the destination resolution inside this view rather than at the
-    /// `NavigationStack` root in ``ContentView`` (see
-    /// ``ContentView`` for the stack root). Swipe actions land in
-    /// Step 13.
+    /// Main list content. Each row is a
+    /// `NavigationLink(value: AppRoute.meetingDetail(summary))` resolved by
+    /// the single `.navigationDestination(for: AppRoute.self)` at
+    /// ``ContentView``'s `NavigationStack` root — no destination is attached
+    /// in this view (see the comment after `.navigationTitle` in ``body``
+    /// and ``AppRoute`` for why). Swipe actions land in Step 13.
     private var listContent: some View {
         List {
             ForEach(model.visibleMeetings, id: \.id) { summary in
-                // Step 11: row-tap pushes the detail destination. The
-                // value-based form (over the closure-label form) lets
-                // SwiftUI route the value through `.navigationDestination`
-                // below so destination construction is centralized.
-                NavigationLink(value: summary) {
+                // Step 11: row-tap pushes the detail. The value-based form
+                // routes the value to the single
+                // `.navigationDestination(for: AppRoute.self)` at
+                // ``ContentView``'s `NavigationStack` root.
+                NavigationLink(value: AppRoute.meetingDetail(summary)) {
                     MeetingListRow(summary: summary)
                 }
                 // Feature #8: trailing swipe → soft-delete with a 5s undo
@@ -294,23 +309,6 @@ struct MeetingListView: View {
                         Label("Delete", systemImage: "trash")
                     }
                 }
-            }
-        }
-        // Step 11: the destination is attached inside ``MeetingListView``
-        // (not on the ``NavigationStack`` in ``ContentView``) per the iOS
-        // 16+ idiom — keeping the destination close to the source view
-        // simplifies reasoning and avoids polluting the root with every
-        // possible destination type. ``ContentView`` houses the stack
-        // root only (cross-ref ``ContentView``).
-        .navigationDestination(for: MeetingSummary.self) { summary in
-            if let store {
-                MeetingDetailView(summary: summary, store: store)
-            } else {
-                // Render-time fallback for the test-only `init(model:)`
-                // path. Tests do not exercise navigation push; this
-                // branch keeps the type system happy without forcing a
-                // STOP on the test-only init shape.
-                EmptyView()
             }
         }
     }

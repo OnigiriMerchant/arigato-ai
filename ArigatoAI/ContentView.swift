@@ -155,12 +155,54 @@ struct ContentView: View {
                 controlsModel: controlsModel,
                 transcriptModel: transcriptModel
             )
+            // Single root registration of the app's value-based navigation.
+            // This one `.navigationDestination(for: AppRoute.self)` lives on
+            // the `NavigationStack` root content and resolves every push on
+            // the stack — `.history`/`.settings` from the toolbar and
+            // `.meetingDetail` from inside the pushed ``MeetingListView`` —
+            // per the canonical SwiftUI pattern: register value destinations
+            // once at the stack root.
+            //
+            // Why all-value-based with a single root: the History and
+            // Settings toolbar links were previously legacy closure-form
+            // `NavigationLink { destination }`. Mixed with the value-based
+            // row links on the same stack — and inside `.toolbar`, which
+            // re-evaluates constantly — the closure-form History link
+            // spuriously re-fired when a value-based row was tapped, pushing
+            // a duplicate ``MeetingListView`` on top of the correct
+            // ``MeetingDetailView`` (the real detail one level deeper) and
+            // intermittently entering an invalid-navigation state (black
+            // screen + yellow warning triangle). This was runtime-verified.
+            // Converting all four links to `NavigationLink(value:)` resolved
+            // by this one root destination eliminates the closure-form
+            // re-fire. See ``AppRoute``.
+            //
+            // Each case unwraps ``AppBootstrapper/meetingStore`` (non-nil
+            // whenever a route is reachable — every push site is gated on
+            // it), so the implicit empty branch is defensively unreachable.
+            .navigationDestination(for: AppRoute.self) { route in
+                switch route {
+                case .history:
+                    if let store = bootstrapper.meetingStore {
+                        MeetingListView(store: store)
+                    }
+                case .settings:
+                    if let store = bootstrapper.meetingStore {
+                        SettingsView(
+                            statsProvider: bootstrapper.storageStatsProvider,
+                            meetingStore: store
+                        )
+                    }
+                case let .meetingDetail(summary):
+                    if let store = bootstrapper.meetingStore {
+                        MeetingDetailView(summary: summary, store: store)
+                    }
+                }
+            }
             .toolbar {
-                if let store = bootstrapper.meetingStore {
+                if bootstrapper.meetingStore != nil {
                     ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            MeetingListView(store: store)
-                        } label: {
+                        NavigationLink(value: AppRoute.history) {
                             Image(systemName: "clock")
                                 .accessibilityLabel("History")
                         }
