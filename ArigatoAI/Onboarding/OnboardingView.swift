@@ -38,7 +38,14 @@ import SwiftUI
 /// ## Styling
 ///
 /// Stock SwiftUI: system fonts (UI decision #18), semantic colors
-/// (UI decision #17). The disabled continue-button rendering uses
+/// (UI decision #17) — **except** the Screen 1 brand hero, which uses two
+/// bundled Geist faces (Phase 7 Step 5): the "ARIGATO AI" wordmark in Geist
+/// Pixel (monochrome `.primary`) and the tagline in Geist Mono (`.secondary`).
+/// This is a **deliberate expansion** of the custom-font scope beyond the
+/// wordmark to the onboarding tagline — not drift. Both faces are Latin-only,
+/// scoped to this hero, and never touch transcript / body / metadata text
+/// (those stay system per the locked rule; see ``BrandFont``). The disabled
+/// continue-button rendering uses
 /// `.tint(.secondary)` + `.disabled(true)` per UI #16's explicit
 /// exception to the button-morphing-no-disabled-states principle.
 @MainActor
@@ -69,6 +76,11 @@ struct OnboardingView: View {
         permissionRequester: (() async -> MicrophonePermissionStatus)? = nil,
         onComplete: @escaping @MainActor () -> Void
     ) {
+        // Register the bundled Geist Pixel wordmark font before first render
+        // (the project's INFOPLIST_KEY_UIAppFonts path is not honoured — see
+        // ``BrandFont``). Idempotent; also makes the font resolve in Previews.
+        BrandFont.registerIfNeeded()
+
         let resolvedRequester: () async -> MicrophonePermissionStatus
         if let permissionRequester {
             resolvedRequester = permissionRequester
@@ -101,30 +113,39 @@ struct OnboardingView: View {
 
     // MARK: - Screen 1: Welcome
 
-    /// The value-prop screen. Title + privacy-promise body (locked
-    /// verbatim per D14-4) + a single "Get Started" primary action.
+    /// The value-prop screen. Brand hero — the Geist Pixel wordmark + a single
+    /// Geist Mono tagline — plus the "Get Started" primary action. The tagline
+    /// (Phase 7 Step 5) replaces the prior D14-4 multi-sentence privacy body;
+    /// the fuller privacy language still lives in Settings ▸ About.
     private var welcomeScreen: some View {
         VStack(spacing: 32) {
             Spacer()
 
-            Image(systemName: "text.bubble.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(.tint)
-
+            // Brand hero (Phase 7 Step 5): the "ARIGATO AI" wordmark (Geist
+            // Pixel) + a single Geist Mono tagline. Both bundled + registered
+            // via ``BrandFont`` (Latin-only, scoped to this hero — see the
+            // styling note). No headline. Ambient pixel-grid lands in Checkpoint B.
             VStack(spacing: 16) {
-                Text("Translate meetings in real time")
-                    .font(.title)
-                    .fontWeight(.semibold)
-                    .multilineTextAlignment(.center)
+                Text("ARIGATO AI")
+                    .font(.custom(BrandFont.geistPixelWordmark, size: 54, relativeTo: .largeTitle))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityLabel("Arigato AI")
 
-                Text(
-                    "Japanese-English translation in real time, fully on-device. "
-                        + "Your conversations stay on your iPhone. Nothing is sent to "
-                        + "servers. No accounts, no logins, no analytics."
-                )
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+                // Single tagline in Geist Mono — supporting copy at `.secondary`
+                // (AA-legible in both modes). Wraps naturally. The bidirectional
+                // marker is Geist Mono's own "↔" (U+2194): a single, designed,
+                // symmetric arrow — both ends are EVEN by construction and it
+                // spaces cleanly. (The composed-ASCII "<->" / "<-->" arrows
+                // rendered lopsided here — mono advance/ligature quirks — and
+                // "↔" stays in the same Geist face, consistent with the tagline.)
+                // Replaces the prior D14-4 multi-sentence privacy body (copy trim).
+                Text("Translate Japanese ↔ English meetings in real time, fully on-device.")
+                    .font(.custom(BrandFont.geistMonoTagline, size: 16, relativeTo: .subheadline))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             .padding(.horizontal, 32)
 

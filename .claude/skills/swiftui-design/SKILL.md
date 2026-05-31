@@ -40,7 +40,8 @@ recordingIdle   = Color(white: 0.5, opacity: 1.0)            // mid gray
 - **Technical readouts / timestamps / language tags:** **SF Mono** (use `monospacedDigit()` for stable width).
 - Headlines: system `.title2`/`.title`, `.semibold`. Body: system `.body`.
 - **ALL text uses Dynamic Type — no fixed font sizes.** Any custom face, when adopted, must use `Font.custom(_:size:relativeTo:)` so it still scales.
-- **Geist Pixel:** reserved for the "ARIGATO AI" wordmark + app-icon design **ONLY** (Latin-only; no documented CJK coverage). Activated at the brand-moment step — **not now**. The detail view ships with no custom-font dependency.
+- **Geist Pixel:** the "ARIGATO AI" wordmark + app-icon design (Latin-only; no documented CJK coverage). Activated at the brand-moment step (Phase 7 Step 5 — onboarding hero).
+- **Geist Mono:** the onboarding hero's single tagline line **ONLY** — a deliberate Phase 7 Step 5 expansion of the custom-font scope beyond the wordmark (Latin-only; no CJK). Both Geist faces are **hero-scoped** and must NEVER render transcript / body / metadata / CJK text — those stay system fonts. The detail view (and all content/chrome) ships with no custom-font dependency.
 
 ## Glass usage (decision 2)
 - Liquid Glass (`.regular` via `glassEffect(_:in:)`) belongs on **chrome/navigation ONLY**: toolbar, nav bar, Copy/Share controls, scroll-to-top affordance, sheets/popovers — floating above content.
@@ -94,7 +95,7 @@ VStack(alignment: .leading, spacing: 4) {
 
 ## What NOT to do
 - No emoji icons. SF Symbols only.
-- No custom font for transcript / body / CJK text — system fonts only there. Geist Pixel only for the wordmark + app icon.
+- No custom font for transcript / body / metadata / CJK text — system fonts only there. The Geist faces are hero-scoped only: Geist Pixel for the wordmark + app icon, Geist Mono for the onboarding tagline (Phase 7 Step 5).
 - No Liquid Glass (or `.ultraThinMaterial`) on content surfaces — chrome only.
 - No particles / ambient behind content.
 - No fixed-pixel layouts. Use HStack/VStack with spacing tokens.
