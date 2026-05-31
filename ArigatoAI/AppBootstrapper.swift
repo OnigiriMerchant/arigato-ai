@@ -227,6 +227,19 @@ final class AppBootstrapper {
     /// main-actor hop).
     private(set) var coordinator: MeetingCoordinator?
 
+    #if DEBUG
+        /// **DEBUG-only call-once latch** for the UI-test sample-data seed.
+        ///
+        /// Set `true` the first time ``performDebugSeed()`` runs so a second
+        /// invocation is a no-op. The latch is required because
+        /// ``DebugMeetingSeeder`` is **non-idempotent** (it stacks a fresh
+        /// three-meeting corpus on every call rather than clearing first), so
+        /// a duplicate seed would double the corpus and break UI-test count
+        /// assertions. Lives under `#if DEBUG`; Release builds never compile
+        /// this property.
+        private var hasStartedDebugSeed = false
+    #endif
+
     /// Designated initializer.
     ///
     /// - Parameters:
@@ -747,6 +760,83 @@ final class AppBootstrapper {
                     // the live controls stay disabled while LFM2 is down.
                     strong.meetingStore = store
                 }
+            }
+        }
+
+        /// **DEBUG-only.** Launch-argument entry point for the UI-test
+        /// sample-data seed. Guards on ``UITestLaunchConfig/isSeedRequested``
+        /// (the `-uiTestSeed` launch flag) and, when set, delegates to
+        /// ``performDebugSeed()``.
+        ///
+        /// Called once from a `#if DEBUG` block in ``ArigatoAIApp/init()``,
+        /// immediately after ``debugPublishMeetingStoreIfNeeded()``. Release
+        /// builds contain zero references to it.
+        ///
+        /// The launch-flag check is split from the seed work
+        /// (``performDebugSeed()``) so the violation test can drive the seed
+        /// path directly: ``UITestLaunchConfig/isSeedRequested`` reads
+        /// `ProcessInfo.processInfo.arguments`, which cannot be forced to
+        /// contain `-uiTestSeed` from inside the in-process test runner.
+        func debugSeedSampleDataIfRequested() {
+            guard UITestLaunchConfig.isSeedRequested else { return }
+            performDebugSeed()
+        }
+
+        /// **DEBUG-only.** Call-once driver that seeds ``DebugMeetingSeeder``'s
+        /// three-meeting corpus into ``meetingStore`` once the store has
+        /// published.
+        ///
+        /// Both the launch-arg path (``debugSeedSampleDataIfRequested()``) and
+        /// the violation test (`debugSeed_storePublishedLate_seedsAfterPublication`
+        /// in `AppBootstrapperMeetingWiringTests`) call this directly — the
+        /// test bypasses the un-forceable `ProcessInfo` launch-flag check while
+        /// still exercising the real call-once latch, the real store-await
+        /// poll, and the real seed.
+        ///
+        /// ## Scheduling assumption + violation behavior (Concurrency design discipline)
+        ///
+        /// This spawns a `Task` that **observes** an actor write made by a
+        /// *different* detached task, so its ordering assumptions are explicit:
+        ///
+        /// - **Ordering is observed, not assumed.** ``meetingStore`` is
+        ///   published asynchronously — on a fresh simulator by
+        ///   ``debugPublishMeetingStoreIfNeeded()``'s detached task, otherwise
+        ///   by ``startPrewarm(variant:)``'s Step 8 hop. This method does not
+        ///   assume the store is ready when it runs; the spawned task **polls**
+        ///   `meetingStore` on the main actor (with `Task.yield()` between
+        ///   reads, **no fixed `sleep`**) until it becomes non-nil, then seeds.
+        ///   This works whether the seed is requested before or after the store
+        ///   publishes — the violation test exercises the "before" (stalled
+        ///   producer) ordering.
+        /// - **Call-once.** The ``hasStartedDebugSeed`` latch makes a second
+        ///   invocation a no-op. ``DebugMeetingSeeder`` is non-idempotent (it
+        ///   stacks a fresh corpus rather than clearing first), so a second
+        ///   seed would duplicate the corpus and break UI-test count
+        ///   assertions. The latch is read+set on the main actor (this type is
+        ///   `@MainActor`-isolated) before the task is spawned, so concurrent
+        ///   callers cannot both pass the guard.
+        /// - **If the store never publishes** (e.g. a `ModelContainer`
+        ///   construction failure left ``meetingStore`` permanently `nil`): the
+        ///   spawned task spins its `[weak self]` poll harmlessly — it never
+        ///   seeds and holds no strong reference to the bootstrapper. The UI
+        ///   test then fails fast on its own `waitForExistence` timeout
+        ///   (seeded rows never appear), surfacing the real container problem
+        ///   rather than hanging.
+        func performDebugSeed() {
+            guard !hasStartedDebugSeed else { return }
+            hasStartedDebugSeed = true
+            Task { [weak self] in
+                // Poll for the store to publish. The store is constructed +
+                // published by a *separate* detached task (startPrewarm's
+                // Step 8 hop, or debugPublishMeetingStoreIfNeeded), so we
+                // observe the publication rather than assuming it. `Task.yield()`
+                // (no fixed sleep) lets that task make progress between reads.
+                while self?.meetingStore == nil {
+                    if self == nil { return }
+                    await Task.yield()
+                }
+                guard let store = self?.meetingStore else { return }
+                try? await DebugMeetingSeeder.seed(into: store)
             }
         }
     #endif

@@ -48,7 +48,20 @@ struct ArigatoAIApp: App {
         var containerError: Error?
         do {
             let schema = Self.makeAppSchema()
-            let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+            #if DEBUG
+                // UI-test harness: an in-memory store gives each test run an
+                // empty, ephemeral container that leaves no on-disk artifacts
+                // and never collides with a developer's real recordings.
+                // Off-main `@ModelActor` init (Amendment 3 / FB13399899) is
+                // orthogonal to the storage backend — `ModelContainer` is
+                // `Sendable` and the executor-binding workaround is unchanged.
+                // Release `init` compiles this branch out: `isStoredInMemoryOnly`
+                // is the literal `false` below, byte-identical to before.
+                let isInMemoryOnly = UITestLaunchConfig.isInMemoryStoreRequested
+            #else
+                let isInMemoryOnly = false
+            #endif
+            let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isInMemoryOnly)
             container = try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
             container = nil
@@ -86,6 +99,13 @@ struct ArigatoAIApp: App {
             // of warmup outcome. No-op once a real store is published.
             // `#if DEBUG`-gated so Release `init` is byte-identical.
             boot.debugPublishMeetingStoreIfNeeded()
+
+            // UI-test sample-data seed. No-op unless the app was launched
+            // with `-uiTestSeed` (see `UITestLaunchConfig`). Spawns a task
+            // that waits for `meetingStore` to publish (above, or via
+            // `startPrewarm`) before seeding the DEBUG corpus. `#if DEBUG`-
+            // gated so Release `init` is byte-identical.
+            boot.debugSeedSampleDataIfRequested()
         #endif
     }
 

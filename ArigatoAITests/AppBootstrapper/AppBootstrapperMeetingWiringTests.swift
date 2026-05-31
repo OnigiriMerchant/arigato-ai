@@ -536,5 +536,87 @@ struct AppBootstrapperMeetingWiringTests {
                 "Expected \(DebugMeetingSeeder.samples.count) seeded meetings; got \(summaries.count)"
             )
         }
+
+        /// **Stalled-producer violation test for
+        /// ``AppBootstrapper/performDebugSeed()``.**
+        ///
+        /// Drives the seed-driver's documented scheduling assumption — that
+        /// ``meetingStore`` is *observed*, not assumed, to publish — in
+        /// violation: the seed is requested **while `meetingStore == nil`**
+        /// (the stalled-producer ordering), so the spawned task's poll spins
+        /// waiting. Only *after* the seed task is already in flight is the
+        /// store published (via ``AppBootstrapper/debugPublishMeetingStoreIfNeeded()``,
+        /// reusing the existing publish path). The test then asserts the
+        /// corpus eventually appears, proving the poll observed the late
+        /// publication and deferred its seed correctly rather than seeding
+        /// against a `nil` store or giving up.
+        ///
+        /// The bootstrapper is built with ``makeWarmupFailingBootstrapper``
+        /// and `startPrewarm()` is **not** called, so the only store
+        /// publication is the explicit late
+        /// `debugPublishMeetingStoreIfNeeded()` below — there is no Step 8
+        /// race to confound the ordering under test.
+        ///
+        /// Calls ``AppBootstrapper/performDebugSeed()`` directly (the
+        /// delegate seam) because the public
+        /// ``AppBootstrapper/debugSeedSampleDataIfRequested()`` entry guards
+        /// on ``UITestLaunchConfig/isSeedRequested``, which reads
+        /// `ProcessInfo.processInfo.arguments` and cannot be forced to
+        /// contain `-uiTestSeed` from inside the in-process test runner.
+        ///
+        /// **What this test would catch.** A regression where the seed task
+        /// (a) reads `meetingStore` once and bails when it is `nil` (instead
+        /// of polling), or (b) seeds against a `nil` store, or (c) never
+        /// observes the late publication — in all three the corpus would
+        /// never appear and the `fetchAll` count assertion would fail.
+        @Test("performDebugSeed with late store publication seeds after publication")
+        func debugSeed_storePublishedLate_seedsAfterPublication() async throws {
+            let container = try makeWiringContainer()
+            let bootstrapper = makeWarmupFailingBootstrapper(container: container)
+
+            // Violation: request the seed BEFORE the store publishes. The
+            // spawned task's poll spins on `meetingStore == nil`.
+            #expect(
+                bootstrapper.meetingStore == nil,
+                "Precondition: store must be unpublished when the seed is requested (stalled-producer ordering)"
+            )
+            bootstrapper.performDebugSeed()
+
+            // Let the seed task spin a few scheduling turns against the
+            // still-nil store, proving it defers rather than seeding against
+            // nil or bailing.
+            try? await Task.sleep(for: .milliseconds(50))
+            #expect(
+                bootstrapper.meetingStore == nil,
+                "Store should still be unpublished; the seed task must be spinning, not seeding"
+            )
+
+            // Now publish the store late. The seed task's poll should observe
+            // this and proceed to seed.
+            bootstrapper.debugPublishMeetingStoreIfNeeded()
+
+            let published = await waitForMeetingStore(on: bootstrapper)
+            #expect(published, "Expected debugPublishMeetingStoreIfNeeded to publish meetingStore within timeout")
+            guard let store = bootstrapper.meetingStore else {
+                Issue.record("meetingStore should be non-nil after late publication")
+                return
+            }
+
+            // The deferred seed should land the full corpus. Poll fetchAll
+            // until the count reaches samples.count (the seed runs on the
+            // store actor asynchronously after the poll observes the store).
+            let expected = DebugMeetingSeeder.samples.count
+            let start = ContinuousClock().now
+            var count = 0
+            while ContinuousClock().now - start < .seconds(2) {
+                count = try await store.fetchAll(searchText: "").count
+                if count == expected { break }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(
+                count == expected,
+                "Expected the deferred seed to land \(expected) meetings after late publication; got \(count)"
+            )
+        }
     #endif
 }
