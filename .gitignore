@@ -83,3 +83,4 @@ Models/*.bundle
 
 # XcodeBuildMCP local cache
 .xcodebuildmcp/
+.phase7-preview/
