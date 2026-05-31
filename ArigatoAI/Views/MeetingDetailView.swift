@@ -26,8 +26,8 @@ import SwiftUI
 /// - **#5** — header layout (title + date + duration). Title is the
 ///   navigation-bar title; date + duration render in a metadata HStack
 ///   below the title.
-/// - **#13** — full transcript displayed as a `List` of `(Japanese,
-///   English, timestamp)` rows, oldest-first.
+/// - **#13** — full transcript displayed as a `List` of source-led
+///   rows (spoken language, translation, metadata cluster), oldest-first.
 /// - **#14** — read-only. **No delete, no rename, no edit, no inline
 ///   mutation.** Step 12 lands search; Step 13 lands the export
 ///   `ShareLink`; deletion lives in `MeetingListView`'s multi-select
@@ -51,10 +51,17 @@ import SwiftUI
 ///
 /// ## Styling
 ///
-/// Stock SwiftUI: system fonts (UI decision #18), semantic colors (UI
-/// decision #17). The empty state mirrors ``MeetingListView``'s
-/// visual rhythm: SF Symbol + headline + subheadline, vertically
-/// centered.
+/// **Phase 7 Decision 6 (2026-05-31): source-led monochrome layout.**
+/// Transcript rows render via ``TranscriptCaptionRow`` consuming the
+/// Phase 7 ``DesignSystem`` tokens — the spoken-language line leads
+/// (``DesignSystem/Colors/transcriptSource``), the translation follows
+/// (``DesignSystem/Colors/transcriptTranslation``, a colour-only
+/// difference), and a tertiary SF Mono metadata cluster carries the
+/// language tag + timestamp. The transcript sits on a solid
+/// ``DesignSystem/Colors/surfaceContent`` surface — never glass. The
+/// header, empty, and error states keep stock system fonts + semantic
+/// colors (UI #17/#18); the toolbar's Liquid Glass chrome lands in the
+/// next checkpoint.
 @MainActor
 struct MeetingDetailView: View {
     /// The summary handed in as the `NavigationLink` value. Header
@@ -244,26 +251,44 @@ struct MeetingDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Main transcript list. Each row shows the Japanese text, the
-    /// English text, and the per-sentence `HH:mm:ss` timestamp. Rows
-    /// are read-only per UI decision #14.
+    /// Main transcript list — **source-led** rows (Phase 7 Decision 6):
+    /// each row leads with the spoken-language text, the translation
+    /// follows (colour-only difference), and a tertiary SF Mono metadata
+    /// cluster (language tag + `HH:mm:ss` timestamp) closes it. Styling
+    /// flows from the Phase 7 ``DesignSystem`` tokens via
+    /// ``TranscriptCaptionRow``. Rows are read-only per UI decision #14.
+    ///
+    /// `List` is retained — it lazily reuses rows, so a long transcript
+    /// does not build every row up front. Its system chrome is stripped
+    /// (plain style, hidden separators, clear row background) so the solid
+    /// ``DesignSystem/Colors/surfaceContent`` surface shows through. Glass
+    /// is **not** applied here; content surfaces stay solid (Decision 6 /
+    /// `docs/PHASE_7_DESIGN_RESEARCH.md` collision A).
     private var sentenceList: some View {
         List {
             ForEach(model.sentences, id: \.id) { sentence in
                 let body = MeetingDetailFormatter.sentenceBody(for: sentence)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(body.japanese)
-                        .font(.body)
-                    Text(body.english)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                    Text(body.timestamp)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.vertical, 2)
+                TranscriptCaptionRow(
+                    source: body.source,
+                    translation: body.translation,
+                    languageTag: body.languageTag,
+                    timestamp: body.timestamp
+                )
+                .listRowInsets(
+                    EdgeInsets(
+                        top: 0,
+                        leading: DesignSystem.Spacing.contentHorizontalInset,
+                        bottom: 0,
+                        trailing: DesignSystem.Spacing.contentHorizontalInset
+                    )
+                )
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(DesignSystem.Colors.surfaceContent)
     }
 }
 
@@ -299,35 +324,44 @@ struct MeetingDetailView: View {
                 let meeting = Meeting(startedAt: started, title: "Design sync")
                 meeting.endedAt = started.addingTimeInterval(18 * 60)
                 context.insert(meeting)
+
+                // Insert three real Sentence rows so each projection gets a
+                // DISTINCT `persistentModelID`. `ForEach(id: \.id)` dedupes
+                // identical ids, so reusing the meeting's id (the only id
+                // mintable without a public `PersistentIdentifier` init)
+                // would collapse the list to a single repeated row. The
+                // drafts deliberately mix ja-source and en-source lines so
+                // the preview exercises the source-led layout's mixed tags.
+                let drafts: [(offset: TimeInterval, lang: String, source: String, translation: String)] = [
+                    (5, "ja", "おはようございます。始めましょう。", "Good morning. Let's begin."),
+                    (20, "en", "Sounds good — I'll share my screen.", "いいですね。画面を共有します。"),
+                    (42, "ja", "ありがとうございます。", "Thank you."),
+                ]
+                let inserted: [Sentence] = drafts.map { draft in
+                    let s = Sentence(
+                        timestamp: started.addingTimeInterval(draft.offset),
+                        sourceLanguage: draft.lang,
+                        sourceText: draft.source,
+                        translatedText: draft.translation,
+                        sourceSegmentID: UUID(),
+                        searchableText: "\(draft.source) \(draft.translation)"
+                    )
+                    s.meeting = meeting
+                    context.insert(s)
+                    return s
+                }
                 try context.save()
 
-                let id = meeting.persistentModelID
-                let sentences = [
+                let sentences = inserted.map { s in
                     MeetingDetail.SentenceProjection(
-                        id: id,
-                        timestamp: started.addingTimeInterval(5),
-                        sourceLanguage: "ja",
-                        sourceText: "おはようございます。始めましょう。",
-                        translatedText: "Good morning. Let's begin.",
-                        sourceSegmentID: UUID()
-                    ),
-                    MeetingDetail.SentenceProjection(
-                        id: id,
-                        timestamp: started.addingTimeInterval(20),
-                        sourceLanguage: "en",
-                        sourceText: "Sounds good — I'll share my screen.",
-                        translatedText: "いいですね。画面を共有します。",
-                        sourceSegmentID: UUID()
-                    ),
-                    MeetingDetail.SentenceProjection(
-                        id: id,
-                        timestamp: started.addingTimeInterval(42),
-                        sourceLanguage: "ja",
-                        sourceText: "ありがとうございます。",
-                        translatedText: "Thank you.",
-                        sourceSegmentID: UUID()
-                    ),
-                ]
+                        id: s.persistentModelID,
+                        timestamp: s.timestamp,
+                        sourceLanguage: s.sourceLanguage,
+                        sourceText: s.sourceText,
+                        translatedText: s.translatedText,
+                        sourceSegmentID: s.sourceSegmentID
+                    )
+                }
                 return Sample(summary: MeetingSummary(from: meeting), sentences: sentences)
             } catch {
                 return nil

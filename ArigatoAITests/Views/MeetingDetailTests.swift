@@ -301,7 +301,7 @@ struct MeetingDetailViewModelTests {
 
 /// Tests for ``MeetingDetailFormatter`` — pure-value byte-identity
 /// assertions over delegated formatters (UI decision #15) plus the
-/// language-alignment contract for ``MeetingDetailFormatter/sentenceBody(for:)``.
+/// source-led projection contract for ``MeetingDetailFormatter/sentenceBody(for:)``.
 @Suite("MeetingDetailFormatter")
 @MainActor
 struct MeetingDetailFormatterTests {
@@ -373,10 +373,11 @@ struct MeetingDetailFormatterTests {
 
     // MARK: - D11-T-fmt-4
 
-    /// **D11-T-fmt-4** — When `sourceLanguage == "ja"`, the Japanese
-    /// row body equals `sourceText` (the original utterance) and the
-    /// English row body equals `translatedText`.
-    @Test func sentenceBody_jaSource_japaneseEqualsSourceText() throws {
+    /// **D11-T-fmt-4** — Source-led (Phase 7 Decision 6): when
+    /// `sourceLanguage == "ja"`, the row leads with `sourceText` as
+    /// ``RowBody/source``, the translation follows as
+    /// ``RowBody/translation``, and ``RowBody/languageTag`` is `"JA"`.
+    @Test func sentenceBody_jaSource_leadsWithSourceText_tagJA() throws {
         let id = try Self.mintIdentifier()
         let sentence = MeetingDetail.SentenceProjection(
             id: id,
@@ -389,17 +390,19 @@ struct MeetingDetailFormatterTests {
 
         let body = MeetingDetailFormatter.sentenceBody(for: sentence)
 
-        #expect(body.japanese == "こんにちは")
-        #expect(body.english == "Hello")
+        #expect(body.source == "こんにちは")
+        #expect(body.translation == "Hello")
+        #expect(body.languageTag == "JA")
     }
 
     // MARK: - D11-T-fmt-5
 
-    /// **D11-T-fmt-5** — When `sourceLanguage == "en"`, the English row
-    /// body equals `sourceText` (the original utterance) and the
-    /// Japanese row body equals `translatedText`. Mirror of
-    /// `D11-T-fmt-4`.
-    @Test func sentenceBody_enSource_englishEqualsSourceText() throws {
+    /// **D11-T-fmt-5** — Source-led mirror: when `sourceLanguage == "en"`,
+    /// the row leads with the English `sourceText` as ``RowBody/source``,
+    /// the Japanese translation follows as ``RowBody/translation``, and
+    /// ``RowBody/languageTag`` is `"EN"`. Confirms a bilingual transcript
+    /// shows mixed tags row-to-row.
+    @Test func sentenceBody_enSource_leadsWithSourceText_tagEN() throws {
         let id = try Self.mintIdentifier()
         let sentence = MeetingDetail.SentenceProjection(
             id: id,
@@ -412,8 +415,9 @@ struct MeetingDetailFormatterTests {
 
         let body = MeetingDetailFormatter.sentenceBody(for: sentence)
 
-        #expect(body.english == "Goodbye")
-        #expect(body.japanese == "さようなら")
+        #expect(body.source == "Goodbye")
+        #expect(body.translation == "さようなら")
+        #expect(body.languageTag == "EN")
     }
 }
 

@@ -42,14 +42,18 @@ import Foundation
 /// Tests assert the byte-identity contract directly (see
 /// `D11-T-fmt-1-formattedDate_matchesMeetingListRowFormatter`).
 ///
-/// ## Source/translated semantics
+/// ## Source-led semantics (Phase 7 Decision 6)
 ///
 /// A ``MeetingDetail/SentenceProjection`` carries `sourceLanguage`
-/// (`"ja"` or `"en"`) and a `sourceText` that is always the **original**
-/// utterance. ``sentenceBody(for:)`` projects the row into a
-/// language-aligned ``RowBody`` so the view always displays the
-/// Japanese text in one slot and the English text in the other,
-/// regardless of which language the speaker used. Verified against
+/// (`"ja"` or `"en"`), a `sourceText` that is always the **original
+/// spoken** utterance, and a `translatedText` that is its rendering in
+/// the other language. ``sentenceBody(for:)`` projects the row
+/// **source-led**: the spoken-language text leads (``RowBody/source``),
+/// the translation follows (``RowBody/translation``), and
+/// ``RowBody/languageTag`` carries the row's own `sourceLanguage`
+/// (`"JA"` / `"EN"`) — so a bilingual transcript shows mixed tags down
+/// the scroll. This replaces the prior fixed Japanese-primary
+/// projection. Verified against
 /// ``MeetingSession/persistCompleted(_:meetingID:)`` which calls
 /// `appendSentence(sourceLanguage: translated.direction.source.rawValue,
 /// sourceText: translated.sourceText, translatedText:
@@ -95,50 +99,43 @@ enum MeetingDetailFormatter {
         TranscriptSplitScreenFormatter.formatTimestamp(date)
     }
 
-    /// Projects a sentence to its Japanese / English / timestamp row body.
+    /// Projects a sentence into its **source-led** row body.
     ///
-    /// `sourceLanguage == "ja"` means `sourceText` is the original
-    /// Japanese utterance and `translatedText` is the English rendering;
-    /// `sourceLanguage == "en"` means the inverse. The returned
-    /// ``RowBody`` always puts the Japanese text in ``RowBody/japanese``
-    /// and the English text in ``RowBody/english``, regardless of which
-    /// language the speaker originally used.
+    /// The spoken-language text (`sourceText`) always leads as
+    /// ``RowBody/source``; the translation (`translatedText`) follows as
+    /// ``RowBody/translation``. ``RowBody/languageTag`` is the row's own
+    /// `sourceLanguage` upper-cased (`"JA"` when `"ja"`, otherwise
+    /// `"EN"`), so each row honestly labels the language that was spoken —
+    /// a bilingual transcript shows mixed tags down the scroll.
     ///
     /// - Parameter sentence: The persisted projection.
-    /// - Returns: Language-aligned row body for the detail view.
+    /// - Returns: Source-led row body for the detail view.
     static func sentenceBody(for sentence: MeetingDetail.SentenceProjection) -> RowBody {
-        let japanese: String
-        let english: String
-        if sentence.sourceLanguage == japaneseTag {
-            japanese = sentence.sourceText
-            english = sentence.translatedText
-        } else {
-            japanese = sentence.translatedText
-            english = sentence.sourceText
-        }
-        return RowBody(
-            japanese: japanese,
-            english: english,
+        RowBody(
+            source: sentence.sourceText,
+            translation: sentence.translatedText,
+            languageTag: sentence.sourceLanguage == japaneseTag ? "JA" : "EN",
             timestamp: formatTimestamp(sentence.timestamp)
         )
     }
 }
 
-/// Pure-value rendering of a single detail-view row.
+/// Pure-value rendering of a single **source-led** detail-view row.
 ///
 /// Returned by ``MeetingDetailFormatter/sentenceBody(for:)``. Sendable +
 /// Equatable so tests can compare full row payloads and so the value
 /// flows safely through SwiftUI's render graph.
 nonisolated struct RowBody: Equatable {
-    /// The Japanese text — either the original utterance (when the
-    /// speaker spoke Japanese) or the LFM2 translation (when the
-    /// speaker spoke English).
-    let japanese: String
+    /// The spoken-language (source) text — the original utterance. Leads
+    /// the row as the primary tonal level.
+    let source: String
 
-    /// The English text — either the original utterance (when the
-    /// speaker spoke English) or the LFM2 translation (when the
-    /// speaker spoke Japanese).
-    let english: String
+    /// The translation — the rendering in the other language. Follows the
+    /// source as the secondary tonal level (colour-only difference).
+    let translation: String
+
+    /// The row's own source language as a display tag (`"JA"` / `"EN"`).
+    let languageTag: String
 
     /// Pre-formatted `HH:mm:ss` timestamp string.
     let timestamp: String
