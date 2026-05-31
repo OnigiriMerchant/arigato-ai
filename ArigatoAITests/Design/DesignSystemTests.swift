@@ -12,7 +12,7 @@ import UIKit
 
 /// Tests for the Group D Step 9b ``DesignSystem`` namespace.
 ///
-/// Covers four contracts:
+/// Covers the namespace contracts:
 /// - The forwarder pattern: existing `Color.*` extensions resolve to the
 ///   namespace tokens (locked decision D9-2 option b).
 /// - The four new tokens (``DesignSystem/Colors/recordingReady``,
@@ -26,6 +26,9 @@ import UIKit
 /// - The ``TranscriptLiveView`` failed-state error-text region uses
 ///   the semantic `.secondary` foreground rather than red
 ///   ``Color.recordingActive`` (V3 #40 concern 2 closure).
+/// - Phase 7 (Decision 5) source-led tokens: the colour, typography, and
+///   spacing tokens resolve to their intended values, and the semantic
+///   colour tokens adapt automatically between light and dark.
 @Suite("DesignSystem")
 struct DesignSystemTests {
     // MARK: - 1. Hue distance: recordingReady vs recordingActive
@@ -138,6 +141,64 @@ struct DesignSystemTests {
         #expect(display.warmupColor == DesignSystem.Colors.recordingReady)
         // Sanity: the new token is not equal to the prior ad-hoc green.
         #expect(display.warmupColor != Color.green)
+    }
+
+    // MARK: - 6. Phase 7 source-led colour tokens
+
+    /// Asserts the Phase 7 (Decision 5) source-led colour tokens resolve to
+    /// their intended UIKit semantic colours, so light/dark + Increase
+    /// Contrast adaptation comes for free. These back the monochrome tonal
+    /// hierarchy (source / translation / metadata) on a solid content surface.
+    @Test
+    func phase7ColorTokens_resolveToIntendedSemanticColors() {
+        #expect(DesignSystem.Colors.transcriptSource == Color(.label))
+        #expect(DesignSystem.Colors.transcriptTranslation == Color(.secondaryLabel))
+        #expect(DesignSystem.Colors.metadataForeground == Color(.tertiaryLabel))
+        #expect(DesignSystem.Colors.surfaceContent == Color(.systemBackground))
+    }
+
+    // MARK: - 7. Phase 7 typography tokens
+
+    /// Asserts the transcript and metadata typography tokens resolve to the
+    /// intended system fonts: `.body` for both transcript lines (which differ
+    /// by colour only) and native SF Mono (`.monospaced` design) at
+    /// `.caption2` for metadata — no bundled font.
+    @Test
+    func phase7TypographyTokens_resolveToIntendedFonts() {
+        #expect(DesignSystem.Typography.transcriptText == .body)
+        #expect(DesignSystem.Typography.metadataText == .system(.caption2, design: .monospaced))
+    }
+
+    // MARK: - 8. Phase 7 spacing tokens
+
+    /// Asserts the minimal source-led row-rhythm spacing values.
+    @Test
+    func phase7SpacingTokens_haveExpectedValues() {
+        #expect(DesignSystem.Spacing.transcriptLineSpacing == 4)
+        #expect(DesignSystem.Spacing.transcriptRowVerticalPadding == 8)
+        #expect(DesignSystem.Spacing.contentHorizontalInset == 20)
+    }
+
+    // MARK: - 9. Semantic colour tokens adapt light -> dark (parity)
+
+    /// Light-first parity check: the semantic source-led colour tokens resolve
+    /// to *different* concrete colours under light vs dark, proving the
+    /// system-colour backing adapts automatically (no hand-authored dark
+    /// variant needed). Verifies ``DesignSystem/Colors/transcriptSource``
+    /// (label family) and ``DesignSystem/Colors/surfaceContent`` (background
+    /// family).
+    @Test
+    func phase7SemanticTokens_adaptBetweenLightAndDark() {
+        let light = UITraitCollection(userInterfaceStyle: .light)
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+
+        let sourceLight = UIColor(DesignSystem.Colors.transcriptSource).resolvedColor(with: light)
+        let sourceDark = UIColor(DesignSystem.Colors.transcriptSource).resolvedColor(with: dark)
+        #expect(sourceLight != sourceDark, "transcriptSource should differ between light and dark")
+
+        let surfaceLight = UIColor(DesignSystem.Colors.surfaceContent).resolvedColor(with: light)
+        let surfaceDark = UIColor(DesignSystem.Colors.surfaceContent).resolvedColor(with: dark)
+        #expect(surfaceLight != surfaceDark, "surfaceContent should differ between light and dark")
     }
 }
 

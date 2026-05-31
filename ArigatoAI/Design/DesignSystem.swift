@@ -29,6 +29,16 @@ import SwiftUI
 /// readouts) remains deferred to Phase 7 polish — Step 9b takes only the
 /// minimal load-bearing slice (locked decision D9-1 option c, D9-2
 /// option b).
+///
+/// **Phase 7 (Decision 5, 2026-05-31)** adds the source-led design-language
+/// tokens: ``Colors/transcriptSource`` / ``Colors/transcriptTranslation``
+/// (monochrome tonal hierarchy), ``Colors/metadataForeground``,
+/// ``Colors/surfaceContent`` (solid — content is never glass), plus the
+/// ``Typography`` and ``Spacing`` namespaces. Chrome Liquid Glass is applied
+/// via the native `.glassEffect(.regular)` modifier at the view layer — there
+/// is deliberately no glass colour/material token. See
+/// `.claude/skills/swiftui-design/SKILL.md` and
+/// `docs/PHASE_7_DESIGN_RESEARCH.md`.
 enum DesignSystem {
     /// Color palette. Values intentionally preserve the existing RGB
     /// choices from the prior `DesignTokens.swift` `Color` extensions
@@ -85,5 +95,73 @@ enum DesignSystem {
         /// `UIColor.tertiarySystemFill` to match the existing capsule
         /// chrome style.
         static let returnArrowBackground = Color(.tertiarySystemFill)
+
+        // MARK: - New tokens (Phase 7 Decision 5 — source-led design language)
+
+        /// Foreground for the **source** (spoken-language) transcript line —
+        /// the primary tonal level. Resolves to `UIColor.label` so the
+        /// monochrome hierarchy adapts to light/dark and Increase Contrast
+        /// automatically. Sits one tonal step above ``transcriptTranslation``.
+        static let transcriptSource = Color(.label)
+
+        /// Foreground for the **translation** transcript line — the secondary
+        /// tonal level. Resolves to `UIColor.secondaryLabel`. Differs from
+        /// ``transcriptSource`` by colour only (same size, same weight) per the
+        /// locked monochrome source-led hierarchy (SKILL.md decision 1).
+        static let transcriptTranslation = Color(.secondaryLabel)
+
+        /// Foreground for the per-row metadata cluster (timestamp + JA/EN
+        /// language tag) on the source line — the tertiary tonal level.
+        /// Resolves to `UIColor.tertiaryLabel`. Generalised name for the
+        /// metadata role; the pre-existing ``timestampForeground`` (same value)
+        /// is left untouched for its current split-screen consumer and may
+        /// converge onto this token in a later cleanup.
+        static let metadataForeground = Color(.tertiaryLabel)
+
+        /// The **solid** content surface the transcript sits on. Resolves to
+        /// `UIColor.systemBackground`. Content surfaces are solid, never glass
+        /// (PHASE_7_DESIGN_RESEARCH.md collision A); replaces the removed
+        /// placeholder `surfaceFloating`. Liquid Glass lives only on chrome.
+        static let surfaceContent = Color(.systemBackground)
+    }
+
+    // MARK: - Typography (Phase 7 Decision 5)
+
+    /// Typography roles for the design language. System fonts only — CJK is
+    /// handled by iOS's automatic Hiragino Sans fallback, and SF Mono is
+    /// reached via the native `.monospaced` system design (Dynamic-Type-aware,
+    /// no bundled font). Geist Pixel (wordmark / app icon) is deferred to the
+    /// brand-moment step and is intentionally absent here.
+    enum Typography {
+        /// Body text for both transcript lines (source and translation). The
+        /// two lines share this font and differ by colour only
+        /// (``Colors/transcriptSource`` vs ``Colors/transcriptTranslation``) —
+        /// same size, same weight — per the locked monochrome tonal hierarchy.
+        static let transcriptText: Font = .body
+
+        /// Monospaced metadata text for the timestamp and JA/EN language tag.
+        /// Uses native SF Mono via the `.monospaced` system design at the
+        /// `.caption2` text style, so it scales with Dynamic Type and needs no
+        /// bundled font.
+        static let metadataText: Font = .system(.caption2, design: .monospaced)
+    }
+
+    // MARK: - Spacing (Phase 7 Decision 5)
+
+    /// Spacing for the source-led transcript row rhythm. Minimal by design —
+    /// only the values the row and its content inset actually need; no
+    /// speculative scale. Values sit on the design-system spacing scale
+    /// (SKILL.md).
+    enum Spacing {
+        /// Vertical gap between the source line, the translation line, and the
+        /// metadata cluster within a single transcript row (`VStack` spacing).
+        static let transcriptLineSpacing: CGFloat = 4
+
+        /// Vertical padding applied to each transcript row.
+        static let transcriptRowVerticalPadding: CGFloat = 8
+
+        /// Horizontal inset from the screen edge for transcript content,
+        /// matching the established view-edge padding.
+        static let contentHorizontalInset: CGFloat = 20
     }
 }
