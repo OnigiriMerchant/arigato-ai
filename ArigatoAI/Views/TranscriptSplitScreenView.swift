@@ -5,6 +5,7 @@
 //  Created by Jose Castell on 2026/05/16.
 //
 
+import Foundation
 import SwiftData
 import SwiftUI
 
@@ -47,15 +48,24 @@ import SwiftUI
 ///    `.onScrollGeometryChange(for: Bool.self, of: { ... })` so the VM
 ///    can compose ``TranscriptSplitScreenViewModel/arrowVisible``.
 ///
-/// ## Styling
+/// ## Styling (Phase 7 token-aligned)
 ///
-/// Per-row timestamps render in
-/// ``DesignSystem/Colors/timestampForeground`` (Step 9b token). The
-/// return-arrow background uses
-/// ``DesignSystem/Colors/returnArrowBackground``. Body text uses
-/// stock SwiftUI semantic colors so the JA/EN columns adapt to dark
-/// mode without ceremony (UI decisions #17 + #18 — system fonts handle
-/// CJK fallback automatically).
+/// Body and timestamp text route through the Phase 7
+/// ``DesignSystem/Typography`` tokens — ``transcriptText`` (`.body`) for
+/// the row text and ``metadataText`` (SF Mono `.caption2`) for the
+/// timestamp. Both columns stay **equal-weight** (`.primary`): the
+/// split-screen has no source/translation tonal hierarchy (UI decision
+/// #1 keeps the two languages spatially separated, not interleaved — so
+/// the detail view's source-led primary/secondary split does NOT apply
+/// here). Per-row timestamps render in
+/// ``DesignSystem/Colors/timestampForeground`` (the tertiary metadata
+/// tint — identical `.tertiaryLabel` value to
+/// ``DesignSystem/Colors/metadataForeground``; converging the two onto a
+/// single role token is a deferred token-catalog cleanup). The
+/// return-arrow background uses ``DesignSystem/Colors/returnArrowBackground``.
+/// Colors are semantic system colors so the JA/EN columns adapt to dark
+/// mode automatically (UI decisions #17 + #18 — system fonts handle CJK
+/// fallback).
 ///
 /// ## Concurrency
 ///
@@ -226,15 +236,98 @@ private struct SplitScreenRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(display.text)
-                .font(.body)
+                .font(DesignSystem.Typography.transcriptText)
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             Text(display.timestamp)
-                .font(.caption2.monospacedDigit())
+                .font(DesignSystem.Typography.metadataText)
                 .foregroundStyle(DesignSystem.Colors.timestampForeground)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(display.text). \(display.timestamp).")
     }
 }
+
+#if DEBUG
+    /// Preview fixture for ``TranscriptSplitScreenView``. `PersistentIdentifier`
+    /// has no public initializer, so the sample
+    /// ``MeetingDetail/SentenceProjection`` values are minted from real
+    /// `Sentence` rows inserted into a throwaway in-memory container (distinct
+    /// per-row identifiers, so `ForEach(id:)` renders every row). Lines mix
+    /// `ja`- and `en`-source so both columns show original-vs-translation
+    /// content. Verification aid for the Phase 7 token-align — the split-screen
+    /// had no preview previously. (Does NOT touch the `TranscriptLiveView`
+    /// `PopulatedPreviewWrapper`; V3 #40 concern 6 stays open.)
+    @MainActor
+    private enum TranscriptSplitScreenPreviewFixture {
+        static func make() -> [MeetingDetail.SentenceProjection]? {
+            do {
+                let config = ModelConfiguration(isStoredInMemoryOnly: true)
+                let container = try ModelContainer(
+                    for: Meeting.self, Sentence.self,
+                    configurations: config
+                )
+                let context = ModelContext(container)
+                let started = Date(timeIntervalSince1970: 1_700_000_000)
+                let meeting = Meeting(startedAt: started, title: "Live preview")
+                context.insert(meeting)
+
+                let drafts: [(offset: TimeInterval, lang: String, source: String, translation: String)] = [
+                    (5, "ja", "おはようございます。始めましょう。", "Good morning. Let's begin."),
+                    (20, "en", "Sounds good — I'll share my screen.", "いいですね。画面を共有します。"),
+                    (42, "ja", "ありがとうございます。", "Thank you."),
+                ]
+                let inserted: [Sentence] = drafts.map { draft in
+                    let s = Sentence(
+                        timestamp: started.addingTimeInterval(draft.offset),
+                        sourceLanguage: draft.lang,
+                        sourceText: draft.source,
+                        translatedText: draft.translation,
+                        sourceSegmentID: UUID(),
+                        searchableText: "\(draft.source) \(draft.translation)"
+                    )
+                    s.meeting = meeting
+                    context.insert(s)
+                    return s
+                }
+                try context.save()
+
+                return inserted.map { s in
+                    MeetingDetail.SentenceProjection(
+                        id: s.persistentModelID,
+                        timestamp: s.timestamp,
+                        sourceLanguage: s.sourceLanguage,
+                        sourceText: s.sourceText,
+                        translatedText: s.translatedText,
+                        sourceSegmentID: s.sourceSegmentID
+                    )
+                }
+            } catch {
+                return nil
+            }
+        }
+    }
+
+    #Preview("Split-screen — light") {
+        if let sentences = TranscriptSplitScreenPreviewFixture.make() {
+            TranscriptSplitScreenView(
+                viewModel: TranscriptSplitScreenViewModel(fetcher: { sentences })
+            )
+            .preferredColorScheme(.light)
+        } else {
+            Text("Preview fixture unavailable")
+        }
+    }
+
+    #Preview("Split-screen — dark") {
+        if let sentences = TranscriptSplitScreenPreviewFixture.make() {
+            TranscriptSplitScreenView(
+                viewModel: TranscriptSplitScreenViewModel(fetcher: { sentences })
+            )
+            .preferredColorScheme(.dark)
+        } else {
+            Text("Preview fixture unavailable")
+        }
+    }
+#endif

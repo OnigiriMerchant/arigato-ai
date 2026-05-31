@@ -578,6 +578,18 @@ This entry documents the workflow trim applied at Group C closure on May 10 2026
 
 **Note also:** ui-reviewer agent did not capture screenshots during the gate due to MCP-inheritance bug (V3 #23). Main session captured screenshots via XcodeBuildMCP. Concerns 1, 5, 6, 7 are static-code observations; Concerns 2, 3, 4, 8 require visual verification at non-default Dynamic Type sizes that the main-session capture did not exercise. Phase 7 should verify all eight at AX1, AX3, AX5 sizes plus default.
 
+### Live split-screen timestamps — horizontal cost vs live-glance value (Phase 7)
+
+**What:** The live split-screen view (`TranscriptSplitScreenView`) renders a per-row `HH:mm:ss` timestamp (SF Mono, right-aligned) in each column. The timestamps consume noticeable horizontal space and add little value during LIVE use — they are review-time correlation info (Decision #1's "timestamps for correlation"), not live-glance info. Mid-meeting the user is reading the caption stream, not pairing rows by timestamp.
+
+**Why deferred:** Timestamps + correlation are load-bearing for the detail/review view and are the locked Decision #1 mechanism for the split layout; trimming them in the LIVE view is a UX judgment that wants real-meeting evidence, not a token-align concern. Phase 7 Step 4 Checkpoint A (live split-screen token-align) deliberately left the timestamp in place.
+
+**Revisit options:** shrink the timestamp, hide it in the live view (keep it in the detail view), or make it toggleable.
+
+**Trigger to revisit:** if Jose finds the live-view timestamps annoying / space-wasting in real-meeting use.
+
+**Cross-references:** `GROUP_D_UI_DECISIONS.md` Decision #1 (split top/bottom + timestamps for correlation); Phase 7 Step 4 Checkpoint A (token-align live split-screen).
+
 ---
 
 Updated: May 10 2026
