@@ -123,33 +123,14 @@ struct OnboardingView: View {
         VStack(spacing: 32) {
             Spacer()
 
-            // Brand hero (Phase 7 Step 5): the "ARIGATO AI" wordmark (Geist
-            // Pixel) + a single Geist Mono tagline. Both bundled + registered
-            // via ``BrandFont`` (Latin-only, scoped to this hero — see the
-            // styling note). No headline. Ambient pixel-grid lands in Checkpoint B.
-            VStack(spacing: 16) {
-                Text("ARIGATO AI")
-                    .font(.custom(BrandFont.geistPixelWordmark, size: 54, relativeTo: .largeTitle))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityLabel("Arigato AI")
-
-                // Single tagline in Geist Mono — supporting copy at `.secondary`
-                // (AA-legible in both modes). Wraps naturally. The bidirectional
-                // marker is Geist Mono's own "↔" (U+2194): a single, designed,
-                // symmetric arrow — both ends are EVEN by construction and it
-                // spaces cleanly. (The composed-ASCII "<->" / "<-->" arrows
-                // rendered lopsided here — mono advance/ligature quirks — and
-                // "↔" stays in the same Geist face, consistent with the tagline.)
-                // Replaces the prior D14-4 multi-sentence privacy body (copy trim).
-                Text("Translate Japanese ↔ English meetings in real time, fully on-device.")
-                    .font(.custom(BrandFont.geistMonoTagline, size: 16, relativeTo: .subheadline))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.horizontal, 32)
+            // Brand hero (Phase 7 Step 5): the "ARIGATO AI" Geist Pixel wordmark
+            // + Geist Mono tagline, with the "Terminal Power-On" entrance
+            // animation (Checkpoint B, Variation A). All static content (fonts,
+            // sizes, copy, the "↔" U+2194 marker) plus the type-on timing,
+            // reduce-motion calm mode, and stop-on-settle live in
+            // ``OnboardingHeroView`` / ``HeroRevealFormatter``.
+            OnboardingHeroView()
+                .padding(.horizontal, 32)
 
             Spacer()
 
