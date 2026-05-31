@@ -171,6 +171,10 @@ struct TranscriptLiveView: View {
             HStack(spacing: 6) {
                 Text(chrome.languageBadge)
                     .font(.caption2.monospacedDigit().weight(.semibold))
+                    // Checkpoint B recede: secondary (was implicit .primary) so
+                    // this status badge stays tonally quieter than the captions
+                    // (which are .primary). Capsule fill (meterTrack) unchanged.
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.meterTrack, in: Capsule())
@@ -271,6 +275,11 @@ struct TranscriptLiveView: View {
     private var footer: some View {
         Text("Audio never leaves your iPhone.")
             .font(.footnote)
+            // Checkpoint B: footer deliberately STAYS .secondary (a tertiary
+            // recede was tried and reverted) — it's a privacy/trust line the
+            // user is meant to read, and `.tertiary` on footnote-size text
+            // fails WCAG AA (~2:1) per the @ui-reviewer pass. The chrome recede
+            // is carried by the language badge (.primary -> .secondary) instead.
             .foregroundStyle(.secondary)
             .lineLimit(2)
             .minimumScaleFactor(0.9)
