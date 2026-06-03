@@ -6,7 +6,34 @@ Arigato AI listens to a live conversation, transcribes it, and renders streaming
 
 It runs a **350M-parameter LFM2 translation model** (Liquid AI) and a **Whisper large-v3-turbo** speech model (Argmax / WhisperKit) locally on an iPhone 17 Pro Max, with both models pre-warmed at launch so captions start the moment you do.
 
+> 🚧 **Work in progress.** Arigato AI is an active, in-development personal project — **not a finished app.** The on-device pipeline (speech recognition → translation → persistence) is implemented and unit-tested, but it hasn't been validated in real meetings yet and the interface is mid-polish. Expect rough edges. See [Status](#status) for an honest breakdown of what's real today versus what's still ahead.
+
 > ありがとう — *thank you.* Named for the first word most people learn in a new language, and the one this app is built to help you say across one.
+
+---
+
+## Concept preview
+
+This is the live translation experience the project is building toward — a Japanese speaker and an English speaker going back and forth, each line transcribed in the language spoken and translated underneath, on-device, as it happens.
+
+<p align="center">
+  <img src="docs/media/arigato-live-concept.gif" alt="Arigato AI — animated concept of the live bidirectional translation experience" width="300">
+</p>
+
+<p align="center"><sub>⚠️ <strong>Animated design concept — a mockup, not a screen recording of the working app.</strong> It shows the target experience and visual direction; the app does not look or behave like this yet. The still images below are real UI captured from the project.</sub></p>
+
+---
+
+## Real screens (today)
+
+The first-launch brand moment, captured from the app running in the simulator — real UI, light and dark:
+
+<p align="center">
+  <img src="docs/media/onboarding-hero-light.png" alt="Onboarding hero — light mode" width="250">
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/media/onboarding-hero-dark.png" alt="Onboarding hero — dark mode" width="250">
+</p>
+<p align="center"><sub>A terminal-style power-on animation types the wordmark in. The brand type is the bundled Geist Pixel face.</sub></p>
 
 ---
 
@@ -15,7 +42,7 @@ It runs a **350M-parameter LFM2 translation model** (Liquid AI) and a **Whisper 
 - 🎙️ **Real-time bidirectional translation** — JA→EN and EN→JA, auto-detected per utterance. No "pick a language" toggle; the app figures out who's speaking which language and routes accordingly.
 - 🔒 **100% on-device** — speech recognition *and* translation run locally. Transcripts stay on the phone unless *you* explicitly export or copy them. iCloud/CloudKit sync is deliberately disabled.
 - ⚡ **Built for latency** — Whisper `large-v3-turbo` for fast streaming ASR, LFM2-350M (Q5_K_M) for fast translation, both pre-warmed at app launch to kill cold-start glitches.
-- 🧱 **Real architecture, not a prototype** — a fully actor-isolated streaming pipeline, SwiftData persistence with crash-resilient auto-save, meeting history with full-text search, Markdown export, and 400+ tests (Swift Testing).
+- 🧱 **Real, tested architecture** — a fully actor-isolated streaming pipeline, SwiftData persistence with crash-resilient auto-save, meeting history with full-text search, Markdown export, and 400+ tests (Swift Testing).
 - 📝 **Post-meeting AI summary** — one-tap "Copy transcript" exports clean bilingual Markdown to paste into your AI assistant of choice.
 
 ---
@@ -51,6 +78,13 @@ Every stage of the live pipeline is its own actor or isolated type — audio, tr
 ```
 
 The router consumes the language gate's **authoritative** tag, not a raw per-window guess — so a half-sentence is never pushed through the wrong translation direction while detection is still settling.
+
+<p align="center">
+  <img src="docs/media/transcript-detail-light.png" alt="Bilingual transcript — light mode" width="330">
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/media/transcript-detail-dark.png" alt="Bilingual transcript — dark mode" width="330">
+</p>
+<p align="center"><sub>A saved meeting (real UI, rendered from the actual SwiftUI view). Each line leads with the language actually spoken — JA or EN — translation beneath, monospace timestamp + language tag. Full light/dark parity.</sub></p>
 
 ---
 
@@ -137,9 +171,9 @@ Privacy is a hard requirement, not a feature:
 
 ## Status
 
-**MVP-1 is feature-complete**, pending validation in real meetings. This is a personal project — built for personal use first, with a possible App Store release later if it earns it.
+**Active development — not a finished product.** The core feature set is implemented and unit-tested (400+ tests, Swift Testing), but the app has not yet been validated in real meetings and the UI is mid-polish. The animated [concept preview](#concept-preview) above shows where the experience is headed, not where it is today.
 
-Shipped:
+**Implemented (built + tested):**
 
 - ✅ Start/stop meeting capture with live bilingual captions
 - ✅ Bidirectional JA↔EN translation, auto-routed per utterance
@@ -150,7 +184,13 @@ Shipped:
 - ✅ Copy-transcript → external AI-summary workflow
 - ✅ First-launch onboarding brand moment
 
-In progress: UI polish pass (design-language rollout, brand moments, app icon).
+**Still ahead:**
+
+- 🔜 Validation in real Japanese↔English meetings (the main gate)
+- 🔜 UI polish pass — design-language rollout, remaining brand moments, app icon
+- 🔜 On-device tuning (latency/quality) once real-world usage reveals the priorities
+
+This is a personal project — built for personal use first, with a possible App Store release later if it earns it.
 
 ---
 
