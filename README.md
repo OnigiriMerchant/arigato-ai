@@ -26,16 +26,16 @@ This is the live translation experience the project is building toward — a spl
 
 ---
 
-## Real screens (today)
+## Welcome
 
-The first-launch brand moment, captured from the app running in the simulator — real UI, light and dark:
+The welcome screen — a terminal-style **Geist Pixel** wordmark with a blinking cursor, and **Arigato's mascot: a little pixel shinobi**. Light and dark:
 
 <p align="center">
-  <img src="docs/media/onboarding-hero-light.png" alt="Onboarding hero — light mode" width="250">
-  &nbsp;&nbsp;&nbsp;
-  <img src="docs/media/onboarding-hero-dark.png" alt="Onboarding hero — dark mode" width="250">
+  <img src="docs/media/arigato-welcome.gif" alt="Arigato AI welcome screen with pixel-ninja mascot — light mode" width="46%">
+  &nbsp;
+  <img src="docs/media/arigato-welcome-dark.gif" alt="Arigato AI welcome screen with pixel-ninja mascot — dark mode" width="46%">
 </p>
-<p align="center"><sub>A terminal-style power-on animation types the wordmark in. The brand type is the bundled Geist Pixel face.</sub></p>
+<p align="center"><sub>Arigato's pixel-ninja mascot on the welcome screen. Light (left), dark (right) — the ninja keeps its rim-light so it reads on either background.</sub></p>
 
 ---
 
@@ -82,9 +82,9 @@ Every stage of the live pipeline is its own actor or isolated type — audio, tr
 The router consumes the language gate's **authoritative** tag, not a raw per-window guess — so a half-sentence is never pushed through the wrong translation direction while detection is still settling.
 
 <p align="center">
-  <img src="docs/media/transcript-detail-light.png" alt="Bilingual transcript — light mode" width="330">
-  &nbsp;&nbsp;&nbsp;
-  <img src="docs/media/transcript-detail-dark.png" alt="Bilingual transcript — dark mode" width="330">
+  <img src="docs/media/transcript-detail-light.png" alt="Bilingual transcript — light mode" width="46%">
+  &nbsp;
+  <img src="docs/media/transcript-detail-dark.png" alt="Bilingual transcript — dark mode" width="46%">
 </p>
 <p align="center"><sub>A saved meeting (real UI, rendered from the actual SwiftUI view). Each line leads with the language actually spoken — JA or EN — translation beneath, monospace timestamp + language tag. Full light/dark parity.</sub></p>
 
