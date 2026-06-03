@@ -20,7 +20,7 @@ This is the live translation experience the project is building toward — a Jap
   <img src="docs/media/arigato-live-concept.gif" alt="Arigato AI — animated concept of the live bidirectional translation experience" width="300">
 </p>
 
-<p align="center"><sub>⚠️ <strong>Animated design concept — a mockup, not a screen recording of the working app.</strong> It shows the target experience and visual direction; the app does not look or behave like this yet. The still images below are real UI captured from the project.</sub></p>
+<p align="center"><sub>Animated design concept — showing the target experience. Work in progress.</sub></p>
 
 ---
 
