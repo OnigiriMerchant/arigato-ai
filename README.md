@@ -14,15 +14,15 @@ It runs a **350M-parameter LFM2 translation model** (Liquid AI) and a **Whisper 
 
 ## Concept preview
 
-This is the live translation experience the project is building toward — two people going back and forth in Japanese and English, transcribed and translated on-device as it happens. Two views of that target UI:
+This is the live translation experience the project is building toward — a split-screen live view with **Japanese on top and English on the bottom**, each line transcribed and translated on-device as it happens, timestamps correlating every pair. Light and dark:
 
 <p align="center">
-  <img src="docs/media/arigato-live-concept.gif" alt="Concept — source-led live caption stream" width="46%">
+  <img src="docs/media/arigato-split-concept.gif" alt="Split-screen live translation concept — light mode" width="46%">
   &nbsp;
-  <img src="docs/media/arigato-split-concept.gif" alt="Concept — split-screen live translation, Japanese on top and English on the bottom" width="46%">
+  <img src="docs/media/arigato-split-concept-dark.gif" alt="Split-screen live translation concept — dark mode" width="46%">
 </p>
 
-<p align="center"><sub>Left: a single source-led caption stream. Right: the <strong>split-screen layout the live screen actually uses</strong> — Japanese on top, English on the bottom, with timestamps correlating each pair. Animated design concepts — showing the target experience. Work in progress.</sub></p>
+<p align="center"><sub>The split-screen live view — Japanese top, English bottom, timestamps correlating each pair. Light mode (left), dark mode (right). Animated design concept — showing the target experience. Work in progress.</sub></p>
 
 ---
 
