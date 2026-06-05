@@ -274,6 +274,18 @@ Two coordinated upgrades that move mechanical translation work out of Claude.ai 
 
 **Trigger to revisit:** Before MVP 1 ships, OR if any router scheduling regression is observed.
 
+**Update (2026-06-06, codebase concurrency sweep):** The type-level doc-comment (LanguageRouter.swift:86-99) currently *names* `D1-T1` (`router_routedHistory_pairsDetectedAndAuthoritative_perWindow`) and `C29` as the enforcing tests for the scheduling assumption — but neither drives the greedy-upstream-burst pacing contract (D1-T1 is per-window gate-correctness on a 3-window serial scripted fake; C29 is cancellation). Per the CLAUDE.md test-ID-integrity rule ("a doc-comment naming a test that doesn't enforce is worse than naming none"), until the violation test above exists the doc-comment should be corrected to stop naming D1-T1/C29 as enforcing and instead point at this V3 gap. Surfaced by the AudioCaptureActor ordering-fix review — the same false-confidence pattern that fix corrected in AudioCaptureActor.
+
+### AudioCaptureActor route-change failure-path resource leak
+
+**What:** In `handleEngineReconfiguration()` (AudioCaptureActor.swift:436-470), if `installTapAndConverter()` throws or `engine.start()` fails after an audio route change, the catch path finishes the public continuations and sets `isRunning = false` but does NOT call `unregisterRouteChangeObserver()`, `engine.stop()`, or `deactivateSession()`. The happy path and `stop()` tear these down correctly; only this failure branch leaks them. Confirmed real by adversarial lifecycle review (4/4 independent verification). It is a resource/lifecycle-asymmetry leak, NOT a data race.
+
+**Why deferred:** Pre-existing error-path asymmetry, not introduced by the single-consumer ordering fix (the fix only added the `teardownDrain()` call to this method). Kept out of that commit to preserve scope discipline. Only triggers when a route change (headphones / Bluetooth) coincides with a tap-reinstall or engine-start failure — rare, and with no correctness impact on the live transcript; the leak is the observer + engine + audio session not being torn down on that one branch.
+
+**Trigger to revisit:** Before MVP 1 ships, OR the next time route-change handling is touched, OR if a leaked AVAudioSession / route observer is observed after repeated route changes. Fix: in the catch path, mirror `stop()`'s teardown — `unregisterRouteChangeObserver()`, `engine.stop()`, `deactivateSession()` — before surfacing the failure.
+
+**Cost to add:** ~15 minutes.
+
 ### LFM2ModelLoader mid-load cancellation violation test
 
 **What:** `LFM2ModelLoader.loadIfNeeded(quantization:)`'s doc-comment claims a cancellation contract: "if a caller's outer task is cancelled while it awaits the in-flight load, only that caller's await throws `CancellationError`. The shared in-flight task continues so other coalescing callers still receive their result." No test currently exercises this contract. V3 (`loadIfNeeded_afterFactoryRelease_completesEngineRetrievalForFreshCallers`) is a factory-park-and-release test — cancellation is functionally a no-op there because `Task.init` inside the actor body is a fresh top-level task that does not inherit awaiter cancellation, and `await task.value` does not propagate awaiter cancellation either. So V3 verifies post-load recovery semantics, not the documented cancellation behaviour.
