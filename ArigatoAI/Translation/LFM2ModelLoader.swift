@@ -224,17 +224,22 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
         let message = ChatMessage(role: .user, content: .text(canaryText))
         let stream = conversation.generateResponse(message: message, generationOptions: nil)
 
-        do {
-            for try await response in stream {
-                switch onEnum(of: response) {
-                case .complete:
-                    return
-                default:
-                    continue
-                }
+        for await response in stream {
+            switch onEnum(of: response) {
+            case .complete:
+                return
+            case let .error(e):
+                // `.error` is the SDK's failure channel: the v0.10.9
+                // generation stream is non-throwing, so a warmup failure
+                // surfaces here, never via a thrown error. Without this arm
+                // a failed canary falls through to `default`, the loop ends
+                // without `.complete`, and warmup falsely reports `.ready`
+                // on a model that cannot generate — the mirror of the
+                // translate-path `.error` fix below.
+                throw TranslationError.warmupFailed(String(describing: e))
+            default:
+                continue
             }
-        } catch {
-            throw TranslationError.warmupFailed(error.localizedDescription)
         }
     }
 
@@ -290,35 +295,34 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
                     .with(topP: Float(recommended.topP))
                     .with(minP: Float(recommended.minP))
                     .with(repetitionPenalty: Float(recommended.repetitionPenalty))
-                do {
-                    let stream = conversation.generateResponse(
-                        userTextMessage: userText,
-                        generationOptions: options
-                    )
-                    for try await response in stream {
-                        if Task.isCancelled { break }
-                        switch onEnum(of: response) {
-                        case let .chunk(chunk):
-                            continuation.yield(.chunk(chunk.text))
-                        case .complete:
-                            continuation.yield(.complete)
-                        case let .error(e):
-                            // `.error` is new in v0.10.9. Surface it as a
-                            // stream failure rather than silently dropping
-                            // a truncated translation.
-                            continuation.finish(
-                                throwing: TranslationError.generationFailed(String(describing: e))
-                            )
-                            return
-                        case .reasoningChunk, .functionCalls, .audioSample:
-                            // Dropped per seam scope.
-                            continue
-                        }
+                // The v0.10.9 `generateResponse(...)` stream is
+                // non-throwing; errors arrive via the `.error` case below,
+                // not as thrown errors, so no `do/catch` is needed here.
+                let stream = conversation.generateResponse(
+                    userTextMessage: userText,
+                    generationOptions: options
+                )
+                for await response in stream {
+                    if Task.isCancelled { break }
+                    switch onEnum(of: response) {
+                    case let .chunk(chunk):
+                        continuation.yield(.chunk(chunk.text))
+                    case .complete:
+                        continuation.yield(.complete)
+                    case let .error(e):
+                        // `.error` is new in v0.10.9. Surface it as a
+                        // stream failure rather than silently dropping
+                        // a truncated translation.
+                        continuation.finish(
+                            throwing: TranslationError.generationFailed(String(describing: e))
+                        )
+                        return
+                    case .reasoningChunk, .functionCalls, .audioSample:
+                        // Dropped per seam scope.
+                        continue
                     }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
                 }
+                continuation.finish()
             }
             continuation.onTermination = { _ in
                 task.cancel()
