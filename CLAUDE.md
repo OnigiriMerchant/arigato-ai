@@ -7,7 +7,7 @@ Personal use first, App Store later if it earns its way there.
 ## Stack
 - iOS 26.4+, Swift 6, SwiftUI, SwiftData, Swift Testing
 - WhisperKit via argmax-oss-swift v1.0.0+ (Apache-2.0) — Japanese + English ASR with auto language detection
-- LFM2-350M-ENJP-MT via LEAP iOS SDK (pinned to `Liquid4All/leap-ios` v0.9.4; the unified `Liquid4All/leap-sdk` v0.10.x channel is upstream-blocked per issue #5 — see CURRENT_STATE "Upstream block status") — bidirectional JA↔EN translation
+- LFM2-350M-ENJP-MT via the LEAP iOS SDK, pinned to `Liquid4All/leap-sdk` **v0.10.9** (exactVersion, rev `a83ca1e`), product `LeapModelDownloader` — bidirectional JA↔EN translation. Migrated 2026-06-06 off the old `Liquid4All/leap-ios` v0.9.4 pin once the previously-blocking issue #5 cleared; the migration is binary-proven (the app target compiles + links against 0.10.9, the device-reference build `arigato-ai-p2` deploys to hardware, and the GGUF loads via the bundled `Leap.shared.load(url:)` path). See CURRENT_STATE "leap-sdk v0.10.9 migration".
 - Post-meeting AI summary: handled via an external workflow (Copy transcript → paste into the Claude app). No in-app AI integration in MVP-1; in-app summary via the Anthropic Claude API is tracked as a V3 entry.
 - Bundle ID: com.jose.ArigatoAI
 
