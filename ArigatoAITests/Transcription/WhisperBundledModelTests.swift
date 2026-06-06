@@ -134,11 +134,19 @@ struct WhisperBundledModelTests {
     /// shipping an app that silently phones home on first transcription.
     ///
     /// Network-free: it only resolves bundle URLs (no SDK load, no
-    /// transcription). For the JSON files it uses
-    /// `bundle.url(forResource:withExtension:)`; for the `.mlmodelc` packages
-    /// it resolves them as resources with extension `mlmodelc` (they are
-    /// directory bundles, which `url(forResource:withExtension:)` resolves).
-    @Test("W-bundled-6 all five offline assets resolve from the bundle root")
+    /// transcription). It asserts two things:
+    ///
+    /// 1. Each asset is *resolvable* from the bundle
+    ///    (`bundle.url(forResource:withExtension:)`).
+    /// 2. **Flat-layout lock.** Each asset exists FLAT at the bundle resource
+    ///    *root* (`resourcePath + "/" + name`) — the exact path
+    ///    ``WhisperBundledModel/resolve(resourcePath:fileExists:)`` checks.
+    ///    Step 1 alone is insufficient: `url(forResource:withExtension:)`
+    ///    searches the bundle *recursively*, so it would pass even if a future
+    ///    synchronized-group change nested the assets one level down — which
+    ///    would break the production resolver and silently re-open the network
+    ///    fallback. The flat check catches that regression.
+    @Test("W-bundled-6 all five offline assets resolve flat at the bundle resource root")
     func bundle_resolvesAllFiveOfflineAssets() throws {
         // In the unit-test host process `Bundle.main` is the test runner; the
         // WhisperKit resources are flattened into the app bundle. Probe both
@@ -151,7 +159,7 @@ struct WhisperBundledModelTests {
                 ?? appBundle.url(forResource: resource, withExtension: ext)
             let resolved = try #require(
                 url,
-                "Expected bundled WhisperKit asset \(resource).\(ext) to be resolvable from the bundle root; the production offline-load factory guards on exactly this presence."
+                "Expected bundled WhisperKit asset \(resource).\(ext) to be resolvable from the bundle; the production offline-load factory guards on exactly this presence."
             )
             #expect(resolved.lastPathComponent == "\(resource).\(ext)")
         }
@@ -161,6 +169,27 @@ struct WhisperBundledModelTests {
         try requireResolved("MelSpectrogram", "mlmodelc")
         try requireResolved("AudioEncoder", "mlmodelc")
         try requireResolved("TextDecoder", "mlmodelc")
+
+        // Flat-layout lock: find the bundle whose resource ROOT holds
+        // tokenizer.json directly (mirroring `Bundle.main.resourcePath` in
+        // production), then assert ALL required assets are flat there. Names
+        // are drawn from the production source of truth so the test cannot
+        // drift from what `resolve` enforces.
+        let hostRoot = try #require(
+            [Bundle.main, appBundle].compactMap(\.resourcePath).first { root in
+                FileManager.default.fileExists(
+                    atPath: (root as NSString).appendingPathComponent("tokenizer.json")
+                )
+            },
+            "Expected a bundle whose resource ROOT contains tokenizer.json flat — the layout WhisperBundledModel.resolve requires."
+        )
+        for name in WhisperBundledModel.requiredTokenizerFiles + WhisperBundledModel.requiredModelPackages {
+            let flatPath = (hostRoot as NSString).appendingPathComponent(name)
+            #expect(
+                FileManager.default.fileExists(atPath: flatPath),
+                "Expected \(name) flat at the bundle resource root; production WhisperBundledModel.resolve checks exactly this path and would silently fall back to the network if it moved."
+            )
+        }
     }
 }
 

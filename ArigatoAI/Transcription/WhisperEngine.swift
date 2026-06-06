@@ -130,21 +130,35 @@ nonisolated enum WhisperClientFactory {
     /// for translating it into ``TranscriptionError/modelLoadFailed(_:)``.
     static let make: WhisperEngineFactory = { variant in
         // Offline load (Phase 2.5): the CoreML model AND the tokenizer ship
-        // bundled in the app, flattened into the bundle's resource root.
-        // `modelFolder` points WhisperKit at those files. Note `download:
-        // false` does NOT by itself guarantee offline operation: WhisperKit
-        // v1.0.0's `ModelUtilities.loadTokenizer` has an unconditional
-        // HuggingFace fallback that fires silently if `tokenizer.json` or
-        // `tokenizer_config.json` is missing/malformed. The real offline
-        // safeguard is `WhisperBundledModel.requireFolderPath()`, which
-        // verifies the physical presence of both tokenizer files plus the
-        // three `.mlmodelc` packages and throws a typed
-        // ``WhisperBundledModelError`` if any is absent — converting a silent
-        // network fetch into a fast packaging error the loader maps to
+        // bundled in the app, flattened into the bundle's resource root. Two
+        // settings together make this fully offline:
+        //
+        // 1. `modelFolder` + `download: false` — points WhisperKit at the
+        //    bundled `.mlmodelc` packages and forbids the model-download arm.
+        // 2. `tokenizerFolder` set to the SAME bundled folder — the
+        //    load-bearing tokenizer safeguard. `download: false` does NOT
+        //    cover the tokenizer: WhisperKit v1.0.0's
+        //    `ModelUtilities.loadTokenizer` searches a GLOBAL Hub cache
+        //    (`Documents/huggingface/…`) BEFORE the bundle and probes it on
+        //    `tokenizer.json` alone; a stale partial cache from a prior
+        //    download-mode build would shadow a complete bundle and silently
+        //    fall back to a HuggingFace download. Setting `tokenizerFolder`
+        //    re-roots WhisperKit's tokenizer search base at the bundle, so the
+        //    global cache is dropped from the search entirely and the bundled
+        //    tokenizer is authoritative even on an upgrade-over-prior-build
+        //    device (verified against WhisperKit v1.0.0
+        //    `ModelUtilities.loadTokenizer` lines 24-44).
+        //
+        // `WhisperBundledModel.requireFolderPath()` verifies all five required
+        // assets are physically present and throws a typed
+        // ``WhisperBundledModelError`` otherwise — converting a silent network
+        // fetch into a fast packaging error the loader maps to
         // ``TranscriptionError/modelLoadFailed(_:)``.
-        let config = try WhisperKitConfig(
+        let folderPath = try WhisperBundledModel.requireFolderPath()
+        let config = WhisperKitConfig(
             model: variant.rawValue,
-            modelFolder: WhisperBundledModel.requireFolderPath(),
+            modelFolder: folderPath,
+            tokenizerFolder: URL(fileURLWithPath: folderPath),
             download: false
         )
         let kit = try await WhisperKit(config)
@@ -159,22 +173,34 @@ nonisolated enum WhisperClientFactory {
 /// `Resources/WhisperModels/<model>/`, which Xcode flattens into the
 /// bundle's resource root — so the folder WhisperKit loads from is
 /// ``Bundle/resourcePath``. WhisperKit reads the model packages by name and
-/// finds the tokenizer via its `[modelFolder]` search path.
+/// finds the tokenizer via its `tokenizerFolder` / `[modelFolder]` search
+/// paths.
 ///
 /// **`download: false` does NOT make the tokenizer offline.** WhisperKit
 /// v1.0.0's tokenizer loader (`ModelUtilities.loadTokenizer`) carries an
-/// *unconditional* HuggingFace download fallback that ignores the
-/// `download` flag and fires silently if `tokenizer.json` *or*
-/// `tokenizer_config.json` is missing or malformed. The offline guarantee
-/// therefore rests on the **physical presence** of both tokenizer files
-/// *plus* the three CoreML model packages WhisperKit loads by name
-/// (`MelSpectrogram.mlmodelc`, `AudioEncoder.mlmodelc`,
-/// `TextDecoder.mlmodelc`) at the bundle resource root. A partial bundle —
-/// e.g. `tokenizer.json` present but `tokenizer_config.json` absent — would
-/// otherwise let WhisperKit silently phone home for the missing piece,
-/// breaking the "no network during meetings" guarantee. This resolver
-/// converts that silent network degradation into a fast, typed
-/// ``WhisperBundledModelError`` at construction time.
+/// *unconditional* HuggingFace download fallback that ignores the `download`
+/// flag and fires silently whenever the tokenizer fails to load locally. Two
+/// independent hazards must both be closed for a real offline guarantee:
+///
+/// 1. **Missing bundled file.** If `tokenizer.json` *or*
+///    `tokenizer_config.json` is absent from the bundle, the local load
+///    throws and WhisperKit silently downloads. This resolver closes it by
+///    verifying the **physical presence** of both tokenizer files *plus* the
+///    three CoreML model packages WhisperKit loads by name
+///    (`MelSpectrogram.mlmodelc`, `AudioEncoder.mlmodelc`,
+///    `TextDecoder.mlmodelc`) at the bundle resource root, failing fast with
+///    a typed ``WhisperBundledModelError`` at construction time.
+/// 2. **Stale Hub cache shadowing the bundle.** WhisperKit searches a global
+///    Hub cache (`Documents/huggingface/…`) *before* the bundle and probes it
+///    on `tokenizer.json` alone, so a partial leftover cache (from a prior
+///    download-mode build) would shadow a complete bundle and fall through to
+///    a network download. This resolver cannot see that cache; the closing
+///    fix lives in ``WhisperClientFactory/make``, which sets `tokenizerFolder`
+///    to the bundled folder so WhisperKit's tokenizer search base is re-rooted
+///    at the bundle and the global cache is dropped from the search entirely.
+///
+/// Together these keep the "no network during meetings" guarantee intact on
+/// both clean installs and upgrade-over-prior-build devices.
 ///
 /// The resolver is split into a pure, injectable ``resolve(resourcePath:fileExists:)``
 /// (mirroring the ``LFM2CachePathResolver`` precedent) and a thin
@@ -185,23 +211,33 @@ nonisolated enum WhisperClientFactory {
 /// This type is `nonisolated`: the lookup is not actor-isolated and the
 /// returned string is `Sendable`.
 nonisolated enum WhisperBundledModel {
-    /// The names of the assets that must be physically present at the bundle
-    /// resource root for an offline WhisperKit load to succeed without a
-    /// silent network fallback. Shared between ``resolve(resourcePath:fileExists:)``
-    /// and the packaging tests so there is a single source of truth.
+    /// Each required tokenizer file paired with the typed error
+    /// ``resolve(resourcePath:fileExists:)`` throws when that file is absent.
+    /// `resolve` iterates this list, so it is the single source of truth for
+    /// *which* tokenizer files are required *and which* error names each — the
+    /// list and the checks cannot drift. Distinct errors
+    /// (``WhisperBundledModelError/missingTokenizer`` vs
+    /// ``WhisperBundledModelError/missingTokenizerConfig``) keep a
+    /// partial-bundle failure diagnosable from the thrown error alone.
     ///
-    /// - The two tokenizer files (`tokenizer.json`, `tokenizer_config.json`)
-    ///   are what WhisperKit's tokenizer loader needs locally; either being
-    ///   absent triggers the unconditional HuggingFace fallback.
-    /// - The three `.mlmodelc` packages are the CoreML models WhisperKit
-    ///   loads by name. They are *directories* on disk; the injected
-    ///   `fileExists` returns `true` for directories (as
-    ///   `FileManager.fileExists(atPath:)` does).
-    static let requiredTokenizerFiles = ["tokenizer.json", "tokenizer_config.json"]
+    /// Both files are what WhisperKit's tokenizer loader needs locally; either
+    /// being absent triggers the unconditional HuggingFace fallback.
+    static let requiredTokenizerChecks: [(name: String, error: WhisperBundledModelError)] = [
+        ("tokenizer.json", .missingTokenizer),
+        ("tokenizer_config.json", .missingTokenizerConfig),
+    ]
 
-    /// The CoreML model packages WhisperKit loads by name. See
-    /// ``requiredTokenizerFiles`` for why directories are checked with the
-    /// same `fileExists` probe.
+    /// The tokenizer filenames the resolver requires, derived from
+    /// ``requiredTokenizerChecks`` so the packaging tests' manifest cannot
+    /// drift from what `resolve` actually enforces.
+    static var requiredTokenizerFiles: [String] {
+        requiredTokenizerChecks.map(\.name)
+    }
+
+    /// The CoreML model packages WhisperKit loads by name. They are
+    /// *directories* on disk; the injected `fileExists` returns `true` for
+    /// directories (as `FileManager.fileExists(atPath:)` does), so the same
+    /// probe verifies them.
     static let requiredModelPackages = [
         "MelSpectrogram.mlmodelc",
         "AudioEncoder.mlmodelc",
@@ -246,11 +282,8 @@ nonisolated enum WhisperBundledModel {
             (resourcePath as NSString).appendingPathComponent(name)
         }
 
-        guard fileExists(path(for: "tokenizer.json")) else {
-            throw WhisperBundledModelError.missingTokenizer
-        }
-        guard fileExists(path(for: "tokenizer_config.json")) else {
-            throw WhisperBundledModelError.missingTokenizerConfig
+        for check in requiredTokenizerChecks where !fileExists(path(for: check.name)) {
+            throw check.error
         }
 
         for package in requiredModelPackages where !fileExists(path(for: package)) {
