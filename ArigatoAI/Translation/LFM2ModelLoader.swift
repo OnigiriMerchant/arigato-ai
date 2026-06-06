@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import LeapSDK
+import LeapModelDownloader
 
 // MARK: - Lifecycle state
 
@@ -35,9 +35,17 @@ public nonisolated enum LFM2LoaderState: Sendable {
     case loading
 
     /// A load is in flight and the SDK has reported a download-progress
-    /// fraction in the closed interval `[0.0, 1.0]`. Distinct from
-    /// ``loading`` so UI can render a determinate progress bar only when
-    /// real progress data is available.
+    /// fraction in the closed interval `[0.0, 1.0]`.
+    ///
+    /// **Currently unreachable (leap-sdk v0.10.9 migration).** The LFM2
+    /// model now ships bundled in the app as a GGUF resource, so there is
+    /// no download phase and nothing ever transitions the loader into this
+    /// state. The case is retained — rather than deleted — so the
+    /// determinate-progress UI surface (onboarding copy, UI #16) and any
+    /// diagnostic observer can pattern-match it without a source break if
+    /// portal downloads are reintroduced (V3 trigger "LFM2 portal download
+    /// path"). Until then it is dead but harmless: an unreachable arm in
+    /// every `switch` over ``LFM2LoaderState``.
     case downloading(Double)
 
     /// The model is loaded but no warmup canary has yet succeeded.
@@ -63,7 +71,7 @@ public nonisolated enum LFM2LoaderState: Sendable {
 // MARK: - Engine seam
 
 /// Internal seam isolating the LEAP iOS SDK's non-`Sendable`
-/// ``LeapSDK.ModelRunner`` behind a protocol that ``LFM2ModelLoader`` and
+/// `ModelRunner` behind a protocol that ``LFM2ModelLoader`` and
 /// the test target can both hold.
 ///
 /// `LFM2Engine` is the LFM2 analogue of Phase 4's ``WhisperClient`` /
@@ -71,21 +79,15 @@ public nonisolated enum LFM2LoaderState: Sendable {
 /// instance and is marked `@unchecked Sendable`, while
 /// ``LFM2ModelLoader`` (an actor) serialises every method call against
 /// the wrapper. The protocol exposes only the surface the loader needs,
-/// which lets tests inject a fake without linking `LeapSDK`.
+/// which lets tests inject a fake without linking `LeapModelDownloader`.
 ///
 /// **Why a sync `Sendable` protocol over a non-`Sendable` SDK class?**
-/// `ModelRunner` is a plain protocol with no `Sendable` inheritance and
-/// `Conversation` is a plain class — neither is safe to ferry across
-/// actor boundaries directly. Wrapping both behind one actor-owned
-/// `@unchecked Sendable` adapter is the established Phase 4 mitigation;
-/// the same shape is reused here so the test target keeps its no-LeapSDK
-/// posture.
-///
-/// **Scope.** Group B exposes only ``warmupCanary(direction:)`` because
-/// warmup is the only inference surface the loader exercises during app
-/// launch. Group C will add ``createConversation(systemPrompt:)`` and
-/// related methods needed by the `TranslationActor`; adding them now
-/// would be premature scope.
+/// `ModelRunner` is a SKIE/Kotlin-Native-bridged protocol with no
+/// `Sendable` inheritance and `Conversation` is a plain class — neither is
+/// safe to ferry across actor boundaries directly. Wrapping both behind
+/// one actor-owned `@unchecked Sendable` adapter is the established
+/// Phase 4 mitigation; the same shape is reused here so the test target
+/// keeps its no-LeapSDK posture.
 public protocol LFM2Engine: Sendable {
     /// Runs a single short dummy inference using the supplied translation
     /// direction's system prompt, so subsequent translation calls do not
@@ -93,9 +95,9 @@ public protocol LFM2Engine: Sendable {
     ///
     /// The canary message is intentionally short ("Hello." for EN-to-JA;
     /// "こんにちは。" for JA-to-EN) so the inference completes quickly.
-    /// The implementation creates a fresh ``LeapSDK.Conversation`` using
-    /// ``LeapSDK.ModelRunner/createConversation(systemPrompt:)`` and
-    /// drains the response stream until it sees ``LeapSDK.MessageResponse/complete(_:)``.
+    /// The implementation creates a fresh `Conversation` using
+    /// `ModelRunner.createConversation(systemPrompt:)` and drains the
+    /// response stream until it sees the `.complete` response.
     ///
     /// - Parameter direction: The translation direction whose system
     ///   prompt drives the canary. Both directions are warmed up
@@ -114,15 +116,26 @@ public protocol LFM2Engine: Sendable {
     /// ``TranslationActor`` for production translation) is responsible
     /// for ensuring at most one call is in-flight at a time. The
     /// production adapter (``LFM2EngineAdapter``) constructs a fresh
-    /// ``LeapSDK.Conversation`` per call so cross-call mutable state
-    /// from the SDK is avoided.
+    /// `Conversation` per call so cross-call mutable state from the SDK is
+    /// avoided.
+    ///
+    /// **Violation behaviour.** If the owning actor violates the one-call
+    /// invariant and drives two `translate(...)` streams against the same
+    /// adapter concurrently, the leap-sdk v0.10.9 `ModelRunner` is not
+    /// `Sendable` and its conversations are independent objects: the two
+    /// streams interleave token generation on the SDK's internal executor
+    /// with undefined output ordering. No data race is introduced (each
+    /// `Conversation` is constructed per call), but neither stream's token
+    /// order is guaranteed to be coherent. The serialisation contract is
+    /// what keeps output coherent.
     ///
     /// **Cancellation.** The returned ``AsyncThrowingStream`` observes
-    /// cooperative task cancellation per Swift Concurrency semantics.
-    /// Group C Step 8 separately resolves the LEAP SDK's specific
-    /// cancellation behavior via doc-researcher before wiring
-    /// ``LeapSDK.GenerationHandler/stop()`` into ``TranslationActor``;
-    /// at the protocol level the contract is "respond to
+    /// cooperative task cancellation per Swift Concurrency semantics. In
+    /// leap-sdk v0.10.9 cancelling the spawned task both breaks the
+    /// `for try await` loop and drops the only reference to the SDK
+    /// generation, which the SDK surfaces as an `.interrupted` terminal —
+    /// the adapter finishes the stream cleanly without yielding a partial
+    /// `.complete`. At the protocol level the contract is "respond to
     /// `Task.cancel()` by finishing the stream — natural completion or
     /// cancellation, the stream finishes either way".
     ///
@@ -136,26 +149,53 @@ public protocol LFM2Engine: Sendable {
     ///   ``TranslationEngineEvent`` values. The stream yields zero or
     ///   more ``TranslationEngineEvent/chunk(_:)`` events followed by
     ///   exactly one ``TranslationEngineEvent/complete`` event and
-    ///   then finishes. On error the stream finishes by throwing.
+    ///   then finishes. On error — including the SDK surfacing a
+    ///   `MessageResponseError` — the stream finishes by throwing.
     nonisolated func translate(userText: String, direction: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error>
 }
 
-/// Production adapter wrapping a real ``LeapSDK.ModelRunner`` instance.
+/// Production adapter wrapping a real `ModelRunner` instance.
 ///
-/// Marked `@unchecked Sendable` because ``LeapSDK.ModelRunner`` itself is
-/// not `Sendable` in LEAP iOS SDK v0.9.4. The unchecked annotation is
-/// sound only because ``LFM2ModelLoader`` (an actor) is the sole owner of
-/// the adapter and serialises every method call against it; do not share
-/// an `LFM2EngineAdapter` reference across other actors directly.
+/// Marked `@unchecked Sendable` because `ModelRunner` is not `Sendable`
+/// in leap-sdk v0.10.9 — it is a SKIE/Kotlin-Native-bridged protocol with
+/// no Swift `Sendable` conformance. **Do not re-verify this against the
+/// `.swiftinterface`:** the SKIE-generated Swift convenience overloads
+/// (`createConversation(systemPrompt:)`, the `generateResponse(...)`
+/// overloads, the `GenerationOptions().with(...)` builders) are emitted
+/// *outside* the `.swiftinterface`, so grepping the interface gives false
+/// negatives. The reference build `arigato-ai-p2` compiles clean against
+/// this exact revision (leap-sdk 0.10.9, rev a83ca1e); every call shape
+/// below is proven by that compilation.
+///
+/// The unchecked annotation is sound only because ``LFM2ModelLoader`` (an
+/// actor) is the sole owner of the adapter and serialises every method
+/// call against it; do not share an `LFM2EngineAdapter` reference across
+/// other actors directly.
+///
+/// **Scheduling assumption.** The adapter assumes its owning actor drives
+/// at most one inference (warmup canary or `translate(...)` stream) at a
+/// time. It constructs a fresh `Conversation` per call so no cross-call
+/// mutable SDK state exists, but it does not itself serialise concurrent
+/// callers — that is the owning actor's job. Violating this assumption
+/// interleaves two SDK generations with undefined token ordering (see the
+/// ``LFM2Engine/translate(userText:direction:)`` doc).
+///
+/// **Cancellation behaviour (v0.10.9).** Cancelling the task spawned by
+/// `translate(...)` drops the SDK generation reference; the SDK reports
+/// the abandoned generation as `.interrupted`, and the adapter finishes
+/// the stream without a trailing `.complete`. No partial result is
+/// fabricated.
 ///
 /// Conforms to ``LFM2Engine`` so consumers downstream of the loader can
 /// drive warmup against a real LEAP-backed runner. The adapter performs
 /// the conversation-construction step and drains the response stream,
-/// translating any underlying SDK error into ``TranslationError/warmupFailed(_:)``.
+/// translating any underlying SDK error into
+/// ``TranslationError/warmupFailed(_:)`` (warmup) or a thrown stream
+/// finish (translation).
 final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
     private let modelRunner: any ModelRunner
 
-    /// Creates the adapter from an already-constructed ``LeapSDK.ModelRunner``
+    /// Creates the adapter from an already-constructed `ModelRunner`
     /// instance. Construction is delegated to ``LFM2ClientFactory/make`` so
     /// the adapter never needs to know the model identifier directly.
     init(modelRunner: any ModelRunner) {
@@ -165,6 +205,13 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
     /// Drives one short dummy inference against the supplied direction's
     /// system prompt and returns when the SDK emits its `.complete`
     /// response, mapping any error onto ``TranslationError/warmupFailed(_:)``.
+    ///
+    /// Mirrors the leap-sdk v0.10.9 conversation/generation call shapes
+    /// proven by the `arigato-ai-p2` reference build: a `ChatMessage` with
+    /// a single `.text(_:)` content, the no-options
+    /// `generateResponse(message:generationOptions:)` overload, and
+    /// `onEnum(of:)` case matching over the SKIE-bridged `MessageResponse`
+    /// sealed type.
     func warmupCanary(direction: TranslationDirection) async throws {
         let conversation = modelRunner.createConversation(systemPrompt: direction.systemPrompt)
         let canaryText: String
@@ -174,13 +221,16 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
         case .jaToEn:
             canaryText = "こんにちは。"
         }
-        let message = ChatMessage(role: .user, content: [.text(canaryText)])
+        let message = ChatMessage(role: .user, content: .text(canaryText))
         let stream = conversation.generateResponse(message: message, generationOptions: nil)
 
         do {
             for try await response in stream {
-                if case .complete = response {
+                switch onEnum(of: response) {
+                case .complete:
                     return
+                default:
+                    continue
                 }
             }
         } catch {
@@ -188,35 +238,58 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
         }
     }
 
-    /// Production translation surface: creates a fresh
-    /// ``LeapSDK.Conversation`` per call, drives
-    /// ``LeapSDK.Conversation/generateResponse(userTextMessage:generationOptions:)``
+    /// Production translation surface: creates a fresh `Conversation` per
+    /// call, drives `generateResponse(userTextMessage:generationOptions:)`
     /// with ``TranslationGenerationParameters/recommended`` values, and
-    /// maps each ``LeapSDK.MessageResponse`` onto the
-    /// ``TranslationEngineEvent`` seam.
+    /// maps each `MessageResponse` onto the ``TranslationEngineEvent`` seam.
     ///
-    /// Mapping rules:
-    /// - ``LeapSDK.MessageResponse/chunk(_:)`` → ``TranslationEngineEvent/chunk(_:)``
-    /// - ``LeapSDK.MessageResponse/complete(_:)`` → ``TranslationEngineEvent/complete``
-    /// - All other cases (`reasoningChunk`, `audioSample`, `functionCall`)
-    ///   are dropped per the seam's documented scope.
+    /// Mapping rules (leap-sdk v0.10.9):
+    /// - `.chunk` (payload `MessageResponseChunk`) →
+    ///   ``TranslationEngineEvent/chunk(_:)`` using the payload's
+    ///   `text: String`.
+    /// - `.complete` → ``TranslationEngineEvent/complete``
+    /// - `.error` (payload `MessageResponseError`, **new in v0.10.9**) →
+    ///   the stream finishes by throwing
+    ///   ``TranslationError/generationFailed(_:)``. This is the one
+    ///   behavioural divergence from the `arigato-ai-p2` reference, which
+    ///   drops `.error`; here a generation error is surfaced as a stream
+    ///   failure so callers do not silently receive a truncated
+    ///   translation.
+    /// - `.reasoningChunk`, `.functionCalls` (plural), `.audioSample` are
+    ///   dropped per the seam's documented scope.
+    ///
+    /// Case-match uses `onEnum(of:)` because `MessageResponse` is a
+    /// SKIE-bridged Kotlin sealed class exposed as a Swift protocol — the
+    /// case patterns live on the SKIE-generated `__Sealed` enum, surfaced
+    /// via the `onEnum(of:)` free function. **Do not re-verify the case
+    /// names against the `.swiftinterface`:** the SKIE overloads are
+    /// generated outside it (see the type-level note); these shapes are
+    /// proven by the `arigato-ai-p2` compilation against rev a83ca1e.
+    ///
+    /// The generation options use the v0.10.9 builder form
+    /// `GenerationOptions().with(temperature:)...` — the zero-arg
+    /// initialiser plus chained `.with(...)` builders — because the
+    /// value-init taking sampling params was removed after v0.9.4.
     ///
     /// Cancellation is cooperative: the continuation's `onTermination`
     /// closure cancels the spawned task, which both unblocks the
-    /// `for try await` loop and lets the SDK stream finish naturally.
-    /// Group C Step 8 layers `LeapSDK.GenerationHandler/stop()` on top
-    /// of this via doc-researcher findings.
+    /// `for try await` loop and drops the SDK generation reference (the
+    /// SDK reports `.interrupted`; the stream finishes without a trailing
+    /// `.complete`).
     func translate(userText: String, direction: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task { [modelRunner] in
                 let conversation = modelRunner.createConversation(systemPrompt: direction.systemPrompt)
                 let recommended = TranslationGenerationParameters.recommended
-                let options = GenerationOptions(
-                    temperature: Float(recommended.temperature),
-                    topP: Float(recommended.topP),
-                    minP: Float(recommended.minP),
-                    repetitionPenalty: Float(recommended.repetitionPenalty)
-                )
+                // leap-sdk v0.10.9 exposes only the zero-arg
+                // `GenerationOptions()` + `.with(...)` builders on the
+                // native type; the v0.9.4 value-init is gone. Proven by
+                // the arigato-ai-p2 build (rev a83ca1e).
+                let options = GenerationOptions()
+                    .with(temperature: Float(recommended.temperature))
+                    .with(topP: Float(recommended.topP))
+                    .with(minP: Float(recommended.minP))
+                    .with(repetitionPenalty: Float(recommended.repetitionPenalty))
                 do {
                     let stream = conversation.generateResponse(
                         userTextMessage: userText,
@@ -224,20 +297,21 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
                     )
                     for try await response in stream {
                         if Task.isCancelled { break }
-                        // Map SDK MessageResponse → seam event. Case names
-                        // verified against arm64-apple-ios-simulator.swiftinterface
-                        // (MessageResponse declared with cases .chunk, .reasoningChunk,
-                        // .audioSample, .complete, .functionCall). Only .chunk and
-                        // .complete are surfaced; other cases are dropped per the
-                        // seam's documented scope.
-                        switch response {
-                        case let .chunk(text):
-                            continuation.yield(.chunk(text))
+                        switch onEnum(of: response) {
+                        case let .chunk(chunk):
+                            continuation.yield(.chunk(chunk.text))
                         case .complete:
                             continuation.yield(.complete)
-                        default:
-                            // reasoningChunk / audioSample / functionCall:
-                            // dropped intentionally.
+                        case let .error(e):
+                            // `.error` is new in v0.10.9. Surface it as a
+                            // stream failure rather than silently dropping
+                            // a truncated translation.
+                            continuation.finish(
+                                throwing: TranslationError.generationFailed(String(describing: e))
+                            )
+                            return
+                        case .reasoningChunk, .functionCalls, .audioSample:
+                            // Dropped per seam scope.
                             continue
                         }
                     }
@@ -261,16 +335,16 @@ final nonisolated class LFM2EngineAdapter: LFM2Engine, @unchecked Sendable {
 /// The closure is `@Sendable` so ``LFM2ModelLoader`` can hold it across
 /// actor boundaries. Production wiring uses ``LFM2ClientFactory/make``;
 /// tests inject their own closure that returns a fake engine without
-/// linking `LeapSDK`.
+/// linking `LeapModelDownloader`.
 ///
-/// The optional `progressHandler` receives raw download progress in the
-/// closed interval `[0.0, 1.0]` as reported by the SDK. The handler is
-/// invoked on whatever queue/thread the SDK uses for its callback; the
-/// loader is responsible for hopping back to the main actor before
-/// touching observable state.
+/// **No progress channel (leap-sdk v0.10.9 migration).** The LFM2 model is
+/// bundled in the app as a GGUF resource, so the load path has no download
+/// phase and no progress to report. The pre-migration `progressHandler`
+/// parameter has been removed from this typealias; reintroducing portal
+/// downloads (V3 trigger "LFM2 portal download path") would add it back
+/// along with the ``LFM2LoaderState/downloading(_:)`` plumbing.
 public typealias LFM2EngineFactory = @Sendable (
-    _ quantization: String,
-    _ progressHandler: (@Sendable (Double) -> Void)?
+    _ quantization: String
 ) async throws -> any LFM2Engine
 
 /// Production factory wiring for the LEAP-backed LFM2 engine.
@@ -281,61 +355,93 @@ public typealias LFM2EngineFactory = @Sendable (
 /// ``WhisperClientFactory`` shape.
 ///
 /// **Cache strategy** (Phase 5 Decision 4, revised 2026-05-15 after
-/// xcframework inspection — see PHASE_5_HANDOFF.md commit `842c156`):
-/// ``LeapSDK.Leap/load(model:quantization:options:downloadProgressHandler:)``
-/// is called with a ``LeapSDK.LiquidCacheOptions`` rooted under iOS's
-/// user Caches directory (``LFM2CachePathResolver/resolve()``) with
-/// `maxEntries: 1000`. The originally-locked "in-memory only" framing
-/// was impossible to implement: ``LeapSDK.LiquidCacheOptions`` in LEAP
-/// iOS SDK v0.9.4 is a struct requiring both `path: String` and
-/// `maxEntries: Int` — no `.inMemory` case exists. Privacy stance is
-/// preserved at the architecture level because iOS's Caches directory
-/// is NOT iCloud-backed and is OS-managed (auto-purged under storage
-/// pressure). Performance > privacy on-device per revised D4 reasoning:
-/// capture any prompt-cache speedup the SDK delivers; flipping back to
-/// `cacheOptions: nil` is one-line trivial if Phase 6 diagnostics show
-/// the cache is irrelevant. V3 entry "LFM2 prompt cache effectiveness
-/// benchmark" tracks that revisit.
+/// xcframework inspection — see PHASE_5_HANDOFF.md commit `842c156`;
+/// updated 2026-06-06 for the leap-sdk v0.10.9 migration):
+/// `Leap.shared.load(url:options:generationTimeParameters:autoDetectCompanionFiles:)`
+/// is called against the bundled GGUF URL with a
+/// `LiquidInferenceEngineOptions` whose `LiquidCacheOptions` is rooted
+/// under iOS's user Caches directory (``LFM2CachePathResolver/resolve()``)
+/// via the `LiquidCacheOptions.enabled(path:)` factory. The
+/// originally-locked "in-memory only" framing was impossible in v0.9.4 and
+/// remains impossible in v0.10.9: `LiquidCacheOptions` exposes only
+/// `.enabled(path:)` (no `.inMemory` case). Privacy stance is preserved at
+/// the architecture level because iOS's Caches directory is NOT
+/// iCloud-backed and is OS-managed (auto-purged under storage pressure).
+/// Performance > privacy on-device per revised D4 reasoning: capture any
+/// prompt-cache speedup the SDK delivers; passing `cacheOptions: nil` is
+/// one-line trivial if Phase 6 diagnostics show the cache is irrelevant.
+/// V3 entry "LFM2 prompt cache effectiveness benchmark" tracks that
+/// revisit.
 ///
-/// **What happens if cache path resolution throws.** ``LFM2CachePathResolver/resolve()``
-/// throws ``TranslationError/cachePathResolutionFailed(_:)`` only when
-/// `FileManager.urls(for: .cachesDirectory, in: .userDomainMask)`
-/// returns an empty array, which the sandbox guarantees never happens
-/// on real iOS. If it ever does, the factory's `try` propagates the
-/// error to the loader, which wraps it in
-/// ``TranslationError/modelLoadFailed(_:)`` per its standard error path.
+/// **Sampling params stay per-call.** Temperature / topP / minP /
+/// repetition-penalty are NOT moved to load-time
+/// `generationTimeParameters` — they are applied per call via
+/// `GenerationOptions().with(...)` in
+/// ``LFM2EngineAdapter/translate(userText:direction:)``. The per-call path
+/// is proven by the `arigato-ai-p2` build.
+///
+/// **What happens if cache path resolution throws.**
+/// ``LFM2CachePathResolver/resolve()`` throws
+/// ``TranslationError/cachePathResolutionFailed(_:)`` only when
+/// `FileManager.urls(for: .cachesDirectory, in: .userDomainMask)` returns
+/// an empty array, which the sandbox guarantees never happens on real iOS.
+/// If it ever does, the factory's `try` propagates the error to the
+/// loader, which wraps it in ``TranslationError/modelLoadFailed(_:)`` per
+/// its standard error path.
 public nonisolated enum LFM2ClientFactory {
-    /// The maximum number of prompt-cache entries retained on disk
-    /// before the SDK applies its internal eviction policy (undocumented
-    /// beyond this cap — see swiftinterface for v0.9.4). Tuned downward
-    /// or upward per the V3 entry "LFM2 prompt cache effectiveness
-    /// benchmark" once Phase 6 diagnostics produce real-meeting data.
-    public static let cacheMaxEntries: Int = 1000
-
-    /// The production ``LFM2EngineFactory``. Constructs a real
-    /// ``LeapSDK.ModelRunner`` via the GGUF manifest path
-    /// (``LeapSDK.Leap/load(model:quantization:options:downloadProgressHandler:)``),
-    /// supplies a ``LeapSDK.LiquidCacheOptions`` rooted under iOS's user
-    /// Caches directory (see the type-level "Cache strategy" doc), and
-    /// wraps the resulting runner in ``LFM2EngineAdapter``. The model
-    /// identifier is pinned to `"lfm2-350m-enjp-mt"` per Phase 5
-    /// Decision 1.
-    public static let make: LFM2EngineFactory = { quantization, progressHandler in
+    /// The production ``LFM2EngineFactory``. Resolves the bundled GGUF
+    /// resource, constructs a real `ModelRunner` via
+    /// `Leap.shared.load(url:options:generationTimeParameters:autoDetectCompanionFiles:)`,
+    /// supplies a `LiquidCacheOptions` rooted under iOS's user Caches
+    /// directory via `LiquidCacheOptions.enabled(path:)` (see the
+    /// type-level "Cache strategy" doc), and wraps the resulting runner in
+    /// ``LFM2EngineAdapter``.
+    ///
+    /// **Bundled GGUF, not a portal download.** The model file
+    /// `LFM2-350M-ENJP-MT-Q5_K_M.gguf` is shipped in `Bundle.main`, so the
+    /// URL-based `Leap.shared.load(url:)` entrypoint is used — there is no
+    /// download phase. `autoDetectCompanionFiles: false` because the GGUF
+    /// is self-contained (no sidecar projector/tokenizer files). The
+    /// `quantization` slug is unused on this code path (the GGUF filename
+    /// encodes `Q5_K_M`) and is documented as a no-op until the V3 trigger
+    /// "LFM2 quant flexibility" lands.
+    ///
+    /// The `Leap.shared.load(...)` call shape, the
+    /// `LiquidInferenceEngineOptions(bundlePath:...)` value-init, and the
+    /// `LiquidCacheOptions.enabled(path:)` factory are all proven by the
+    /// `arigato-ai-p2` build against leap-sdk 0.10.9 rev a83ca1e — they are
+    /// NOT re-verified against the `.swiftinterface`, which omits the
+    /// SKIE-generated overloads.
+    public static let make: LFM2EngineFactory = { _ in
         let cachePath = try LFM2CachePathResolver.resolve()
-        let cacheOptions = LiquidCacheOptions(
-            path: cachePath,
-            maxEntries: cacheMaxEntries
+        let cacheOptions = LiquidCacheOptions.enabled(path: cachePath)
+        guard let ggufURL = Bundle.main.url(
+            forResource: "LFM2-350M-ENJP-MT-Q5_K_M",
+            withExtension: "gguf"
+        ) else {
+            throw TranslationError.modelLoadFailed(
+                "Bundled GGUF resource LFM2-350M-ENJP-MT-Q5_K_M.gguf not found in Bundle.main"
+            )
+        }
+        let options = LiquidInferenceEngineOptions(
+            bundlePath: ggufURL.path,
+            cacheOptions: cacheOptions,
+            cpuThreads: nil,
+            contextSize: nil,
+            nGpuLayers: nil,
+            mmProjPath: nil,
+            audioDecoderPath: nil,
+            chatTemplate: nil,
+            audioTokenizerPath: nil,
+            audioDecoderUseGpu: false,
+            useMmap: nil,
+            extras: nil
         )
-        let manifestOptions = LiquidInferenceEngineManifestOptions(
-            cacheOptions: cacheOptions
-        )
-        let runner = try await Leap.load(
-            model: "lfm2-350m-enjp-mt",
-            quantization: quantization,
-            options: manifestOptions,
-            downloadProgressHandler: { progress, _ in
-                progressHandler?(progress)
-            }
+        let runner = try await Leap.shared.load(
+            url: ggufURL,
+            options: options,
+            generationTimeParameters: nil,
+            autoDetectCompanionFiles: false
         )
         return LFM2EngineAdapter(modelRunner: runner)
     }
@@ -348,13 +454,14 @@ public nonisolated enum LFM2ClientFactory {
 ///
 /// The loader is the single point of contact between the rest of the app
 /// and the LEAP-backed translation engine. It is an actor so the
-/// underlying engine — which is not `Sendable` in LEAP iOS SDK v0.9.4 —
-/// can be held safely across async boundaries.
+/// underlying engine — which remains not `Sendable` in leap-sdk v0.10.9
+/// (`ModelRunner` is a SKIE/Kotlin-Native-bridged protocol with no Swift
+/// `Sendable` conformance) — can be held safely across async boundaries.
 ///
 /// Mirrors Phase 4's ``WhisperModelLoader`` shape closely: a single
 /// loading state, a single in-flight task, and a single `factory`
-/// dependency injected for testability. The LFM2 path adds the
-/// download-progress channel and the two-canary warmup step.
+/// dependency injected for testability. The LFM2 path adds the two-canary
+/// warmup step.
 ///
 /// ## Concurrency contract
 ///
@@ -383,13 +490,6 @@ public nonisolated enum LFM2ClientFactory {
 /// ``LFM2ModelLoaderTests/warmup_concurrentCallsCoalesce`` and
 /// ``LFM2ModelLoaderTests/warmup_calledAfterReady_isNoOp``.
 ///
-/// **A4 — Progress on SDK's thread.** The `progressHandler` closure
-/// passed into ``init(factory:progressHandler:)`` is invoked on
-/// whichever queue/thread the LEAP SDK uses for its download callback.
-/// The loader itself does not hop the handler onto the main actor;
-/// consumers that bind to UI state (e.g. ``AppBootstrapper``) are
-/// responsible for the main-actor hop in their own handler.
-///
 /// Access level is `internal` because the associated payload of
 /// ``LFM2LoaderState/loaded(_:)`` is the internal ``LFM2Engine`` protocol;
 /// this actor cannot be `public` without first promoting ``LFM2Engine``
@@ -409,25 +509,17 @@ actor LFM2ModelLoader {
     private var inFlightLoad: Task<any LFM2Engine, Error>?
     private var inFlightWarmup: Task<Void, Error>?
     private let factory: LFM2EngineFactory
-    private let progressHandler: (@Sendable (Double) -> Void)?
 
     /// Designated initializer.
     ///
-    /// - Parameters:
-    ///   - factory: The factory closure that resolves a quantization
-    ///     slug into an ``LFM2Engine``. Defaulted to the production
-    ///     wiring at ``LFM2ClientFactory/make``. Tests inject a custom
-    ///     closure that returns a fake.
-    ///   - progressHandler: Optional download-progress sink invoked with
-    ///     the SDK's reported fraction in `[0.0, 1.0]`. Per contract
-    ///     **A4**, this closure runs on the SDK's callback thread;
-    ///     consumers that touch main-actor state must hop themselves.
+    /// - Parameter factory: The factory closure that resolves a
+    ///   quantization slug into an ``LFM2Engine``. Defaulted to the
+    ///   production wiring at ``LFM2ClientFactory/make``. Tests inject a
+    ///   custom closure that returns a fake.
     init(
-        factory: @escaping LFM2EngineFactory = LFM2ClientFactory.make,
-        progressHandler: (@Sendable (Double) -> Void)? = nil
+        factory: @escaping LFM2EngineFactory = LFM2ClientFactory.make
     ) {
         self.factory = factory
-        self.progressHandler = progressHandler
     }
 
     /// Loads the LFM2 model for the requested quantization slug if no
@@ -455,7 +547,8 @@ actor LFM2ModelLoader {
     ///   other coalescing callers still receive their result.
     ///
     /// - Parameter quantization: The quantization slug to request.
-    ///   Defaulted to `"Q5_K_M"` per Phase 5 Decision 1.
+    ///   Defaulted to `"Q5_K_M"` per Phase 5 Decision 1. Unused on the
+    ///   bundled-GGUF production path (the filename encodes the quant).
     /// - Returns: The loaded ``LFM2Engine`` instance.
     /// - Throws: ``TranslationError/modelLoadFailed(_:)`` wrapping any
     ///   underlying factory error.
@@ -472,10 +565,9 @@ actor LFM2ModelLoader {
         }
 
         let factory = self.factory
-        let progressHandler = self.progressHandler
         let quantizationSlug = quantization
         let task = Task<any LFM2Engine, Error> {
-            try await factory(quantizationSlug, progressHandler)
+            try await factory(quantizationSlug)
         }
         inFlightLoad = task
         state = .loading

@@ -299,22 +299,6 @@ private func waitForLFM2LoaderState(
     return predicate(bootstrapper.lfm2LoaderState)
 }
 
-@MainActor
-private func waitForLFM2Progress(
-    on bootstrapper: AppBootstrapper,
-    matches predicate: (Double?) -> Bool,
-    timeout: Duration = .seconds(1)
-) async -> Bool {
-    let start = ContinuousClock().now
-    while ContinuousClock().now - start < timeout {
-        if predicate(bootstrapper.lfm2DownloadProgress) {
-            return true
-        }
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    return predicate(bootstrapper.lfm2DownloadProgress)
-}
-
 /// Holds a `CheckedContinuation` so a test can release a blocked task
 /// at a chosen moment. Mirrors ``WhisperModelLoaderTests``' gate;
 /// duplicated locally so this suite does not depend on cross-suite
@@ -372,7 +356,7 @@ struct AppBootstrapperLFM2Tests {
         let lfm2Gate = LFM2ContinuationGate()
         let lfm2InvokedAfterWhisperLoaded = OSAllocatedUnfairLock(initialState: false)
 
-        let injected = LFM2ModelLoader(factory: { _, _ in
+        let injected = LFM2ModelLoader(factory: { _ in
             let observed: Bool
             if let boot = box.get() {
                 let whisperState = await boot.loaderState
@@ -408,7 +392,7 @@ struct AppBootstrapperLFM2Tests {
     func startPrewarm_whisperFails_doesNotAttemptLFM2() async {
         let whisperLoader = WhisperModelLoader(factory: { _ in throw StubError() })
         let lfm2InvokedCounter = CallCounter()
-        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in
+        let lfm2Loader = LFM2ModelLoader(factory: { _ in
             lfm2InvokedCounter.increment()
             return FakeModelRunner()
         })
@@ -442,7 +426,7 @@ struct AppBootstrapperLFM2Tests {
         let whisperEngine = FakeWhisperClient()
         let whisperLoader = WhisperModelLoader(factory: { _ in whisperEngine })
 
-        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in
+        let lfm2Loader = LFM2ModelLoader(factory: { _ in
             throw StubError()
         })
 
@@ -468,7 +452,7 @@ struct AppBootstrapperLFM2Tests {
         let lfm2Engine = FakeModelRunner()
         lfm2Engine.warmupBehaviour = { _ in StubError() }
 
-        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in lfm2Engine })
+        let lfm2Loader = LFM2ModelLoader(factory: { _ in lfm2Engine })
 
         let bootstrapper = AppBootstrapper(
             loader: whisperLoader,
@@ -489,7 +473,7 @@ struct AppBootstrapperLFM2Tests {
         let whisperLoader = WhisperModelLoader(factory: { _ in whisperEngine })
 
         let lfm2Engine = FakeModelRunner()
-        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in lfm2Engine })
+        let lfm2Loader = LFM2ModelLoader(factory: { _ in lfm2Engine })
 
         let bootstrapper = AppBootstrapper(
             loader: whisperLoader,
@@ -503,41 +487,16 @@ struct AppBootstrapperLFM2Tests {
         #expect(lfm2Engine.directionsCalled == [.enToJa, .jaToEn])
     }
 
-    /// **V7 — A4 violation test.** Uses the bootstrapper's
-    /// **default-init trampoline path** (`lfm2Loader: nil`) with a
-    /// test-supplied `lfm2Factory` override that fires progress from
-    /// a `Task.detached` (non-main-actor context). Asserts the
-    /// bootstrapper's
-    /// ``AppBootstrapper/lfm2DownloadProgress`` mirror updates to the
-    /// fired value, locking the contract that the trampoline hops to
-    /// the main actor before mutating observable state.
-    ///
-    /// Violation pattern: progress callbacks from the LEAP SDK arrive
-    /// on the SDK's callback thread; the trampoline must hop to the
-    /// main actor first.
-    @Test("V7 LFM2 download progress callback routes through main actor")
-    func downloadProgress_callbackRoutesToMainActor() async {
-        let whisperEngine = FakeWhisperClient()
-        let whisperLoader = WhisperModelLoader(factory: { _ in whisperEngine })
-
-        let bootstrapper = AppBootstrapper(
-            loader: whisperLoader,
-            lfm2Loader: nil,
-            lfm2Factory: { _, handler in
-                // Fire progress from a non-main-actor context to
-                // exercise the trampoline's main-actor hop.
-                await Task.detached {
-                    handler?(0.42)
-                }.value
-                return FakeModelRunner()
-            }
-        )
-
-        bootstrapper.startPrewarm()
-
-        let updated = await waitForLFM2Progress(on: bootstrapper, matches: { $0 == 0.42 })
-        #expect(updated, "Expected lfm2DownloadProgress to update to 0.42 via the trampoline's main-actor hop; got \(String(describing: bootstrapper.lfm2DownloadProgress))")
-    }
+    // V7 (`downloadProgress_callbackRoutesToMainActor`) was deleted in the
+    // leap-sdk v0.10.9 migration. It locked contract **A4** — the LFM2
+    // download-progress SDK callback hops to the main actor before mutating
+    // `lfm2DownloadProgress`. That contract is **retired**, not relocated:
+    // the model now ships bundled in the app (no download phase), so there
+    // is no SDK progress callback, no `lfm2DownloadProgress` property, and
+    // no progress trampoline to test. The bundled-load path the migration
+    // installs is covered by `LFM2ModelLoaderTests.lfm2ClientFactory_resolvesBundledGGUFURL`.
+    // Reintroducing portal downloads (V3 trigger "LFM2 portal download
+    // path") would restore both the channel and an A4-style violation test.
 
     /// **T6.6.** Calling ``AppBootstrapper/startPrewarm(variant:)``
     /// twice must result in exactly one LFM2 factory invocation. The
@@ -550,7 +509,7 @@ struct AppBootstrapperLFM2Tests {
 
         let lfm2Counter = CallCounter()
         let lfm2Engine = FakeModelRunner()
-        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in
+        let lfm2Loader = LFM2ModelLoader(factory: { _ in
             lfm2Counter.increment()
             return lfm2Engine
         })

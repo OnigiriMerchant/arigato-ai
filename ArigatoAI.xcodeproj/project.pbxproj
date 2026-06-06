@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		6654348C6EEF4572AA40AFDB /* LeapSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C289E84C06B545368BD4E7E7 /* LeapSDK */; };
+		6654348C6EEF4572AA40AFDB /* LeapModelDownloader in Frameworks */ = {isa = PBXBuildFile; productRef = C289E84C06B545368BD4E7E7 /* LeapModelDownloader */; };
 		9248F09250F14F2A8C6806EA /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0CD61E73BC21433BAFBE87F8 /* WhisperKit */; };
 /* End PBXBuildFile section */
 
@@ -58,7 +58,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9248F09250F14F2A8C6806EA /* WhisperKit in Frameworks */,
-				6654348C6EEF4572AA40AFDB /* LeapSDK in Frameworks */,
+				6654348C6EEF4572AA40AFDB /* LeapModelDownloader in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -109,6 +109,7 @@
 				F7E6601A2FAB83BA007B6076 /* Sources */,
 				F7E6601B2FAB83BA007B6076 /* Frameworks */,
 				F7E6601C2FAB83BA007B6076 /* Resources */,
+				A1B2C3D4E5F600000000RES1 /* Re-sign nested LeapModelDownloader dylibs */,
 			);
 			buildRules = (
 			);
@@ -120,7 +121,7 @@
 			name = ArigatoAI;
 			packageProductDependencies = (
 				0CD61E73BC21433BAFBE87F8 /* WhisperKit */,
-				C289E84C06B545368BD4E7E7 /* LeapSDK */,
+				C289E84C06B545368BD4E7E7 /* LeapModelDownloader */,
 			);
 			productName = ArigatoAI;
 			productReference = F7E6601E2FAB83BA007B6076 /* ArigatoAI.app */;
@@ -206,7 +207,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
-				105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-ios" */,
+				105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F7E6601F2FAB83BA007B6076 /* Products */;
@@ -243,6 +244,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1B2C3D4E5F600000000RES1 /* Re-sign nested LeapModelDownloader dylibs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Re-sign nested LeapModelDownloader dylibs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "if [ \"${PLATFORM_NAME}\" != \"iphoneos\" ]; then exit 0; fi\nFW=\"${CODESIGNING_FOLDER_PATH}/Frameworks/LeapModelDownloader.framework/Frameworks\"\nshopt -s nullglob; d=(\"$FW\"/*.dylib); [ ${#d[@]} -eq 0 ] && { echo \"error: no nested dylibs\"; exit 1; }\nfor f in \"${d[@]}\"; do codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none \"$f\" || exit 1; done\ncodesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" \"${CODESIGNING_FOLDER_PATH}/Frameworks/LeapModelDownloader.framework\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F7E6601A2FAB83BA007B6076 /* Sources */ = {
@@ -597,12 +620,12 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-ios" */ = {
+		105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Liquid4All/leap-ios";
+			repositoryURL = "https://github.com/Liquid4All/leap-sdk.git";
 			requirement = {
 				kind = exactVersion;
-				version = 0.9.4;
+				version = 0.10.9;
 			};
 		};
 		8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
@@ -622,10 +645,10 @@
 			package = 8EBAE38AA3D14B60A9DB73EB /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
 			productName = WhisperKit;
 		};
-		C289E84C06B545368BD4E7E7 /* LeapSDK */ = {
+		C289E84C06B545368BD4E7E7 /* LeapModelDownloader */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-ios" */;
-			productName = LeapSDK;
+			package = 105D6BA2F17C4359A01B303C /* XCRemoteSwiftPackageReference "leap-sdk" */;
+			productName = LeapModelDownloader;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

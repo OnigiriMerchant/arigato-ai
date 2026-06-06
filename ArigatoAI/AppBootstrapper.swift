@@ -64,12 +64,6 @@ final class AppBootstrapper {
     /// independently.
     private(set) var lfm2LoaderState: LFM2LoaderState = .idle
 
-    /// Most recent LFM2 download-progress fraction in `[0.0, 1.0]`, or
-    /// `nil` if no progress has been reported yet (either the model is
-    /// already cached on disk or download has not begun). UI can render
-    /// a determinate progress indicator only when this is non-nil.
-    private(set) var lfm2DownloadProgress: Double?
-
     /// Construction error from the SwiftData model container, if any.
     /// `nil` means the persistence stack came up cleanly. In production,
     /// the App initializer seeds this through ``init(loader:containerError:)``
@@ -248,16 +242,16 @@ final class AppBootstrapper {
     ///     a fake.
     ///   - lfm2Loader: The LFM2 loader to mirror state from. Defaulted
     ///     to `nil`; when `nil` the initializer constructs a fresh
-    ///     ``LFM2ModelLoader`` whose progress handler is wired through
-    ///     a private trampoline to ``setLFM2Progress(_:)`` on the main
-    ///     actor. Tests inject a custom loader so the factory closure
-    ///     can be controlled.
+    ///     ``LFM2ModelLoader``. Tests inject a custom loader so the
+    ///     factory closure can be controlled. (The pre-migration
+    ///     download-progress trampoline was removed in the leap-sdk
+    ///     v0.10.9 migration — the bundled-GGUF load has no download
+    ///     phase to report.)
     ///   - lfm2Factory: Optional override for the LFM2 engine factory
     ///     used when `lfm2Loader == nil`. Defaults to `nil`, in which
     ///     case production wiring ``LFM2ClientFactory/make`` is used.
-    ///     Tests pass a factory that fires progress synthetically and
-    ///     returns a fake engine, so V7 can exercise the production
-    ///     trampoline path without hitting the LEAP SDK.
+    ///     Tests pass a factory that returns a fake engine without
+    ///     hitting the LEAP SDK.
     ///   - container: The SwiftData ``ModelContainer`` the app owns.
     ///     Defaults to `nil`. ``ArigatoAIApp/init()`` forwards
     ///     ``ArigatoAIApp/sharedModelContainer`` here; tests construct
@@ -341,41 +335,17 @@ final class AppBootstrapper {
             capture: resolvedCapture,
             router: nil
         )
-        // LFM2 loader. Trampoline (if used) is stashed in a local and
-        // wired post-init at the bottom of this initialiser — Swift
-        // forbids `self` method calls (the `install*` helpers) until
-        // every stored property has been assigned, and the Step 15
-        // ``storageStatsProvider`` property is initialised below.
-        let lfm2Trampoline: ProgressTrampoline?
+        // LFM2 loader. The bundled-GGUF load has no download phase, so
+        // there is no progress channel to wire — the pre-migration
+        // progress trampoline was removed in the leap-sdk v0.10.9
+        // migration. Construct the loader directly (optionally with a
+        // test-injected factory).
         if let lfm2Loader {
             self.lfm2Loader = lfm2Loader
-            lfm2Trampoline = nil
+        } else if let lfm2Factory {
+            self.lfm2Loader = LFM2ModelLoader(factory: lfm2Factory)
         } else {
-            // Production wiring. We cannot capture `self` directly in
-            // the progress handler closure here because `self` is not
-            // yet fully initialised at this assignment line — Swift
-            // forbids `self` references before all stored properties
-            // are set.
-            //
-            // The workaround is a "trampoline" indirection: a small
-            // box holds an optional handler that we mutate after init
-            // completes. The closure passed to the loader captures
-            // only the box (no `self`), and the box's stored handler
-            // is rebound to a self-capturing closure by
-            // ``installLFM2ProgressHandler(into:)`` once init returns.
-            let trampoline = ProgressTrampoline()
-            let progressForwarder: @Sendable (Double) -> Void = { progress in
-                trampoline.forward(progress)
-            }
-            if let lfm2Factory {
-                self.lfm2Loader = LFM2ModelLoader(
-                    factory: lfm2Factory,
-                    progressHandler: progressForwarder
-                )
-            } else {
-                self.lfm2Loader = LFM2ModelLoader(progressHandler: progressForwarder)
-            }
-            lfm2Trampoline = trampoline
+            self.lfm2Loader = LFM2ModelLoader()
         }
 
         // ─── Step 15 — Settings storage-stats provider ───
@@ -403,38 +373,18 @@ final class AppBootstrapper {
 
         // All stored properties are now initialised — safe to call
         // `self`-bound install helpers.
-        if let lfm2Trampoline {
-            installLFM2ProgressHandler(into: lfm2Trampoline)
-        }
         if let storageTrampoline {
             installStorageStatsProviderLookup(into: storageTrampoline)
         }
     }
 
-    /// Late-binds the LFM2 progress handler against `self` via the
-    /// supplied trampoline so the SDK's callback hops to the main
-    /// actor before mutating ``lfm2DownloadProgress``. Called once
-    /// from ``init(...)`` after all stored properties are set.
-    ///
-    /// This is a workaround for Swift's stored-property initialisation
-    /// ordering: a `[weak self]` capture inside the closure literal at
-    /// the lfm2Loader assignment line would not compile because
-    /// `self` is not yet fully initialised. The trampoline lets the
-    /// loader's progress handler stay stable while the destination
-    /// `self`-bound closure is installed post-init.
-    private func installLFM2ProgressHandler(into trampoline: ProgressTrampoline) {
-        trampoline.bind { [weak self] progress in
-            guard let self else { return }
-            Task { @MainActor in
-                self.setLFM2Progress(progress)
-            }
-        }
-    }
-
     /// Late-binds the Settings storage-stats provider's `MeetingStore`
-    /// lookup against `self` via the supplied trampoline. Same
-    /// stored-property-initialisation rationale as
-    /// ``installLFM2ProgressHandler(into:)``.
+    /// lookup against `self` via the supplied trampoline. The rationale
+    /// is Swift's stored-property initialisation ordering: a `[weak self]`
+    /// capture inside the closure literal at the provider's assignment
+    /// line would not compile because `self` is not yet fully initialised.
+    /// The trampoline lets the provider's lookup closure stay stable while
+    /// the destination `self`-bound closure is installed post-init.
     ///
     /// The trampoline's bound closure reads ``meetingStore`` on the
     /// main actor (the bootstrapper is `@MainActor`-isolated, and
@@ -672,14 +622,6 @@ final class AppBootstrapper {
         lfm2LoaderState = newState
     }
 
-    /// MainActor-isolated setter for the LFM2 download progress mirror.
-    /// Invoked by the trampoline that wraps the loader's progress
-    /// handler so SDK-thread callbacks hop onto the main actor before
-    /// touching observable state.
-    private func setLFM2Progress(_ progress: Double?) {
-        lfm2DownloadProgress = progress
-    }
-
     #if DEBUG
         /// **DEBUG-only.** Publishes ``meetingStore`` directly, independent
         /// of the LFM2 warmup chain, so the history surface (and the
@@ -842,49 +784,6 @@ final class AppBootstrapper {
     #endif
 }
 
-/// Private trampoline that mediates the LFM2 loader's progress handler.
-///
-/// Purpose: the loader's `progressHandler` parameter wants a `@Sendable
-/// (Double) -> Void` closure at construction time, but
-/// ``AppBootstrapper/init(...)`` cannot capture `self` in such a closure
-/// because `self` is not yet fully initialised at the loader's
-/// assignment line. The trampoline holds a mutable inner handler that
-/// `init` binds post-construction, while the loader sees a stable
-/// closure for the lifetime of the bootstrapper.
-///
-/// Synchronised via `OSAllocatedUnfairLock` per the CLAUDE.md Swift 6
-/// rule that bans `NSLock` from async contexts.
-private final class ProgressTrampoline: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock<(@Sendable (Double) -> Void)?>(initialState: nil)
-
-    /// Forwards a progress fraction to the currently-bound inner
-    /// handler. Called by the loader's progress handler closure on the
-    /// SDK's callback thread; the inner handler is responsible for
-    /// hopping to the main actor.
-    ///
-    /// `nonisolated` because LEAP's `downloadProgressHandler` invokes
-    /// the wrapping `@Sendable` closure from the SDK's internal
-    /// callback thread — which is not main-actor — and Xcode 26.5 /
-    /// Swift 6.3.1 infers MainActor isolation on top-level classes by
-    /// default. Without the explicit `nonisolated`, the call from the
-    /// SDK thread would fail Swift 6 strict concurrency.
-    nonisolated func forward(_ progress: Double) {
-        let handler = lock.withLock { $0 }
-        handler?(progress)
-    }
-
-    /// Replaces the inner handler. Called once from
-    /// ``AppBootstrapper/installLFM2ProgressHandler(into:)``.
-    ///
-    /// `nonisolated` for symmetry with ``forward(_:)``; this method
-    /// is invoked from the MainActor-isolated bootstrapper `init`, but
-    /// declaring it `nonisolated` keeps the trampoline callable from
-    /// any context without forcing a hop.
-    nonisolated func bind(_ handler: @escaping @Sendable (Double) -> Void) {
-        lock.withLock { $0 = handler }
-    }
-}
-
 /// Private trampoline that mediates the Settings storage-stats provider's
 /// ``MeetingStore`` lookup.
 ///
@@ -892,8 +791,8 @@ private final class ProgressTrampoline: @unchecked Sendable {
 /// `@Sendable () -> MeetingStore?` closure at construction time, but the
 /// bootstrapper's `init` cannot capture `self` in such a closure because
 /// `self` is not yet fully initialised at the provider's assignment line.
-/// The trampoline mirrors ``ProgressTrampoline``: it holds a mutable inner
-/// lookup that `init` binds post-construction via
+/// The trampoline holds a mutable inner lookup that `init` binds
+/// post-construction via
 /// ``AppBootstrapper/installStorageStatsProviderLookup(into:)``.
 ///
 /// Synchronised via `OSAllocatedUnfairLock` per the CLAUDE.md Swift 6

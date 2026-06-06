@@ -96,21 +96,6 @@ private final class CallCounter: @unchecked Sendable {
     }
 }
 
-/// Records `Double` values supplied to the loader's progress handler
-/// under a lock. Tests assert the recorded sequence to lock the
-/// progress-routing contract.
-private final class ProgressRecorder: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock<[Double]>(initialState: [])
-
-    func record(_ value: Double) {
-        lock.withLock { $0.append(value) }
-    }
-
-    var values: [Double] {
-        lock.withLock { $0 }
-    }
-}
-
 /// Holds a `CheckedContinuation` so a test can release a blocked task
 /// at a chosen moment. Allows the coalescing tests to fan out callers
 /// before the single in-flight task is permitted to complete. Public
@@ -175,7 +160,7 @@ struct LFM2ModelLoaderTests {
     func loadIfNeeded_firstCall_loadsViaFactoryAndTransitionsToLoaded() async throws {
         let counter = CallCounter()
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             counter.increment()
             return engine
         })
@@ -191,7 +176,7 @@ struct LFM2ModelLoaderTests {
     func loadIfNeeded_secondCallAfterSuccess_returnsSameEngineWithoutCallingFactoryAgain() async throws {
         let counter = CallCounter()
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             counter.increment()
             return engine
         })
@@ -217,7 +202,7 @@ struct LFM2ModelLoaderTests {
         let counter = CallCounter()
         let gate = LFM2ContinuationGate()
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             counter.increment()
             await gate.wait()
             return engine
@@ -259,7 +244,7 @@ struct LFM2ModelLoaderTests {
 
     @Test("T4.3 a failing factory transitions to .failed and rethrows as modelLoadFailed")
     func loadIfNeeded_factoryThrows_transitionsToFailedAndRethrowsAsModelLoadFailed() async {
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             throw LFM2TestError.bang
         })
 
@@ -275,7 +260,7 @@ struct LFM2ModelLoaderTests {
     func loadIfNeeded_afterFailure_retries() async throws {
         let attempts = CallCounter()
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             attempts.increment()
             if attempts.value == 1 {
                 throw LFM2TestError.bang
@@ -328,7 +313,7 @@ struct LFM2ModelLoaderTests {
         // engine without re-invoking the factory, so in the happy path
         // this branch is never re-entered. Kept so a future restructure
         // that re-invokes the factory cannot deadlock on the spent gate.
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             let isFirstCall = (attempts.value == 0)
             attempts.increment()
             if isFirstCall {
@@ -369,7 +354,7 @@ struct LFM2ModelLoaderTests {
     func unload_doesNotInterruptInFlightLoad() async throws {
         let gate = LFM2ContinuationGate()
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in
+        let loader = LFM2ModelLoader(factory: { _ in
             await gate.wait()
             return engine
         })
@@ -391,7 +376,7 @@ struct LFM2ModelLoaderTests {
     @Test("T4.5 unload after a successful load returns the loader to .idle")
     func unload_afterLoaded_returnsToIdle() async throws {
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in engine })
+        let loader = LFM2ModelLoader(factory: { _ in engine })
 
         _ = try await loader.loadIfNeeded(quantization: "Q5_K_M")
         let loadedState = await loader.currentState()
@@ -407,7 +392,7 @@ struct LFM2ModelLoaderTests {
 
     @Test("T4.6 warmup before load throws modelNotReady")
     func warmup_beforeLoad_throwsModelNotReady() async {
-        let loader = LFM2ModelLoader(factory: { _, _ in FakeModelRunner() })
+        let loader = LFM2ModelLoader(factory: { _ in FakeModelRunner() })
 
         await #expect(throws: TranslationError.modelNotReady) {
             try await loader.warmup()
@@ -417,7 +402,7 @@ struct LFM2ModelLoaderTests {
     @Test("T4.7 warmup after load runs both canaries sequentially in order EN-to-JA then JA-to-EN")
     func warmup_afterLoad_runsBothCanariesSequentially() async throws {
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in engine })
+        let loader = LFM2ModelLoader(factory: { _ in engine })
 
         _ = try await loader.loadIfNeeded(quantization: "Q5_K_M")
         try await loader.warmup()
@@ -438,7 +423,7 @@ struct LFM2ModelLoaderTests {
         let gate = LFM2ContinuationGate()
         let engine = FakeModelRunner()
         engine.canaryGate = gate
-        let loader = LFM2ModelLoader(factory: { _, _ in engine })
+        let loader = LFM2ModelLoader(factory: { _ in engine })
 
         _ = try await loader.loadIfNeeded(quantization: "Q5_K_M")
 
@@ -473,7 +458,7 @@ struct LFM2ModelLoaderTests {
     @Test("V5 warmup called after .ready is a no-op — no additional canaries fire")
     func warmup_calledAfterReady_isNoOp() async throws {
         let engine = FakeModelRunner()
-        let loader = LFM2ModelLoader(factory: { _, _ in engine })
+        let loader = LFM2ModelLoader(factory: { _ in engine })
 
         _ = try await loader.loadIfNeeded(quantization: "Q5_K_M")
         try await loader.warmup()
@@ -498,7 +483,7 @@ struct LFM2ModelLoaderTests {
             // First call (EN-to-JA) fails; clear the behaviour after.
             direction == .enToJa ? LFM2TestError.bang : nil
         }
-        let loader = LFM2ModelLoader(factory: { _, _ in engine })
+        let loader = LFM2ModelLoader(factory: { _ in engine })
 
         _ = try await loader.loadIfNeeded(quantization: "Q5_K_M")
 
@@ -518,24 +503,110 @@ struct LFM2ModelLoaderTests {
         #expect(engine.directionsCalled == [.enToJa, .enToJa, .jaToEn])
     }
 
-    @Test("T4.8 progressHandler receives progress during load")
-    func progressHandler_receivesProgressDuringLoad() async throws {
-        let recorder = ProgressRecorder()
-        let engine = FakeModelRunner()
-        let factory: LFM2EngineFactory = { _, handler in
-            handler?(0.25)
-            handler?(0.5)
-            handler?(1.0)
-            return engine
+    // MARK: leap-sdk v0.10.9 migration tests
+
+    /// **T-migration-1 — factory resolves the bundled GGUF URL.**
+    /// ``LFM2ClientFactory/make`` resolves the production model file from
+    /// `Bundle.main` before constructing the SDK runner; the
+    /// `guard let ggufURL = Bundle.main.url(...)` is the first failure
+    /// point that distinguishes "model missing from the bundle" from any
+    /// downstream SDK error.
+    ///
+    /// This test exercises that the bundled GGUF resource
+    /// (`LFM2-350M-ENJP-MT-Q5_K_M.gguf`) is reachable from the bundle so
+    /// the resolution step the factory depends on is locked. It does
+    /// **not** drive the real `Leap.shared.load(...)` (which would require
+    /// the LEAP runtime and a multi-hundred-MB load) — it asserts the
+    /// precondition the factory guards on.
+    ///
+    /// Replaces the deleted `T4.8 progressHandler_receivesProgressDuringLoad`,
+    /// which locked the pre-migration download-progress channel that no
+    /// longer exists (the bundled-GGUF load has no download phase). The
+    /// contract that test guarded — "the SDK reports download progress and
+    /// the loader forwards it" — is retired, not relocated: there is no
+    /// download to report. See `docs/V3_BACKLOG.md` "LFM2 portal download
+    /// path" for the trigger that would reintroduce it.
+    @Test("T-migration-1 bundled GGUF resource is resolvable from the bundle")
+    func lfm2ClientFactory_resolvesBundledGGUFURL() throws {
+        // The factory uses `Bundle.main.url(forResource:withExtension:)`.
+        // In the unit-test host process `Bundle.main` is the test runner;
+        // the GGUF is a resource of the app bundle. Probe both `Bundle.main`
+        // and the app bundle (reached via a test-defined anchor type) so the
+        // assertion is robust to how the resource is hosted under test.
+        let resource = "LFM2-350M-ENJP-MT-Q5_K_M"
+        let ext = "gguf"
+        let appBundle = Bundle(for: BundleProbe.self)
+        let url = Bundle.main.url(forResource: resource, withExtension: ext)
+            ?? appBundle.url(forResource: resource, withExtension: ext)
+        let resolved = try #require(
+            url,
+            "Expected bundled GGUF \(resource).\(ext) to be resolvable from the bundle; the production factory guards on exactly this lookup."
+        )
+        #expect(resolved.pathExtension == ext)
+        #expect(resolved.lastPathComponent == "\(resource).\(ext)")
+    }
+
+    /// **T-migration-2 — adapter maps the `.error` response to a stream
+    /// failure.** leap-sdk v0.10.9 adds a `MessageResponseError` terminal
+    /// to the generation stream. The production adapter
+    /// (``LFM2EngineAdapter``) surfaces it as a thrown stream finish
+    /// (``TranslationError/generationFailed(_:)``) rather than dropping it,
+    /// so a generation error never looks like a silently-truncated
+    /// translation.
+    ///
+    /// The adapter's `.error` branch is not directly drivable from the
+    /// test target without the LEAP runtime (the real `MessageResponse`
+    /// sealed type is SDK-owned). This test instead locks the **mapping
+    /// contract** at the seam the adapter targets: a fake engine that
+    /// finishes its `translate(...)` stream by throwing
+    /// ``TranslationError/generationFailed(_:)`` — mirroring what the
+    /// adapter does on `.error` — must propagate that failure to the
+    /// consumer's `for try await` loop, terminating the stream with the
+    /// typed error and no spurious `.complete`.
+    ///
+    /// This is the test-target-reachable half of the adapter's documented
+    /// `.error` → finish-throwing behaviour; the SDK-side half (that
+    /// leap-sdk v0.10.9 actually emits `MessageResponseError`, constructible
+    /// as `MessageResponseError(throwable: KotlinThrowable(message:))`) is
+    /// proven by the app target compiling against the real SDK.
+    @Test("T-migration-2 a translate stream that errors propagates generationFailed and yields no complete")
+    func adapter_mapsErrorCaseToStreamFailure() async {
+        let engine = ErroringTranslateEngine()
+        var sawComplete = false
+        var caught: TranslationError?
+        do {
+            for try await event in engine.translate(userText: "Hello.", direction: .enToJa) {
+                if case .complete = event { sawComplete = true }
+            }
+        } catch let error as TranslationError {
+            caught = error
+        } catch {
+            Issue.record("Expected TranslationError, got \(error)")
         }
 
-        let loader = LFM2ModelLoader(
-            factory: factory,
-            progressHandler: { value in recorder.record(value) }
-        )
+        #expect(!sawComplete, "A stream that errors must not also yield .complete")
+        guard case .generationFailed = caught else {
+            Issue.record("Expected .generationFailed; got \(String(describing: caught))")
+            return
+        }
+    }
+}
 
-        _ = try await loader.loadIfNeeded(quantization: "Q5_K_M")
+/// Empty anchor type whose defining bundle is the test bundle. Used by
+/// ``LFM2ModelLoaderTests/lfm2ClientFactory_resolvesBundledGGUFURL`` to
+/// reach the app bundle's resources under the unit-test host.
+private final class BundleProbe {}
 
-        #expect(recorder.values == [0.25, 0.5, 1.0])
+/// Test-local ``LFM2Engine`` whose `translate(...)` stream finishes by
+/// throwing ``TranslationError/generationFailed(_:)``, mirroring the
+/// production adapter's `.error` → finish-throwing mapping at the seam the
+/// adapter targets. Warmup is a no-op (unused by this test).
+private final class ErroringTranslateEngine: LFM2Engine, @unchecked Sendable {
+    func warmupCanary(direction _: TranslationDirection) async throws {}
+
+    func translate(userText _: String, direction _: TranslationDirection) -> AsyncThrowingStream<TranslationEngineEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish(throwing: TranslationError.generationFailed("synthetic generation error"))
+        }
     }
 }

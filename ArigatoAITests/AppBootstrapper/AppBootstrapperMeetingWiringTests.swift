@@ -132,7 +132,7 @@ private struct WiringStubError: Error {}
         }
     ) -> AppBootstrapper {
         let whisperLoader = WhisperModelLoader(factory: whisperFactory)
-        let lfm2Loader = LFM2ModelLoader(factory: { _, _ in WiringFailingWarmupLFM2Engine() })
+        let lfm2Loader = LFM2ModelLoader(factory: { _ in WiringFailingWarmupLFM2Engine() })
         return AppBootstrapper(
             loader: whisperLoader,
             lfm2Loader: lfm2Loader,
@@ -199,7 +199,7 @@ private func makeWiringBootstrapper(
     }
 ) -> AppBootstrapper {
     let whisperLoader = WhisperModelLoader(factory: whisperFactory)
-    let lfm2Loader = LFM2ModelLoader(factory: { _, _ in WiringFakeLFM2Engine() })
+    let lfm2Loader = LFM2ModelLoader(factory: { _ in WiringFakeLFM2Engine() })
     return AppBootstrapper(
         loader: whisperLoader,
         lfm2Loader: lfm2Loader,

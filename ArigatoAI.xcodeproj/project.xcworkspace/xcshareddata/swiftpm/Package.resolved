@@ -1,5 +1,5 @@
 {
-  "originHash" : "d839fb13a357e5eb0b2783e4f7d5bfba32c484332697917aa4ba8d8ed4fd6d89",
+  "originHash" : "87b9ccd074e780db8820347eac6c1f4f23c76b5b5ace9eaf7fda9fe27fc36016",
   "pins" : [
     {
       "identity" : "argmax-oss-swift",
@@ -11,12 +11,12 @@
       }
     },
     {
-      "identity" : "leap-ios",
+      "identity" : "leap-sdk",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Liquid4All/leap-ios",
+      "location" : "https://github.com/Liquid4All/leap-sdk.git",
       "state" : {
-        "revision" : "72afe9bf4c2fae086fbced3b05995edaad2c6bf2",
-        "version" : "0.9.4"
+        "revision" : "a83ca1e80f6ec8e40412359a38a3def65a32dd35",
+        "version" : "0.10.9"
       }
     },
     {
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
-        "revision" : "0687f71944021d616d34d922343dcef086855920",
-        "version" : "600.0.1"
+        "revision" : "64889f0c732f210a935a0ad7cda38f77f876262d",
+        "version" : "509.1.1"
       }
     }
   ],
