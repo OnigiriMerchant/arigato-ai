@@ -62,6 +62,12 @@ GoogleService-Info.plist
 Models/*.gguf
 Models/*.bundle
 !ArigatoAI/Resources/Models/*.gguf
+# Exception: the bundled WhisperKit model under ArigatoAI/Resources/WhisperModels/
+# is Git LFS-tracked (large weights; see .gitattributes and CLAUDE.md ## Setup).
+# The `**` re-includes the *.mlmodelc package directories themselves (excluded
+# by `*.mlmodelc` above) so git descends into them — without it the weights
+# inside stay ignored.
+!ArigatoAI/Resources/WhisperModels/**
 
 # --- IDE noise ---
 .vscode/

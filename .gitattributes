@@ -1,1 +1,10 @@
 *.gguf filter=lfs diff=lfs merge=lfs -text
+
+# Bundled WhisperKit model (large-v3-turbo) — large CoreML weights + the
+# 2.4MB merged tokenizer are Git LFS-tracked. Path-scoped so only the Whisper
+# bundle's binaries go to LFS; the small config/metadata JSONs stay regular
+# git for diffability. See CLAUDE.md ## Setup.
+ArigatoAI/Resources/WhisperModels/**/weight.bin filter=lfs diff=lfs merge=lfs -text
+ArigatoAI/Resources/WhisperModels/**/*.mil filter=lfs diff=lfs merge=lfs -text
+ArigatoAI/Resources/WhisperModels/**/coremldata.bin filter=lfs diff=lfs merge=lfs -text
+ArigatoAI/Resources/WhisperModels/**/tokenizer.json filter=lfs diff=lfs merge=lfs -text
