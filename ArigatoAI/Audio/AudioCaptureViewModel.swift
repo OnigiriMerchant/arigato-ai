@@ -112,6 +112,29 @@ public final class AudioCaptureViewModel {
         permissionStatus = await permissionService.currentStatus()
     }
 
+    /// Requests microphone access and publishes the resulting status so the
+    /// `@Observable` view re-renders into the granted (START control) or
+    /// denied (Open Settings) branch. This is the action behind the
+    /// "Allow microphone" affordance on the not-determined surface
+    /// (``MeetingControlsView`` `notDeterminedContent`).
+    ///
+    /// Behaviour: delegates to ``MicrophonePermissionServicing/requestAccess()``,
+    /// which prompts only when the status is ``MicrophonePermissionStatus/notDetermined``
+    /// and otherwise returns the cached status without re-prompting (iOS shows
+    /// the system prompt at most once per install).
+    ///
+    /// **Scheduling assumption (Concurrency design discipline).** This method
+    /// is idempotent: repeated or simultaneous invocations are safe. The view
+    /// model is `@MainActor`, so concurrent calls serialise on the main actor
+    /// and the published ``permissionStatus`` converges to the same final
+    /// value; no second system prompt is raised because `requestAccess()`
+    /// returns the cached state once the user has decided. **Violation test:**
+    /// ``AudioCaptureViewModelTests`` `requestPermission_simultaneousDoubleTap_isConsistent`
+    /// drives two concurrent calls and asserts a consistent published status.
+    public func requestPermission() async {
+        permissionStatus = await permissionService.requestAccess()
+    }
+
     /// Single entry point for the recording button. Branches on the current
     /// state machine: prompt when undetermined, start when granted, stop when
     /// already running.

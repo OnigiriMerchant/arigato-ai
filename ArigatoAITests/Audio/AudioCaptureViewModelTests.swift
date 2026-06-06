@@ -297,6 +297,39 @@ struct AudioCaptureViewModelTests {
         #expect(vm.isRecording == false)
     }
 
+    @Test("requestPermission prompts when undetermined and publishes granted")
+    func requestPermissionPublishesGranted() async {
+        let permissions = FakePermissionService(initial: .notDetermined, grantOnRequest: true)
+        let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
+        await vm.requestPermission()
+        #expect(vm.permissionStatus == .granted)
+        #expect(permissions.requestCallCount == 1)
+    }
+
+    @Test("requestPermission when undetermined and user denies publishes denied")
+    func requestPermissionPublishesDenied() async {
+        let permissions = FakePermissionService(initial: .notDetermined, grantOnRequest: false)
+        let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
+        await vm.requestPermission()
+        #expect(vm.permissionStatus == .denied)
+    }
+
+    /// Concurrency-design-discipline violation test named in
+    /// ``AudioCaptureViewModel/requestPermission()``'s doc-comment: two
+    /// simultaneous requests must converge to a consistent published status.
+    /// The `@MainActor` view model serialises the hops, so the published
+    /// ``AudioCaptureViewModel/permissionStatus`` ends at the resolved value
+    /// and no inconsistent intermediate state escapes.
+    @Test("requestPermission under simultaneous double-tap stays consistent")
+    func requestPermission_simultaneousDoubleTap_isConsistent() async {
+        let permissions = FakePermissionService(initial: .notDetermined, grantOnRequest: true)
+        let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
+        async let first: Void = vm.requestPermission()
+        async let second: Void = vm.requestPermission()
+        _ = await (first, second)
+        #expect(vm.permissionStatus == .granted)
+    }
+
     @Test("toggle when denied is a no-op")
     func toggleWhenDeniedIsNoop() async {
         let permissions = FakePermissionService(initial: .denied)

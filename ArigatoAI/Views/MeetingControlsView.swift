@@ -96,19 +96,30 @@ struct MeetingControlsView: View {
 
     // MARK: - notDetermined
 
-    /// Pre-permission surface: prompt the user to grant microphone access.
-    /// The `task` modifier on the parent fires the optional `onAppear`
-    /// closure which the production wiring binds to the capture VM's
-    /// permission flow.
+    /// Pre-permission surface: a real, tappable affordance that requests
+    /// microphone access. Tapping "Allow microphone" runs ``model``'s
+    /// `onRequestPermission` closure (production wiring →
+    /// ``AudioCaptureViewModel/requestPermission()``), which prompts the user
+    /// and republishes the permission status so this view advances to the
+    /// granted (START control) or denied (Open Settings) branch.
+    ///
+    /// (Previously this was a buttonless `VStack` of two `Text` views — there
+    /// was literally nothing to tap, so a not-determined user could never
+    /// grant access from this screen.)
     private var notDeterminedContent: some View {
         VStack(spacing: 12) {
             Text("Microphone access")
                 .font(.headline)
-            Text("Tap to grant microphone access so Arigato AI can transcribe and translate meeting audio entirely on your device.")
+            Text("Arigato AI needs your microphone to transcribe and translate meeting audio entirely on your device.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+            Button("Allow microphone") {
+                Task { await model.onRequestPermission() }
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("meeting.controls.requestPermission")
         }
     }
 
@@ -365,6 +376,14 @@ final class MeetingControlsViewModel {
     /// `coordinator.captureViewModel.openSettings()`.
     let onOpenSettings: () -> Void
 
+    /// Invoked by the "Allow microphone" button on the not-determined
+    /// permission surface. Production wiring closes over
+    /// `coordinator.captureViewModel.requestPermission()`, which prompts the
+    /// user and republishes the permission status so the view advances to the
+    /// granted/denied branch. Idempotent (see ``AudioCaptureViewModel/requestPermission()``);
+    /// ``disabled()`` supplies a no-op placeholder.
+    let onRequestPermission: @Sendable () async -> Void
+
     /// Optional — fired from the view body's `.task` modifier. The
     /// production wiring routes this to
     /// `coordinator.captureViewModel.onAppear()` so the permission flow
@@ -420,6 +439,7 @@ final class MeetingControlsViewModel {
         onFinalizeStop: @escaping @Sendable () async throws -> Void,
         onNewTranscript: @escaping @Sendable () async throws -> Void,
         onOpenSettings: @escaping () -> Void,
+        onRequestPermission: @escaping @Sendable () async -> Void = {},
         onAppear: (@Sendable () async -> Void)? = nil
     ) {
         self.phase = phase
@@ -434,6 +454,7 @@ final class MeetingControlsViewModel {
         self.onFinalizeStop = onFinalizeStop
         self.onNewTranscript = onNewTranscript
         self.onOpenSettings = onOpenSettings
+        self.onRequestPermission = onRequestPermission
         self.onAppear = onAppear
     }
 
@@ -495,6 +516,7 @@ final class MeetingControlsViewModel {
             onFinalizeStop: { @MainActor in try await coordinator.finalizeStop(at: now()) },
             onNewTranscript: { @MainActor in try await coordinator.newTranscript() },
             onOpenSettings: { coordinator.captureViewModel.openSettings() },
+            onRequestPermission: { @MainActor in await coordinator.captureViewModel.requestPermission() },
             onAppear: { @MainActor in await coordinator.captureViewModel.onAppear() }
         )
     }
