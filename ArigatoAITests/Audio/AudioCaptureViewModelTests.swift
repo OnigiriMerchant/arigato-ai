@@ -312,22 +312,32 @@ struct AudioCaptureViewModelTests {
         let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
         await vm.requestPermission()
         #expect(vm.permissionStatus == .denied)
+        #expect(permissions.requestCallCount == 1)
     }
 
-    /// Concurrency-design-discipline violation test named in
-    /// ``AudioCaptureViewModel/requestPermission()``'s doc-comment: two
-    /// simultaneous requests must converge to a consistent published status.
-    /// The `@MainActor` view model serialises the hops, so the published
-    /// ``AudioCaptureViewModel/permissionStatus`` ends at the resolved value
-    /// and no inconsistent intermediate state escapes.
-    @Test("requestPermission under simultaneous double-tap stays consistent")
-    func requestPermission_simultaneousDoubleTap_isConsistent() async {
+    /// Idempotency check for ``AudioCaptureViewModel/requestPermission()``
+    /// (named in its doc-comment). Two overlapping requests — modelling a
+    /// rapid double-tap on the "Allow microphone" button — must BOTH run and
+    /// converge to a consistent published status.
+    ///
+    /// This is **not** a scheduling-interleaving test and does not claim to be:
+    /// both `requestPermission()` calls are `@MainActor`, so the runtime
+    /// serialises them on the main actor (the first runs to completion before
+    /// the second begins) and no interleaving is possible. What it does verify
+    /// is the idempotency contract: both invocations execute
+    /// (`requestCallCount == 2`) and the published status converges to the
+    /// resolved value regardless — `requestAccess()` returning the cached
+    /// state on the second call is why a double-tap never double-prompts or
+    /// leaves a torn status.
+    @Test("requestPermission overlapping calls both run and converge")
+    func requestPermission_overlappingCalls_bothRunAndConverge() async {
         let permissions = FakePermissionService(initial: .notDetermined, grantOnRequest: true)
         let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
         async let first: Void = vm.requestPermission()
         async let second: Void = vm.requestPermission()
         _ = await (first, second)
         #expect(vm.permissionStatus == .granted)
+        #expect(permissions.requestCallCount == 2)
     }
 
     @Test("toggle when denied is a no-op")

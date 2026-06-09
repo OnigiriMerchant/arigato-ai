@@ -123,14 +123,20 @@ public final class AudioCaptureViewModel {
     /// and otherwise returns the cached status without re-prompting (iOS shows
     /// the system prompt at most once per install).
     ///
-    /// **Scheduling assumption (Concurrency design discipline).** This method
-    /// is idempotent: repeated or simultaneous invocations are safe. The view
-    /// model is `@MainActor`, so concurrent calls serialise on the main actor
-    /// and the published ``permissionStatus`` converges to the same final
-    /// value; no second system prompt is raised because `requestAccess()`
-    /// returns the cached state once the user has decided. **Violation test:**
-    /// ``AudioCaptureViewModelTests`` `requestPermission_simultaneousDoubleTap_isConsistent`
-    /// drives two concurrent calls and asserts a consistent published status.
+    /// **Concurrency.** This is a single `@MainActor` mutation: one `await` on
+    /// `requestAccess()`, then one assignment to ``permissionStatus``. It
+    /// spawns no tasks, creates no streams, and makes no cross-actor
+    /// scheduling assumption beyond main-actor serialisation, which the
+    /// language guarantees — so there is no violable scheduling contract here
+    /// and no dedicated violation test is warranted under the
+    /// concurrency-design-discipline rule. It is idempotent: repeated or
+    /// overlapping invocations are safe because `requestAccess()` returns the
+    /// cached state once the user has decided (iOS prompts at most once), so
+    /// ``permissionStatus`` converges to the same final value regardless of
+    /// call ordering. ``AudioCaptureViewModelTests``
+    /// `requestPermission_overlappingCalls_bothRunAndConverge` documents that
+    /// idempotency (it does **not** claim to force interleaving — two
+    /// main-actor calls cannot).
     public func requestPermission() async {
         permissionStatus = await permissionService.requestAccess()
     }
