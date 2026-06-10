@@ -1766,3 +1766,10 @@ Deferred items from the 2026-06-10 xhigh code review of the mic-fix range (`73a3
 - **How:** pixel-sample a simulator screenshot of the banner in light + dark (the same direct-measurement method that refuted the two false BLOCKs on 2026-05-31) and record the ratios here.
 - **Trigger:** MVP-1 sign-off checklist — alongside the locked recording-accent WCAG check CLAUDE.md already mandates.
 - **Severity:** LOW (semantic system color, expected to pass; recorded so the gate-transcript flag can't evaporate).
+
+### Undo clobbered by an in-flight finalize store-await (pre-existing race, filed 2026-06-10)
+
+- **What:** `MeetingSession.finalizeStop(at:)` awaits the store (`updateTitle`, `endMeeting`) BEFORE flipping `phase = .ended`. An `undoStop()` landing inside that suspension window succeeds (phase back to `.recording`) and is then silently clobbered to `.ended` when the finalize resumes — the user's undo is lost. Pre-existing on the user-driven finalize path; the 2026-06-10 deadline fix routes the clock-driven finalize through the same method, so a lost undo there now also tears down capture (consistent outcome, same race). Flagged by @code-reviewer at that gate; the `finalizeFromDeadline` doc-comment states the gap honestly.
+- **How:** flip the phase (or set a terminal in-progress marker) BEFORE the store awaits so `undoStop()` can no longer interleave; or re-check the phase after the store awaits and abort the flip if it changed. Needs its own violation test (suspendable store fake, undo dispatched mid-await).
+- **Trigger:** first real-usage report of "I tapped restore and it ended anyway," or the next time anyone touches `finalizeStop` for any reason.
+- **Severity:** LOW-MEDIUM (window is two store round-trips wide, ~ms on-device; lost-undo, not data loss — the meeting persists as ended).

@@ -578,8 +578,21 @@ final class MeetingSession {
     /// Invoked by the undo-window timer task when the clock crosses
     /// the deadline. Re-checks the phase to guard against the
     /// undo-vs-deadline race.
+    ///
+    /// When ``autoFinalizeHandler`` is installed (production wiring:
+    /// ``MeetingCoordinator`` installs it at init), the deadline routes
+    /// through the handler so the FULL stop chain runs — phase finalize,
+    /// pipeline stop, audio-capture stop. The session-only fallback (handler
+    /// nil — session-scoped unit tests) finalizes phase-only and does NOT
+    /// release the microphone; that gap shipped as the 2026-06-10 on-device
+    /// zombie: a deadline-expired meeting kept capture running forever, so
+    /// the next START threw `alreadyRunning`.
     private func fireDeadline(at deadline: Date) async {
         guard case .stoppingWithUndoWindow = phase else { return }
+        if let autoFinalizeHandler {
+            await autoFinalizeHandler(deadline)
+            return
+        }
         do {
             try await finalizeStop(at: deadline)
         } catch {
@@ -587,6 +600,33 @@ final class MeetingSession {
             // call's stack frame. Future work can route this through
             // an observable error property if needed.
         }
+    }
+
+    // MARK: - Auto-finalize hook
+
+    /// Handler the undo-deadline timer invokes INSTEAD of the session's own
+    /// ``finalizeStop(at:)``. Production wiring (``MeetingCoordinator``)
+    /// installs ``MeetingCoordinator/finalizeFromDeadline(at:)`` so a
+    /// clock-expired stop releases the pipeline and microphone exactly like
+    /// a user-driven finalize.
+    ///
+    /// ## Scheduling assumption (Concurrency design discipline)
+    /// The handler is installed once, at coordinator init, before any
+    /// meeting can start — there is no install/fire race. The handler runs
+    /// on the main actor and may suspend; the undo-vs-deadline race is NOT
+    /// resolved here but inside the handler's call to ``finalizeStop(at:)``,
+    /// whose phase re-check is the single authority (an undo that lands
+    /// before the handler's finalize makes it throw, and the handler must
+    /// then leave capture running). Violation test:
+    /// `coordinator_undoDeadlineExpiry_runsFullStopChain_releasesCapture` +
+    /// `coordinator_undoBeforeDeadline_timerCancelled_captureKeepsRunning`
+    /// in `MeetingCoordinatorTests`.
+    private var autoFinalizeHandler: (@MainActor (Date) async -> Void)?
+
+    /// Installs the deadline auto-finalize handler. See
+    /// ``autoFinalizeHandler``.
+    func setAutoFinalizeHandler(_ handler: (@MainActor (Date) async -> Void)?) {
+        autoFinalizeHandler = handler
     }
 }
 

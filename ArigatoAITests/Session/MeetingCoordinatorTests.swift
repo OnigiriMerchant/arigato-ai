@@ -324,7 +324,8 @@ private func makeFixture(
     audio: (any AudioCapturing)? = nil,
     captureLog: CaptureCallLog? = nil,
     translator: (any Translating)? = nil,
-    permissionService: (any MicrophonePermissionServicing)? = nil
+    permissionService: (any MicrophonePermissionServicing)? = nil,
+    undoWindow: Duration = .seconds(5)
 ) throws -> CoordinatorFixture {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
     let container = try ModelContainer(
@@ -332,7 +333,7 @@ private func makeFixture(
         configurations: config
     )
     let store = MeetingStore(modelContainer: container)
-    let session = MeetingSession(store: store)
+    let session = MeetingSession(store: store, undoWindow: undoWindow)
 
     let log = captureLog ?? CaptureCallLog()
     let captureConformer: any AudioCapturing = audio ?? FakeAudioCapturing(log: log)
@@ -728,5 +729,77 @@ struct MeetingCoordinatorTests {
 
         #expect(fixture.captureViewModel.permissionStatus == .granted)
         #expect(permissions.requestCallCount == 1)
+    }
+
+    // MARK: - Undo-deadline auto-finalize (2)
+
+    /// Polls `predicate` every 50ms for up to `maxMillis`.
+    private static func eventually(
+        maxMillis: Int = 3000,
+        _ predicate: @MainActor () async -> Bool
+    ) async -> Bool {
+        for _ in 0 ..< (maxMillis / 50) {
+            if await predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return await predicate()
+    }
+
+    /// Violation test named in ``MeetingSession/autoFinalizeHandler`` and
+    /// ``MeetingCoordinator/finalizeFromDeadline(at:)``: when the undo
+    /// window EXPIRES (no user action), the clock-driven finalize must run
+    /// the coordinator's FULL stop chain — the phase ends AND the
+    /// microphone is released. Before 2026-06-10 the deadline path was
+    /// phase-only: on device the mic stayed held forever and the next
+    /// START threw `alreadyRunning`.
+    @Test func coordinator_undoDeadlineExpiry_runsFullStopChain_releasesCapture() async throws {
+        let log = CaptureCallLog()
+        let fixture = try makeFixture(captureLog: log, undoWindow: .milliseconds(80))
+
+        let started = Date()
+        try await fixture.coordinator.startMeeting(at: started)
+        try await fixture.coordinator.requestStop(at: started.addingTimeInterval(1))
+        #expect(!log.calls.contains(.stop),
+                "requestStop must NOT stop capture (undo window keeps recording)")
+
+        // Let the 80ms deadline expire; the auto-finalize chain runs
+        // phase-first, then pipeline + capture teardown.
+        let captureStopped = await Self.eventually {
+            log.calls.contains(.stop)
+        }
+        #expect(captureStopped, "Deadline expiry must release the microphone")
+        if case .ended = fixture.session.phase {} else {
+            Issue.record("Deadline expiry must still end the meeting; phase = \(fixture.session.phase)")
+        }
+    }
+
+    /// Violation test (the race side of the same contract): an undo tapped
+    /// BEFORE the deadline cancels the timer — capture keeps running for
+    /// the restored meeting and the deadline must not fire a teardown
+    /// afterwards.
+    @Test func coordinator_undoBeforeDeadline_timerCancelled_captureKeepsRunning() async throws {
+        let log = CaptureCallLog()
+        let fixture = try makeFixture(captureLog: log, undoWindow: .milliseconds(120))
+
+        let started = Date()
+        try await fixture.coordinator.startMeeting(at: started)
+        try await fixture.coordinator.requestStop(at: started.addingTimeInterval(1))
+        try await fixture.coordinator.undoStop()
+        if case .recording = fixture.session.phase {} else {
+            Issue.record("Undo must restore recording; phase = \(fixture.session.phase)")
+        }
+
+        // Wait well past the (cancelled) deadline: no teardown may fire.
+        try? await Task.sleep(for: .milliseconds(400))
+        #expect(!log.calls.contains(.stop),
+                "A cancelled deadline must never stop capture")
+        if case .recording = fixture.session.phase {} else {
+            Issue.record("Cancelled deadline must not change the phase; phase = \(fixture.session.phase)")
+        }
+
+        // Leave no live meeting behind: full user-driven stop still works.
+        try await fixture.coordinator.requestStop(at: started.addingTimeInterval(2))
+        try await fixture.coordinator.finalizeStop(at: started.addingTimeInterval(3))
+        #expect(log.calls.contains(.stop))
     }
 }

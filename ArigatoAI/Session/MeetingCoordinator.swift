@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// The outer wiring layer that binds ``MeetingSession``, an
 /// ``AudioCapturing`` conformer, and ``MeetingPipeline`` into a single
@@ -135,7 +136,67 @@ final class MeetingCoordinator {
         self.capture = capture
         self.captureViewModel = captureViewModel
         self.pipeline = pipeline
+
+        // Route the undo-deadline auto-finalize through the coordinator's
+        // FULL stop chain. Without this, the session's clock-driven
+        // finalize is phase-only: the meeting ends but the pipeline and
+        // microphone keep running (the 2026-06-10 on-device zombie — mic
+        // held until process death, next START rejected with
+        // `alreadyRunning`). `[weak self]` breaks the cycle: the
+        // coordinator owns the session.
+        session.setAutoFinalizeHandler { [weak self] endedAt in
+            await self?.finalizeFromDeadline(at: endedAt)
+        }
     }
+
+    /// Clock-driven finalize for the expired undo window — the deadline
+    /// counterpart of ``finalizeStop(at:)``, with deliberately INVERTED
+    /// order: phase FIRST, teardown second.
+    ///
+    /// ## Why phase-first (Concurrency design discipline)
+    /// `session.finalizeStop(at:)`'s phase re-check is the authority on the
+    /// undo-vs-deadline race, with one honestly-stated limit. AFTER its
+    /// phase flip succeeds, a late "Tap to restore" throws and cannot
+    /// resurrect the meeting, so the teardown below cannot strand a live
+    /// recording. If the flip THROWS (an undo won during the
+    /// timer-to-handler hop), nothing is torn down — capture keeps running
+    /// for the restored meeting. The KNOWN GAP: `finalizeStop` awaits the
+    /// store BEFORE flipping the phase, so an undo landing inside that
+    /// store-await window succeeds and is then clobbered back to `.ended`
+    /// when the finalize resumes — a PRE-EXISTING race shared with the
+    /// user-driven finalize path (this fix adds capture teardown to that
+    /// already-lost undo, not a new race). Untested; logged as the V3 entry
+    /// "undo clobbered by in-flight finalize store-await" with a concrete
+    /// trigger, per the concurrency-design-discipline rule.
+    /// The UI path (``finalizeStop(at:)``) keeps its pipeline-first order:
+    /// its caller owns the phase timing and drains the pipeline before the
+    /// transition.
+    ///
+    /// Violation tests:
+    /// `coordinator_undoDeadlineExpiry_runsFullStopChain_releasesCapture`,
+    /// `coordinator_undoBeforeDeadline_timerCancelled_captureKeepsRunning`.
+    func finalizeFromDeadline(at endedAt: Date) async {
+        do {
+            try await session.finalizeStop(at: endedAt)
+        } catch {
+            // Undo won the race — the meeting is recording again; capture
+            // and pipeline must stay up. Logged because no UI frame is in
+            // this call's stack to surface it.
+            Self.log.notice("Deadline finalize lost the undo race; capture stays up: \(String(describing: error), privacy: .public)")
+            return
+        }
+        await pipeline.stop()
+        await capture.stop()
+        Self.log.notice("Deadline finalize complete: pipeline + capture released")
+    }
+
+    /// Coordinator-lifecycle logging at persisted levels (survives into
+    /// `log collect` on device). Added 2026-06-10 with the deadline
+    /// auto-finalize fix.
+    private static let log = Logger(
+        subsystem: "com.jose.ArigatoAI",
+        category: "Coordinator"
+    )
 
     // MARK: - Composite lifecycle API
 
