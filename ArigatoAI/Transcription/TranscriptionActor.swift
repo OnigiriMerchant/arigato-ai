@@ -7,6 +7,7 @@
 
 import Darwin.Mach
 import Foundation
+import os
 
 /// Actor that drains an `AsyncStream<AudioFrame>` into a stream of
 /// ``TranscriptionWindow`` values by running 5-second sliding-window
@@ -68,6 +69,15 @@ actor TranscriptionActor {
     /// starts dropping the oldest pending hop on overflow (contract
     /// **C30**).
     static let maxPendingHops: Int = 4
+
+    /// Per-window inference logging at persisted levels (`.notice`/`.error`
+    /// survive into `log collect` on device). Added 2026-06-10: with zero
+    /// app-side logging, a device meeting that produced no transcript was
+    /// indistinguishable from one whose windows never reached Whisper.
+    private static let log = Logger(
+        subsystem: "com.jose.ArigatoAI",
+        category: "Transcription"
+    )
 
     // MARK: - Private types
 
@@ -598,6 +608,7 @@ actor TranscriptionActor {
 
         switch payload {
         case let .success((hop, result)):
+            Self.log.notice("Whisper window done: \(result.segments.count) segment(s), language '\(result.language, privacy: .public)', \(hop.audio.count) samples in")
             let detected: SpokenLanguage? = result.language.isEmpty
                 ? nil
                 : SpokenLanguage(whisperCode: result.language)
@@ -632,6 +643,7 @@ actor TranscriptionActor {
             } else {
                 wrapped = .decodeFailed(error.localizedDescription)
             }
+            Self.log.error("Whisper window failed, finishing transcription stream: \(String(describing: wrapped), privacy: .public)")
             active.continuation.finish(throwing: wrapped)
             for waiter in active.inflightWaiters {
                 waiter.resume()

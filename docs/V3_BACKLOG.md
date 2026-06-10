@@ -1744,3 +1744,10 @@ Deferred items from the 2026-06-10 xhigh code review of the mic-fix range (`73a3
 - **What:** when LFM2 warmup fails under the DEBUG `bypassLFM2StartupErrorForUITesting` flag, the app-level startup-error surface is suppressed but the coordinator is never published — so the controls surface (including the "Allow microphone" button) stays on the `disabled()` no-op placeholder indefinitely. Pre-existing, DEBUG-only, discovered during the 2026-06-10 Phase-0 verification.
 - **Trigger:** when the warmup progress/timeout UI lands (it will make the placeholder state visible and should handle this branch), or if a UI test ever needs the controls live after a simulated warmup failure.
 - **Severity:** LOW (DEBUG-only flag, not reachable in production).
+
+### Pipeline and capture errors reach logs but not the UI
+
+- **What:** the 2026-06-10 device-debug bundle made every silent failure *observable* (error banner for `MeetingControlsViewModel.lastError`; persisted os_log in `AudioCaptureActor`/`MeetingPipeline`/`TranscriptionActor`) — but two error channels still never reach a screen: `MeetingPipeline.drive()` swallows upstream `TranscriptionError`s after logging (by locked design: finalizeStop belongs to the UI lifecycle), and `AudioCaptureViewModel.errorMessage` is only set on the toggle path, which production meetings don't use. A mid-meeting transcription death currently looks like a quiet meeting with an error only in `log collect`.
+- **How:** likely a pipeline-error closure surfaced through `MeetingCoordinator` into the controls VM, joining `lastError` in the new banner.
+- **Trigger:** first real meeting where transcription dies mid-stream and the user reports "it just went quiet" — or the warmup-progress-UI work, which touches the same status-surface area.
+- **Severity:** MEDIUM (failures are now diagnosable via logs, but not yet user-visible mid-meeting).

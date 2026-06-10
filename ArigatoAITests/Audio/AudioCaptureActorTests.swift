@@ -266,22 +266,188 @@ struct AudioCaptureActorTests {
         #expect(await actor.hasActiveDrainTask() == true)
         await actor.stop()
     }
+
+    // MARK: - Reconfiguration contract (violation tests)
+
+    /// Polls `predicate` every 50ms for up to `maxMillis`. Local helper —
+    /// the ViewModel suite's `waitFor` is file-private to that file.
+    private static func eventually(
+        maxMillis: Int = 2000,
+        _ predicate: () async -> Bool
+    ) async -> Bool {
+        for _ in 0 ..< (maxMillis / 50) {
+            if await predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return await predicate()
+    }
+
+    /// Violation test named in ``AudioCaptureActor``'s reconfiguration
+    /// doc-comment: a TRANSIENT rebuild failure (the input reporting an
+    /// unusable format mid-route-change) must recover on the single
+    /// scheduled retry — capture stays running, no teardown happens, and
+    /// the rebuilt channel still delivers frames to the public stream.
+    @Test("reconfiguration: transient rebuild failure recovers on retry")
+    func reconfiguration_transientFailure_recoversOnRetry() async {
+        let actor = AudioCaptureActor()
+        let (frames, _) = await actor.setupForTesting()
+
+        let collector = Task<[UInt64], Never> {
+            var hostTimes: [UInt64] = []
+            for await frame in frames {
+                hostTimes.append(frame.hostTime)
+            }
+            return hostTimes
+        }
+
+        await actor.setForcedInstallFailuresForTesting(1)
+        await actor.triggerReconfigurationForTesting()
+
+        // Attempt 1 fails (forced); the retry fires after ~300ms and
+        // succeeds via the test-mode rebuild branch.
+        let recovered = await Self.eventually {
+            await actor.hasActiveDrainTask()
+        }
+        #expect(recovered, "Retry should have rebuilt the drain channel")
+        #expect(await actor.isRunningForTesting == true)
+        #expect(await actor.fullTeardownCountForTesting == 0)
+
+        // The rebuilt channel is live end-to-end: a frame submitted after
+        // recovery reaches the public stream.
+        await actor.ingestForTesting(Self.frame(hostTime: 42))
+        await actor.awaitFramesDrained()
+        await actor.stop()
+
+        let collected = await collector.value
+        #expect(collected.contains(42))
+    }
+
+    /// Violation test named in ``AudioCaptureActor``'s reconfiguration
+    /// doc-comment: a PERSISTENT rebuild failure (both attempts fail) must
+    /// wind capture down through the single teardown nucleus — exactly one
+    /// clean teardown, `isRunning` false, and both public streams finished
+    /// (the downstream consumer sees end-of-stream, never silence-forever).
+    /// The forbidden zombie shape — `isRunning == false` with the engine
+    /// left running — is exactly the 2026-06-10 on-device bug.
+    @Test("reconfiguration: persistent rebuild failure tears down cleanly and finishes streams")
+    func reconfiguration_persistentFailure_tearsDownCleanly_streamsFinish() async {
+        let actor = AudioCaptureActor()
+        let (frames, _) = await actor.setupForTesting()
+
+        let collector = Task<Int, Never> {
+            var count = 0
+            for await _ in frames {
+                count += 1
+            }
+            return count
+        }
+
+        await actor.setForcedInstallFailuresForTesting(2)
+        await actor.triggerReconfigurationForTesting()
+
+        let toreDown = await Self.eventually {
+            await actor.fullTeardownCountForTesting == 1
+        }
+        #expect(toreDown, "Second failed attempt must tear capture down")
+        #expect(await actor.isRunningForTesting == false)
+        #expect(await actor.hasActiveDrainTask() == false)
+
+        // The public stream finished — the collector completes instead of
+        // hanging on a silent, dead stream.
+        _ = await collector.value
+    }
+
+    /// Violation test named in ``AudioCaptureActor``'s reconfiguration
+    /// doc-comment, driving the documented stop-vs-retry race: a `stop()`
+    /// landing INSIDE the retry window must win — one teardown from
+    /// `stop()`, and the pending retry neither fires a second teardown nor
+    /// resurrects capture after its delay elapses.
+    @Test("reconfiguration: stop() during the retry window wins; retry does not resurrect")
+    func reconfiguration_stopDuringRetryWindow_stopWins_retryDoesNotResurrect() async {
+        let actor = AudioCaptureActor()
+        _ = await actor.setupForTesting()
+
+        await actor.setForcedInstallFailuresForTesting(1)
+        await actor.triggerReconfigurationForTesting()
+
+        // Stop while the retry is pending (attempt 1 failed synchronously,
+        // the retry sleeps ~300ms).
+        await actor.stop()
+        #expect(await actor.isRunningForTesting == false)
+        #expect(await actor.fullTeardownCountForTesting == 1)
+
+        // Wait out the retry window: the cancelled/no-op retry must not
+        // tear down again or restart anything.
+        try? await Task.sleep(for: .milliseconds(700))
+        #expect(await actor.fullTeardownCountForTesting == 1)
+        #expect(await actor.isRunningForTesting == false)
+        #expect(await actor.hasActiveDrainTask() == false)
+    }
+
+    /// Violation test named in ``AudioCaptureActor``'s reconfiguration
+    /// doc-comment, driving the documented latest-pass-wins rule: when a
+    /// SECOND reconfiguration supersedes a first pass whose retry is still
+    /// pending, the stale retry must no-op on its generation re-check —
+    /// never tearing down, never double-installing over the newer pass's
+    /// rebuilt channel. Exactly one live channel survives, end-to-end:
+    /// one submitted frame arrives exactly once.
+    @Test("reconfiguration: back-to-back passes — stale retry no-ops, single channel survives")
+    func reconfiguration_backToBackPasses_staleRetryNoOps_singleChannelSurvives() async {
+        let actor = AudioCaptureActor()
+        let (frames, _) = await actor.setupForTesting()
+
+        let collector = Task<[UInt64], Never> {
+            var hostTimes: [UInt64] = []
+            for await frame in frames {
+                hostTimes.append(frame.hostTime)
+            }
+            return hostTimes
+        }
+
+        // Pass 1 fails its first attempt and schedules a retry…
+        await actor.setForcedInstallFailuresForTesting(1)
+        await actor.triggerReconfigurationForTesting()
+
+        // …and pass 2 lands inside the retry window, rebuilding cleanly
+        // (forced failures are exhausted, so its first attempt succeeds).
+        await actor.triggerReconfigurationForTesting()
+        #expect(await actor.hasActiveDrainTask() == true)
+
+        // Wait out the stale retry's window: it must neither tear down nor
+        // disturb pass 2's channel.
+        try? await Task.sleep(for: .milliseconds(700))
+        #expect(await actor.fullTeardownCountForTesting == 0)
+        #expect(await actor.isRunningForTesting == true)
+        #expect(await actor.hasActiveDrainTask() == true)
+
+        // Exactly one live channel: one frame in, exactly one frame out.
+        await actor.ingestForTesting(Self.frame(hostTime: 7))
+        await actor.awaitFramesDrained()
+        await actor.stop()
+
+        let collected = await collector.value
+        #expect(collected == [7])
+    }
+
+    // NOT unit-tested: `start()`'s partial-failure rollback. Driving real
+    // `start()` requires `configureSession()` to activate a live
+    // `AVAudioSession` with the `.record` category, which ABORTS the
+    // headless test process (verified 2026-06-10: SIGABRT took the whole
+    // parallel suite down). The rollback body is the same idempotent
+    // teardown primitives (`removeTap` on untapped bus, `engine.stop()`
+    // when stopped, best-effort deactivate, idempotent `teardownDrain()`)
+    // that `stop()`/`teardownCapture()` tests cover. Integration trigger:
+    // same simulated-audio-route harness as the coverage note below.
 }
 
-// MARK: - V3 backlog note
+// MARK: - Coverage note (updated 2026-06-10)
 
 //
-// The route-change reconfiguration teardown path
-// (`handleEngineReconfiguration()` -> `teardownDrain()`) is not covered by a
-// unit test because it requires a live `AVAudioEngine` to post
-// `.AVAudioEngineConfigurationChange`; the DEBUG seam cannot synthesize that
-// notification without booting real audio hardware/session state. The path
-// reuses the same `teardownDrain()` primitive the covered `stop()` path
-// exercises, so the lifecycle primitive itself is tested.
-//
-// V3 trigger: add an integration test that boots a real `AudioCaptureActor`,
-// `start()`s it on the simulator's virtual input, forces a route change (or
-// posts `.AVAudioEngineConfigurationChange` against the engine), and asserts
-// exactly one drain task survives the reinstall. Trigger this when a route-
-// change reorder/double-drain regression is suspected or when CI gains a
-// simulated-audio-route harness.
+// The reconfiguration CONTRACT (retry-then-teardown, stop-wins-race, no
+// zombie state) is now unit-covered by the three violation tests above via
+// the `triggerReconfigurationForTesting()` seam — this closes the V3 note
+// that previously lived here. What remains integration-only: driving the
+// handler from a REAL `.AVAudioEngineConfigurationChange` notification with
+// live audio hardware (simulator cannot synthesize a route change). Trigger
+// for that integration test: a route-change regression suspected on device,
+// or CI gaining a simulated-audio-route harness.

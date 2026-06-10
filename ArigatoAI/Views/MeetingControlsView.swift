@@ -71,7 +71,8 @@ struct MeetingControlsView: View {
     let model: MeetingControlsViewModel
 
     var body: some View {
-        Group {
+        VStack(spacing: 12) {
+            errorBanner
             switch model.permissionStatus() {
             case .notDetermined:
                 notDeterminedContent
@@ -83,6 +84,11 @@ struct MeetingControlsView: View {
                 restrictedContent
             }
         }
+        // Animate the error banner's insertion/removal: it appears at the
+        // exact moment the user reaches to retry, so the cluster below must
+        // glide rather than jump under the finger (same mis-tap class as
+        // the undo-toast overlap fixed 2026-06-10).
+        .animation(.default, value: model.lastError == nil)
         .task(id: model.onAppear != nil) {
             // Keyed on whether an `onAppear` closure is wired. ContentView
             // swaps the `.disabled()` placeholder (`onAppear == nil`) for
@@ -98,6 +104,36 @@ struct MeetingControlsView: View {
                 await onAppear()
             }
         }
+    }
+
+    // MARK: - Error banner
+
+    /// Visible surface for ``MeetingControlsViewModel/lastError``. Before
+    /// 2026-06-10 NO screen rendered action errors — a failed START (e.g.
+    /// the device zombie-capture bug throwing `alreadyRunning`) looked like
+    /// a dead button. Color-only differentiation per the design language;
+    /// clears automatically because every tap method nils `lastError` on
+    /// its next success.
+    @ViewBuilder
+    private var errorBanner: some View {
+        if let error = model.lastError {
+            Label(errorText(for: error), systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(.red)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("meeting.controls.errorBanner")
+        }
+    }
+
+    /// Prefers the typed `errorDescription` (all project error enums
+    /// conform to `LocalizedError`) over the generic NSError fallback.
+    private func errorText(for error: any Error) -> String {
+        if let localized = (error as? any LocalizedError)?.errorDescription {
+            return localized
+        }
+        return error.localizedDescription
     }
 
     // MARK: - notDetermined
@@ -163,16 +199,19 @@ struct MeetingControlsView: View {
 
     // MARK: - granted
 
-    /// Active surface: status badge on top, primary + secondary buttons
-    /// below, undo toast overlayed in the
-    /// ``MeetingSessionPhase/stoppingWithUndoWindow`` phase.
+    /// Active surface: undo toast (stopping phase only) on top, then the
+    /// status badge, then the primary + secondary buttons.
+    ///
+    /// The toast is a STACKED sibling, not an `.overlay` — the previous
+    /// overlay-at-bottom rendered the toast on top of the badge and button
+    /// cluster (visually overlapping them and intercepting taps aimed at
+    /// NEW TRANSCRIPT; observed on device 2026-06-10). Stacking lets every
+    /// surface own its own hit-test area.
     private var grantedContent: some View {
         VStack(spacing: 16) {
+            undoToast
             badge
             buttonCluster
-        }
-        .overlay(alignment: .bottom) {
-            undoOverlay
         }
     }
 
@@ -252,18 +291,18 @@ struct MeetingControlsView: View {
         }
     }
 
-    /// Undo toast overlay shown only in
-    /// ``MeetingSessionPhase/stoppingWithUndoWindow``. Parent owns
-    /// dismissal: when ``MeetingSession`` exits the stopping phase (undo
-    /// or finalize) the SwiftUI body re-renders without the overlay.
+    /// Undo toast shown only in
+    /// ``MeetingSessionPhase/stoppingWithUndoWindow``, stacked above the
+    /// badge in ``grantedContent``. Parent owns dismissal: when
+    /// ``MeetingSession`` exits the stopping phase (undo or finalize) the
+    /// SwiftUI body re-renders without the toast.
     @ViewBuilder
-    private var undoOverlay: some View {
+    private var undoToast: some View {
         if case let .stoppingWithUndoWindow(_, _, deadline) = model.phase() {
             UndoStopToastView(deadline: deadline) {
                 Task { await model.tapUndo() }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 12)
         }
     }
 

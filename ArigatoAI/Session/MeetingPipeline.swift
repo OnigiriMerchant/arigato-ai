@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// The realtime pipeline coordinator that bridges
 /// ``LanguageRouter`` → ``Translating`` → ``MeetingSession``.
@@ -218,6 +219,7 @@ final class MeetingPipeline {
                 let segmentDirection = TranslationDirection.from(source: segment.language)
                 if activeDirection == nil {
                     // First segment: establish direction.
+                    Self.log.notice("Pipeline first segment arrived (direction: \(String(describing: segmentDirection), privacy: .public))")
                     let (newStream, newCont) = AsyncStream<TranscriptSegment>.makeStream()
                     activeDirection = segmentDirection
                     activeContinuation = newCont
@@ -248,17 +250,31 @@ final class MeetingPipeline {
                 }
             }
             // Upstream finished normally.
+            Self.log.notice("Pipeline upstream finished normally")
             activeContinuation?.finish()
         } catch is CancellationError {
             // Pipeline task cancelled (likely from stop() or a second start()).
+            Self.log.notice("Pipeline cancelled")
             activeContinuation?.finish()
         } catch {
             // Upstream error — typically TranscriptionError. Per the
             // type-level "Upstream-error propagation is asymmetric"
             // scheduling assumption, we clear state and exit
             // silently — finalizeStop is owned by the UI lifecycle,
-            // not by the pipeline.
+            // not by the pipeline. The error is NOT surfaced to the UI
+            // (V3 "pipeline error surfacing"); this log line is the only
+            // place it becomes observable, so it stays at `.error`.
+            Self.log.error("Pipeline upstream threw: \(String(describing: error), privacy: .public)")
             activeContinuation?.finish()
         }
     }
+
+    /// Pipeline-lifecycle logging at persisted levels (`.notice`/`.error`
+    /// survive into `log collect` on device). Added 2026-06-10: zero
+    /// transcription on device was indistinguishable from a healthy-but-
+    /// silent meeting because nothing in the segment path logged.
+    private static let log = Logger(
+        subsystem: "com.jose.ArigatoAI",
+        category: "Pipeline"
+    )
 }

@@ -7,6 +7,7 @@
 
 @preconcurrency import AVFAudio
 import Foundation
+import os
 
 /// Microphone capture pipeline running off the main actor.
 ///
@@ -126,6 +127,32 @@ public actor AudioCaptureActor {
     private var levelEmitter: LevelEmitter
     private var routeChangeObserver: NSObjectProtocol?
 
+    /// Pending one-shot retry for a failed reconfiguration rebuild. Non-nil
+    /// only between a failed rebuild attempt and its retry firing; cancelled
+    /// by ``stop()`` and by a newer reconfiguration notification (latest
+    /// reconfiguration wins). See ``handleEngineReconfiguration()`` for the
+    /// scheduling contract.
+    private var reconfigurationRetryTask: Task<Void, Never>?
+
+    /// Monotonic stamp identifying the CURRENT reconfiguration pass. Each
+    /// ``handleEngineReconfiguration()`` entry bumps it; a scheduled retry
+    /// captures the stamp and no-ops if a newer pass superseded it. This
+    /// closes the stale-retry race: `cancel()` alone cannot stop a retry
+    /// that already passed its cancellation check and is suspended on the
+    /// actor hop — such a retry would double-install a tap over the newer
+    /// pass's rebuild and orphan its drain task.
+    private var reconfigurationGeneration = 0
+
+    /// Capture-lifecycle logging at persisted levels (`.notice`/`.error`
+    /// survive into `log collect` on device; `.info`/`.debug` are
+    /// memory-only). Added 2026-06-10 after the on-device zombie-capture
+    /// bug shipped invisibly — capture state transitions must be
+    /// reconstructable from a device log archive.
+    private static let log = Logger(
+        subsystem: "com.jose.ArigatoAI",
+        category: "AudioCapture"
+    )
+
     /// Creates a new actor. The engine is constructed but not started.
     public init() {
         engine = AVAudioEngine()
@@ -149,22 +176,36 @@ public actor AudioCaptureActor {
 
     /// Starts the capture pipeline. Idempotency is rejected with
     /// ``AudioCaptureError/alreadyRunning`` to surface caller bugs.
+    ///
+    /// A failure at ANY setup step rolls back the partial setup (tap
+    /// removed, engine stopped, session deactivated) before rethrowing, so
+    /// a failed start never leaves the microphone held or the session
+    /// active behind a `false` ``isRunning``.
     public func start() throws {
         guard !isRunning else {
+            Self.log.error("start() rejected: capture already running")
             throw AudioCaptureError.alreadyRunning
         }
 
-        try configureSession()
-        try installTapAndConverter()
-
         do {
+            try configureSession()
+            try installTapAndConverter()
             try engine.start()
         } catch {
+            Self.log.error("Capture start failed: \(String(describing: error), privacy: .public)")
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            deactivateSession()
+            teardownDrain()
+            if let captureError = error as? AudioCaptureError {
+                throw captureError
+            }
             throw AudioCaptureError.engineStartFailed(error.localizedDescription)
         }
 
         registerRouteChangeObserver()
         isRunning = true
+        Self.log.notice("Capture started")
     }
 
     /// Stops the pipeline, deactivates the audio session, and finishes both
@@ -173,7 +214,24 @@ public actor AudioCaptureActor {
     public func stop() {
         guard isRunning else { return }
 
+        Self.log.notice("Capture stopping")
+        reconfigurationRetryTask?.cancel()
+        reconfigurationRetryTask = nil
         unregisterRouteChangeObserver()
+        teardownCapture()
+    }
+
+    /// Single teardown nucleus shared by ``stop()`` and the reconfiguration
+    /// failure path: stops the engine, releases the microphone (session
+    /// deactivation), finishes both public streams, and restores the
+    /// "``isRunning`` mirrors the engine" invariant.
+    ///
+    /// This must remain the ONLY way capture winds down. A path that flips
+    /// ``isRunning`` to `false` without stopping the engine recreates the
+    /// 2026-06-10 on-device zombie-capture bug: the microphone stays held
+    /// (orange indicator forever), ``stop()`` early-returns on its guard,
+    /// and the next ``start()`` walks into corrupted engine state.
+    private func teardownCapture() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         deactivateSession()
@@ -194,6 +252,11 @@ public actor AudioCaptureActor {
         sourceFormat = nil
         levelEmitter = LevelEmitter(targetHz: 12.0)
         isRunning = false
+        Self.log.notice("Capture torn down (engine stopped, session released)")
+
+        #if DEBUG
+            fullTeardownCountForTesting += 1
+        #endif
     }
 
     /// Cancels the single drain consumer and finishes the internal tap→actor
@@ -251,6 +314,20 @@ public actor AudioCaptureActor {
     // MARK: - Tap and converter
 
     private func installTapAndConverter() throws {
+        #if DEBUG
+            if forcedInstallFailuresForTesting > 0 {
+                forcedInstallFailuresForTesting -= 1
+                throw AudioCaptureError.converterCreationFailed
+            }
+            if bypassResampleForTesting {
+                // Test mode (``setupForTesting()``): there is no live engine
+                // to tap — rebuild only the internal channel + drain so the
+                // reconfiguration tests exercise the real rebuild flow.
+                installDrainChannel()
+                return
+            }
+        #endif
+
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
@@ -276,21 +353,7 @@ public actor AudioCaptureActor {
         // rather than being dropped — backed by memory, not by silently losing
         // capture data. A stalled consumer therefore grows memory; it does not
         // drop or reorder frames.
-        let (tapStream, tapContinuation) = AsyncStream<TapPayload>.makeStream(
-            bufferingPolicy: .unbounded
-        )
-        tapFrameContinuation = tapContinuation
-
-        // Single ordered consumer. One `for await` loop drains the channel and
-        // routes every payload through ``ingest(payload:)`` on the actor, so
-        // resample / level emission / frame yield all stay serialized in
-        // capture order. Exactly one drain task exists per installed tap;
-        // ``teardownDrain()`` cancels it before any reinstall.
-        drainTask = Task { [weak self] in
-            for await payload in tapStream {
-                await self?.ingest(payload: payload)
-            }
-        }
+        let tapContinuation = installDrainChannel()
 
         // The tap closure runs on a CoreAudio render thread. It must NOT touch
         // actor-isolated state and must NOT spawn a Task. It copies the
@@ -307,6 +370,34 @@ public actor AudioCaptureActor {
             let payload = TapPayload(samples: samples, hostTime: time.hostTime)
             tapContinuation.yield(payload)
         }
+    }
+
+    /// Builds the internal tap→actor channel and its single drain consumer,
+    /// returning the continuation the tap closure yields into.
+    ///
+    /// Single ordered consumer: one `for await` loop drains the channel and
+    /// routes every payload through ``ingest(payload:)`` on the actor, so
+    /// resample / level emission / frame yield all stay serialized in
+    /// capture order. Exactly one drain task exists per installed tap;
+    /// ``teardownDrain()`` cancels it before any reinstall.
+    @discardableResult
+    private func installDrainChannel() -> AsyncStream<TapPayload>.Continuation {
+        // Self-defending: every designed caller tears down first, but if a
+        // future path (or a stale-retry bug) reaches here with a live
+        // channel, finish + cancel it rather than orphaning a drain task
+        // and an abandoned continuation. Idempotent when already torn down.
+        teardownDrain()
+
+        let (tapStream, tapContinuation) = AsyncStream<TapPayload>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        tapFrameContinuation = tapContinuation
+        drainTask = Task { [weak self] in
+            for await payload in tapStream {
+                await self?.ingest(payload: payload)
+            }
+        }
+        return tapContinuation
     }
 
     /// Copies the first channel of `buffer` into a flat `[Float]` on the
@@ -453,9 +544,47 @@ public actor AudioCaptureActor {
         routeChangeObserver = nil
     }
 
+    /// Rebuilds the tap + converter when the engine's I/O configuration
+    /// changes (route change — headphones, Bluetooth, or the route settling
+    /// moments after ``start()`` on a physical device; the simulator never
+    /// fires this, which is how the old failure branch shipped untested).
+    ///
+    /// ## Scheduling assumptions (Concurrency design discipline)
+    ///
+    /// - The `AVAudioEngineConfigurationChange` notification arrives on an
+    ///   arbitrary queue and hops onto this actor via an unstructured `Task`,
+    ///   so a reconfiguration can interleave with ``stop()`` or a newer
+    ///   reconfiguration. Latest event wins: each entry cancels any pending
+    ///   retry, and the retry re-checks ``isRunning`` after its delay so a
+    ///   ``stop()`` that lands inside the retry window wins.
+    /// - Mid-transition, the input node can transiently report an unusable
+    ///   format (sample rate 0) or reject converter creation. The rebuild is
+    ///   therefore retried ONCE after ``reconfigurationRetryDelay``. If the
+    ///   retry also fails (or the engine cannot restart), capture winds down
+    ///   through ``teardownCapture()`` — engine stopped, microphone
+    ///   released, streams finished — and is NEVER left as a zombie (engine
+    ///   running while ``isRunning`` is `false`).
+    ///
+    /// Violated-assumption behaviour: a `stop()` racing the retry window
+    /// tears down first and the retry no-ops on its ``isRunning`` re-check;
+    /// back-to-back reconfigurations cancel the older retry. The zombie
+    /// shape this contract forbids is exactly the 2026-06-10 on-device bug:
+    /// the old failure branch flipped ``isRunning`` without stopping the
+    /// engine, so the mic stayed held, `stop()` early-returned, and the
+    /// next `start()` failed invisibly.
+    ///
+    /// Violation tests (suite `AudioCaptureActor`):
+    /// `reconfiguration_transientFailure_recoversOnRetry`,
+    /// `reconfiguration_persistentFailure_tearsDownCleanly_streamsFinish`,
+    /// `reconfiguration_stopDuringRetryWindow_stopWins_retryDoesNotResurrect`,
+    /// `reconfiguration_backToBackPasses_staleRetryNoOps_singleChannelSurvives`.
     private func handleEngineReconfiguration() {
+        reconfigurationGeneration += 1
+        reconfigurationRetryTask?.cancel()
+        reconfigurationRetryTask = nil
         guard isRunning else { return }
 
+        Self.log.notice("Engine reconfiguration: rebuilding tap + converter")
         engine.inputNode.removeTap(onBus: 0)
 
         // Tear down the prior drain consumer and internal channel BEFORE
@@ -467,26 +596,72 @@ public actor AudioCaptureActor {
         // path.
         teardownDrain()
 
+        rebuildAfterReconfiguration(attempt: 1)
+    }
+
+    /// Delay before the single reconfiguration-rebuild retry: long enough
+    /// for a route transition to settle, short enough to lose only a
+    /// fraction of a second of audio.
+    private static let reconfigurationRetryDelay: Duration = .milliseconds(300)
+
+    /// One rebuild attempt. `attempt == 1` schedules a retry on failure;
+    /// `attempt == 2` (the retry) winds capture down on failure. See
+    /// ``handleEngineReconfiguration()`` for the full contract.
+    private func rebuildAfterReconfiguration(attempt: Int) {
         do {
             try installTapAndConverter()
         } catch {
-            // If we cannot rebuild, finish the streams so the consumer sees
-            // the failure rather than receiving silence forever.
-            frameContinuation?.finish()
-            levelContinuation?.finish()
-            isRunning = false
+            if attempt == 1 {
+                Self.log.error("Reconfiguration rebuild failed (attempt 1), retrying in 300ms: \(String(describing: error), privacy: .public)")
+                let generation = reconfigurationGeneration
+                reconfigurationRetryTask = Task { [weak self] in
+                    try? await Task.sleep(for: Self.reconfigurationRetryDelay)
+                    guard !Task.isCancelled else { return }
+                    await self?.retryReconfigurationRebuild(generation: generation)
+                }
+            } else {
+                Self.log.error("Reconfiguration rebuild failed after retry — tearing down capture: \(String(describing: error), privacy: .public)")
+                unregisterRouteChangeObserver()
+                teardownCapture()
+            }
             return
         }
+
+        #if DEBUG
+            if bypassResampleForTesting {
+                // Test mode: there is no live engine to restart — the rebuild
+                // ends at the reinstalled drain channel.
+                return
+            }
+        #endif
 
         if !engine.isRunning {
             do {
                 try engine.start()
             } catch {
-                frameContinuation?.finish()
-                levelContinuation?.finish()
-                isRunning = false
+                Self.log.error("Engine restart after reconfiguration failed — tearing down capture: \(String(describing: error), privacy: .public)")
+                unregisterRouteChangeObserver()
+                teardownCapture()
+                return
             }
         }
+        Self.log.notice("Engine reconfiguration complete (attempt \(attempt))")
+    }
+
+    /// Retry entry point. Re-checks both staleness gates because the retry
+    /// crossed a suspension (its delay) and an actor hop: ``isRunning``
+    /// because a ``stop()`` may have landed during the delay (stop wins),
+    /// and the generation stamp because a NEWER reconfiguration may have
+    /// superseded this pass after the retry passed its cancellation check
+    /// (a stale rebuild here would double-install a tap over the newer
+    /// pass's work). A stale retry must also not touch
+    /// ``reconfigurationRetryTask`` — the slot may already belong to the
+    /// newer pass.
+    private func retryReconfigurationRebuild(generation: Int) {
+        guard generation == reconfigurationGeneration else { return }
+        reconfigurationRetryTask = nil
+        guard isRunning else { return }
+        rebuildAfterReconfiguration(attempt: 2)
     }
 
     deinit {
@@ -502,8 +677,39 @@ public actor AudioCaptureActor {
         /// `AVAudioConverter` resample and treats the payload's samples as
         /// already at the target rate. Set by ``setupForTesting()``. Lets the
         /// ordering contract be exercised without coupling to process-global
-        /// CoreAudio converter state.
+        /// CoreAudio converter state. ``installTapAndConverter()`` also
+        /// branches on it so reconfiguration tests rebuild only the internal
+        /// channel (no live engine to tap).
         private var bypassResampleForTesting = false
+
+        /// Counts ``teardownCapture()`` executions. Lets the reconfiguration
+        /// violation tests assert exactly-one clean teardown (and that a
+        /// stale retry never resurrects or double-tears-down). Test-only.
+        private(set) var fullTeardownCountForTesting = 0
+
+        /// When > 0, ``installTapAndConverter()`` throws
+        /// ``AudioCaptureError/converterCreationFailed`` and decrements —
+        /// the seam that drives the reconfiguration rebuild into its
+        /// failure branches. Test-only.
+        private var forcedInstallFailuresForTesting = 0
+
+        /// Arms ``forcedInstallFailuresForTesting``. Test-only.
+        func setForcedInstallFailuresForTesting(_ count: Int) {
+            forcedInstallFailuresForTesting = count
+        }
+
+        /// Exposes ``isRunning`` so reconfiguration tests can assert the
+        /// bookkeeping side of the "isRunning mirrors the engine"
+        /// invariant. Test-only.
+        var isRunningForTesting: Bool {
+            isRunning
+        }
+
+        /// Drives the (private) reconfiguration handler, exactly as the
+        /// `AVAudioEngineConfigurationChange` notification would. Test-only.
+        func triggerReconfigurationForTesting() {
+            handleEngineReconfiguration()
+        }
 
         /// Test-only setup that wires the internal tap→actor channel and its
         /// single drain consumer WITHOUT a live `AVAudioEngine`, so the
@@ -527,16 +733,7 @@ public actor AudioCaptureActor {
             let levels = levelStream()
 
             bypassResampleForTesting = true
-
-            let (tapStream, tapContinuation) = AsyncStream<TapPayload>.makeStream(
-                bufferingPolicy: .unbounded
-            )
-            tapFrameContinuation = tapContinuation
-            drainTask = Task { [weak self] in
-                for await payload in tapStream {
-                    await self?.ingest(payload: payload)
-                }
-            }
+            installDrainChannel()
             isRunning = true
             return (frames, levels)
         }
