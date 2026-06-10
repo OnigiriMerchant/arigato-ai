@@ -33,9 +33,23 @@ import SwiftUI
 /// stand-in whose action closures are all empty. Once
 /// ``AppBootstrapper/startPrewarm(variant:)`` finishes warmup and
 /// publishes the coordinator, SwiftUI re-renders against
-/// ``MeetingControlsViewModel/wiring(coordinator:)``. The window is
-/// sub-50ms in production (detached ``MeetingStore`` init + a single
-/// main-actor hop per Amendment 3 / FB13399899).
+/// ``MeetingControlsViewModel/wiring(coordinator:)``.
+///
+/// **The placeholder window is the FULL warmup**, not a render tick: the
+/// coordinator is published only at the end of the Whisper + LFM2
+/// prewarm chain (~40s in the simulator; minutes on a first device
+/// launch while the Neural Engine specializes the Whisper weights).
+/// During that window every control — including the "Allow microphone"
+/// button on the not-determined surface — renders but routes to the
+/// placeholder's no-op closures, and if prewarm fails the coordinator is
+/// never published at all (the app-level startup-error surface takes
+/// over, except under the DEBUG UI-testing bypass flag). The queued
+/// warmup-progress UI is the planned fix for making this window read as
+/// progress rather than dead controls. (An earlier revision of this
+/// comment claimed the window was "sub-50ms" — that figure described
+/// only the detached ``MeetingStore`` init per Amendment 3 /
+/// FB13399899, not the coordinator publication that actually gates the
+/// controls.)
 ///
 /// **History destination.** The toolbar history icon is rendered only
 /// when ``AppBootstrapper/meetingStore`` is non-nil. The detached-init

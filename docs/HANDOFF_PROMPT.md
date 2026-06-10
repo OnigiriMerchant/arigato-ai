@@ -59,9 +59,12 @@ offline-after-first-run, so meetings stay offline). Not a blocker.
 OPEN NON-BLOCKING NITS (from the mic-fix gate, optional, do if touching the files):
   - ui-reviewer: no committed SwiftUI #Preview covers the notDetermined/denied permission
     surface (all previews pin to .granted) — a permanent preview would catch visual regressions.
-  - code-reviewer: a sub-50ms window at launch where the "Allow microphone" button shows under
-    the disabled() placeholder VM and tapping is a no-op; self-corrects on next render. The
-    warmup progress UI work is the natural place to address it.
+  - code-reviewer (CORRECTED 2026-06-10): the "Allow microphone" button shows under the
+    disabled() placeholder VM with no-op closures for the ENTIRE warmup window — the
+    coordinator publishes only at the END of the Whisper+LFM2 prewarm chain (~40s sim,
+    minutes on a first device launch), NOT the "sub-50ms / self-corrects on next render"
+    this nit originally claimed. Still routed to the warmup progress UI work, but treat it
+    as load-bearing UX, not a cosmetic nit.
 
 RULES THAT BITE (from CLAUDE.md):
   - Build/test via XcodeBuildMCP after every Swift edit; default sim is iPhone 17 Pro Max

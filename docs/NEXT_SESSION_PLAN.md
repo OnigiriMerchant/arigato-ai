@@ -76,9 +76,9 @@ You asked about downloading the models after the app installs (since users have 
 
 ## Open risks
 - Warmup *might* be a real device failure, not a slow compile — the device-log check settles it; the timeout makes any true hang visible.
-- The `ENABLE_USER_SCRIPT_SANDBOXING=NO` device-build fix (commit `d208263`) + all offline-Whisper + this mic fix are on **local checkpoints**, reviewed but **not yet through the full three-reviewer gate for the mic/sandboxing commits** — run the gate before the next push.
+- ~~The `ENABLE_USER_SCRIPT_SANDBOXING=NO` device-build fix (commit `d208263`) + all offline-Whisper + this mic fix are on **local checkpoints** ... run the gate before the next push.~~ **Stale (reconciled 2026-06-10):** the mic fix passed the three-reviewer gate on 2026-06-10 and everything through `d971157` is pushed to `origin/main`. See CURRENT_STATE.md for the current state of record.
 - LFS quota: the offline-Whisper push already used ~636 MB of GitHub LFS; staying on the bundle keeps adding to it. Switching to download-on-launch later would let us drop the Whisper LFS assets.
 
-## Tonight's commits (local, not pushed)
-- `411d97d` — mic-button fix (+ tests), simulator-verified.
+## Tonight's commits — ~~local, not pushed~~ all pushed as of 2026-06-10
+- `411d97d` — mic-button fix (+ tests), simulator-verified. _(Gated + pushed 2026-06-10 together with `183116a` and the gate fix `3d41090`.)_
 - _(Earlier today, already pushed: the offline-Whisper bundling chain `82093a4`→`73a37f2`.)_

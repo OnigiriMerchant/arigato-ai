@@ -1715,3 +1715,32 @@ Seven entries surfaced during the 2026-05-25 docs reconciliation pass (verificat
 - **What it won't catch:** real-meeting UX issues (latency feel, flow) — that's real-device validation, a separate gate.
 - **Trigger:** After 1–2 real meetings (so the audit can be informed by any rough edges real usage surfaces), OR whenever the user wants a quality gate before App Store consideration. Best done as its own dedicated session with fresh context.
 - **Severity:** LOW (quality improvement, not a blocker; MVP-1 is feature-complete without it).
+
+## Mic-fix review remediation follow-ups (filed 2026-06-10)
+
+Deferred items from the 2026-06-10 xhigh code review of the mic-fix range (`73a37f2..HEAD`, 15 confirmed findings) and its remediation bundle. The bundle fixed the launch-state refresh, single-flighted `requestPermission()`, added the in-flight button guard + real violation tests, and corrected the false docs; these four were deliberately routed here instead.
+
+### Make `onRequestPermission` a required init parameter
+
+- **What:** `MeetingControlsViewModel.init`'s `onRequestPermission` is the only silently-defaulted action closure (`= {}`), contradicting the init's own "every closure is explicit" doc and removing compiler enforcement — a new construction site can silently omit the permission action (exactly how `disabled()` originally acquired a dead button). Make it required (or explicitly optional like `onAppear`) so every call site decides.
+- **Why deferred:** init-signature ripple across every construction site (wiring, disabled, previews, tests) — a deliberate decision, not a drive-by.
+- **Trigger:** next time the init signature changes for any other reason, fold this in.
+- **Severity:** LOW (the remediation bundle made `disabled()` pass an explicit no-op, so the doc is true today; this is future-proofing).
+
+### Delete or rebase the dead `AudioCaptureView`
+
+- **What:** `ArigatoAI/Audio/AudioCaptureView.swift` is referenced by nothing in the production view hierarchy except its own `#Preview`s, yet carries a near-identical "Allow microphone" button with DIVERGENT semantics (routes through `toggleRecording`, so it auto-starts recording on grant; lacks the accessibility identifier). Two near-identical permission surfaces with different behavior is a trap for preview-driven debugging.
+- **Trigger:** next cleanup pass, or immediately if anyone touches the file for any reason.
+- **Severity:** LOW (dead code; no production path reaches it).
+
+### Onboarding permission-request dedup (probably never)
+
+- **What:** `OnboardingViewModel` has its own prompt-and-publish path (closure-injected `permissionRequester` over its own service instance). The 2026-06-10 review flagged it as a third copy of the pattern; Phase-0 verification found the decoupling is deliberate (documented at `OnboardingViewModel` line ~79) AND onboarding is already re-entry-gated (`didRequestPermission` set before the await, with its own violation test) — so dedup buys no safety and costs coupling.
+- **Trigger:** only if the permission flow grows real logic that must stay consistent across surfaces.
+- **Severity:** VERY LOW (working as designed; logged so the "three copies" observation isn't re-litigated every review).
+
+### DEBUG UI-testing bypass leaves the controls placeholder forever on warmup failure
+
+- **What:** when LFM2 warmup fails under the DEBUG `bypassLFM2StartupErrorForUITesting` flag, the app-level startup-error surface is suppressed but the coordinator is never published — so the controls surface (including the "Allow microphone" button) stays on the `disabled()` no-op placeholder indefinitely. Pre-existing, DEBUG-only, discovered during the 2026-06-10 Phase-0 verification.
+- **Trigger:** when the warmup progress/timeout UI lands (it will make the placeholder state visible and should handle this branch), or if a UI test ever needs the controls live after a simulated warmup failure.
+- **Severity:** LOW (DEBUG-only flag, not reachable in production).
