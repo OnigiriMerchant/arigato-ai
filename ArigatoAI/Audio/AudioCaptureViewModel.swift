@@ -81,6 +81,11 @@ public final class AudioCaptureViewModel {
     private var levelTask: Task<Void, Never>?
     private var drainTask: Task<Void, Never>?
 
+    /// Single-flight slot for the in-flight permission request. Non-nil
+    /// exactly while a ``requestPermission()`` call is awaiting the
+    /// service; see that method's scheduling contract.
+    private var inflightPermissionRequest: Task<MicrophonePermissionStatus, Never>?
+
     /// Creates a new view model.
     ///
     /// - Parameters:
@@ -116,29 +121,49 @@ public final class AudioCaptureViewModel {
     /// `@Observable` view re-renders into the granted (START control) or
     /// denied (Open Settings) branch. This is the action behind the
     /// "Allow microphone" affordance on the not-determined surface
-    /// (``MeetingControlsView`` `notDeterminedContent`).
+    /// (``MeetingControlsView`` `notDeterminedContent`) and the
+    /// `.notDetermined` branch of ``toggleRecording()``.
     ///
     /// Behaviour: delegates to ``MicrophonePermissionServicing/requestAccess()``,
     /// which prompts only when the status is ``MicrophonePermissionStatus/notDetermined``
-    /// and otherwise returns the cached status without re-prompting (iOS shows
-    /// the system prompt at most once per install).
+    /// and otherwise returns the current status without re-prompting. iOS
+    /// shows the system prompt at most once per *determination* — a privacy
+    /// reset returns the status to not-determined and re-arms the prompt.
     ///
-    /// **Concurrency.** This is a single `@MainActor` mutation: one `await` on
-    /// `requestAccess()`, then one assignment to ``permissionStatus``. It
-    /// spawns no tasks, creates no streams, and makes no cross-actor
-    /// scheduling assumption beyond main-actor serialisation, which the
-    /// language guarantees — so there is no violable scheduling contract here
-    /// and no dedicated violation test is warranted under the
-    /// concurrency-design-discipline rule. It is idempotent: repeated or
-    /// overlapping invocations are safe because `requestAccess()` returns the
-    /// cached state once the user has decided (iOS prompts at most once), so
-    /// ``permissionStatus`` converges to the same final value regardless of
-    /// call ordering. ``AudioCaptureViewModelTests``
-    /// `requestPermission_overlappingCalls_bothRunAndConverge` documents that
-    /// idempotency (it does **not** claim to force interleaving — two
-    /// main-actor calls cannot).
+    /// ## Scheduling assumption (Concurrency design discipline)
+    ///
+    /// The `await` on `requestAccess()` is a genuine suspension point — in
+    /// production it stays suspended for as long as the system permission
+    /// dialog is on screen. Main-actor serialisation applies *between*
+    /// suspension points, not across whole calls, so a second invocation
+    /// (double-tap, or the toggle path racing the button) CAN re-enter this
+    /// method while the first is suspended.
+    ///
+    /// Contract: overlapping invocations are single-flighted. The first
+    /// caller registers ``inflightPermissionRequest`` before any suspension
+    /// point; re-entrant callers observe the non-nil slot, await the same
+    /// task's value, and publish the same resolved status — exactly one
+    /// `requestAccess()` (and therefore at most one system prompt) runs per
+    /// overlap window. The slot is cleared only after the first caller
+    /// publishes; registration and clearing both happen in suspension-free
+    /// main-actor regions, so no two callers can both observe a nil slot.
+    /// A caller arriving between task completion and slot clearing awaits
+    /// an already-completed task and publishes the identical value.
+    /// ``AudioCaptureViewModelTests``
+    /// `requestPermission_reentrantCallDuringSystemPrompt_coalescesToOneRequest`
+    /// enforces this contract by suspending the service mid-request and
+    /// driving a second call through the suspension window.
     public func requestPermission() async {
-        permissionStatus = await permissionService.requestAccess()
+        if let inflight = inflightPermissionRequest {
+            permissionStatus = await inflight.value
+            return
+        }
+        let request = Task { [permissionService] in
+            await permissionService.requestAccess()
+        }
+        inflightPermissionRequest = request
+        permissionStatus = await request.value
+        inflightPermissionRequest = nil
     }
 
     /// Single entry point for the recording button. Branches on the current
@@ -154,7 +179,7 @@ public final class AudioCaptureViewModel {
 
         switch permissionStatus {
         case .notDetermined:
-            permissionStatus = await permissionService.requestAccess()
+            await requestPermission()
             if permissionStatus == .granted {
                 await startRecording()
             }

@@ -304,6 +304,76 @@ struct MeetingControlsViewTests {
         #expect(model.inFlightAction == nil)
     }
 
+    /// `tapRequestPermission()` invokes the injected `onRequestPermission`
+    /// closure exactly once and leaves the VM quiescent (no in-flight
+    /// action, `lastError` cleared) — the regression guard for the
+    /// "Allow microphone" button wiring (the original dead-surface bug
+    /// class shipped because nothing exercised this path).
+    @Test func vm_tapRequestPermission_invokesOnRequestPermissionClosure_andClearsLastError() async {
+        let recorder = CallRecorder()
+        let model = MeetingControlsViewModel(
+            phase: { .idle },
+            permissionStatus: { .notDetermined },
+            level: { 0 },
+            now: Date.init,
+            onStart: {},
+            onPause: {},
+            onResume: {},
+            onRequestStop: {},
+            onUndoStop: {},
+            onFinalizeStop: {},
+            onNewTranscript: {},
+            onOpenSettings: {},
+            onRequestPermission: { recorder.record("requestPermission") }
+        )
+
+        await model.tapRequestPermission()
+
+        #expect(recorder.calls == ["requestPermission"])
+        #expect(model.lastError == nil)
+        #expect(model.inFlightAction == nil)
+    }
+
+    /// While `onRequestPermission` is awaited, ``inFlightAction`` reads
+    /// `.requestPermission` — this is what drives the cluster-wide
+    /// `.disabled(model.inFlightAction != nil)` gating on the
+    /// "Allow microphone" button. The closure observes the VM through a
+    /// reference box (the VM does not exist yet when its closures are
+    /// built), and the `defer` restores `nil` afterwards.
+    @Test func vm_tapRequestPermission_setsInFlightActionWhileClosureRuns() async {
+        final class ModelBox: @unchecked Sendable {
+            /// Written once on the main actor before the tap; read on the
+            /// main actor inside the closure.
+            var model: MeetingControlsViewModel?
+        }
+        let box = ModelBox()
+        let sawInFlight = OSAllocatedUnfairLock<Bool>(initialState: false)
+        let model = MeetingControlsViewModel(
+            phase: { .idle },
+            permissionStatus: { .notDetermined },
+            level: { 0 },
+            now: Date.init,
+            onStart: {},
+            onPause: {},
+            onResume: {},
+            onRequestStop: {},
+            onUndoStop: {},
+            onFinalizeStop: {},
+            onNewTranscript: {},
+            onOpenSettings: {},
+            onRequestPermission: { @MainActor in
+                let observed = box.model?.inFlightAction == .requestPermission
+                sawInFlight.withLock { $0 = observed }
+            }
+        )
+        box.model = model
+
+        await model.tapRequestPermission()
+
+        #expect(sawInFlight.withLock { $0 })
+        #expect(model.inFlightAction == nil)
+    }
+
     /// **D7-T-10** — `tapRequestStop()` invokes `onRequestStop` when
     /// called against a `recording` phase. The VM does not gate on
     /// phase — gating lives in ``MeetingCoordinator`` /

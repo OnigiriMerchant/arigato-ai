@@ -11,6 +11,70 @@ import Foundation
 import os
 import Testing
 
+/// Permission-service fake whose `requestAccess()` suspends until the test
+/// releases it — modelling the production suspension window where the
+/// system permission dialog is on screen. This is what lets the
+/// re-entrancy violation tests drive a second `requestPermission()` call
+/// through a *real* suspension point (the synchronous lock-based
+/// `FakePermissionService` resolves inline and can never overlap).
+///
+/// `@MainActor` is spelled out: the test target does not set
+/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` (only the app target does),
+/// so the isolation the app module infers for
+/// `MicrophonePermissionServicing` conformers must be explicit here.
+///
+/// Deadlock-free by construction: every suspension (the test on
+/// ``waitUntilRequestPending()``, a requester on the gate) frees the main
+/// actor, and continuation registration is synchronous inside
+/// `withCheckedContinuation` before suspending. The `released` latch makes
+/// late requesters return immediately, converting any ordering surprise
+/// into a clean call-count assertion failure instead of a hang.
+@MainActor
+final class SuspendingPermissionService: MicrophonePermissionServicing {
+    private(set) var requestCallCount = 0
+    private var current: MicrophonePermissionStatus
+    private var pendingRequests: [CheckedContinuation<Void, Never>] = []
+    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+
+    init(initial: MicrophonePermissionStatus) {
+        current = initial
+    }
+
+    func currentStatus() async -> MicrophonePermissionStatus {
+        current
+    }
+
+    func requestAccess() async -> MicrophonePermissionStatus {
+        requestCallCount += 1
+        if !released {
+            // Signal any test suspended on `waitUntilRequestPending()` …
+            requestWaiters.forEach { $0.resume() }
+            requestWaiters.removeAll()
+            // … then hold the request open until the "dialog" resolves.
+            await withCheckedContinuation { pendingRequests.append($0) }
+        }
+        return current
+    }
+
+    /// Suspends until at least one `requestAccess()` call is held open on
+    /// the gate. Returns immediately if one already is, or if the gate has
+    /// already been released.
+    func waitUntilRequestPending() async {
+        if !pendingRequests.isEmpty || released { return }
+        await withCheckedContinuation { requestWaiters.append($0) }
+    }
+
+    /// Resolves the simulated dialog: publishes `status` and resumes every
+    /// held-open `requestAccess()` caller.
+    func release(returning status: MicrophonePermissionStatus) {
+        current = status
+        released = true
+        pendingRequests.forEach { $0.resume() }
+        pendingRequests.removeAll()
+    }
+}
+
 /// Fake capture that records calls and exposes controllable streams.
 final class FakeCapture: AudioCapturing, @unchecked Sendable {
     private struct State {
@@ -315,29 +379,47 @@ struct AudioCaptureViewModelTests {
         #expect(permissions.requestCallCount == 1)
     }
 
-    /// Idempotency check for ``AudioCaptureViewModel/requestPermission()``
-    /// (named in its doc-comment). Two overlapping requests — modelling a
-    /// rapid double-tap on the "Allow microphone" button — must BOTH run and
-    /// converge to a consistent published status.
-    ///
-    /// This is **not** a scheduling-interleaving test and does not claim to be:
-    /// both `requestPermission()` calls are `@MainActor`, so the runtime
-    /// serialises them on the main actor (the first runs to completion before
-    /// the second begins) and no interleaving is possible. What it does verify
-    /// is the idempotency contract: both invocations execute
-    /// (`requestCallCount == 2`) and the published status converges to the
-    /// resolved value regardless — `requestAccess()` returning the cached
-    /// state on the second call is why a double-tap never double-prompts or
-    /// leaves a torn status.
-    @Test("requestPermission overlapping calls both run and converge")
-    func requestPermission_overlappingCalls_bothRunAndConverge() async {
-        let permissions = FakePermissionService(initial: .notDetermined, grantOnRequest: true)
+    /// Concurrency-design-discipline **violation test** for
+    /// ``AudioCaptureViewModel/requestPermission()`` (named in its
+    /// doc-comment). Drives the scheduling assumption to its breaking
+    /// point: the service suspends mid-request — modelling the system
+    /// permission dialog staying on screen — and a second call re-enters
+    /// through that suspension window. This is real main-actor
+    /// *reentrancy* (serialisation applies between suspension points, not
+    /// across whole calls), not the serialised no-overlap case a
+    /// synchronous fake produces. The single-flight contract requires the
+    /// overlap to coalesce: exactly ONE service request, both calls
+    /// complete, and both publish the released status.
+    @Test("requestPermission re-entrant call during the system prompt coalesces to one request")
+    func requestPermission_reentrantCallDuringSystemPrompt_coalescesToOneRequest() async {
+        let permissions = SuspendingPermissionService(initial: .notDetermined)
+        let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
+        // Spawn BOTH calls before observing the gate: whichever runs first
+        // registers the single-flight slot; the other re-enters during the
+        // suspension and must coalesce onto the same in-flight request.
+        async let first: Void = vm.requestPermission()
+        async let second: Void = vm.requestPermission()
+        await permissions.waitUntilRequestPending()
+        permissions.release(returning: .granted)
+        _ = await (first, second)
+        #expect(vm.permissionStatus == .granted)
+        #expect(permissions.requestCallCount == 1)
+    }
+
+    /// Denied-path variant of the re-entrancy violation test: both
+    /// coalesced callers must publish the *denied* resolution — the second
+    /// caller may not return early without observing the real decision.
+    @Test("requestPermission re-entrant overlap publishes denied to both callers")
+    func requestPermission_reentrantOverlap_publishesDeniedToBothCallers() async {
+        let permissions = SuspendingPermissionService(initial: .notDetermined)
         let vm = AudioCaptureViewModel(capture: FakeCapture(), permissionService: permissions)
         async let first: Void = vm.requestPermission()
         async let second: Void = vm.requestPermission()
+        await permissions.waitUntilRequestPending()
+        permissions.release(returning: .denied)
         _ = await (first, second)
-        #expect(vm.permissionStatus == .granted)
-        #expect(permissions.requestCallCount == 2)
+        #expect(vm.permissionStatus == .denied)
+        #expect(permissions.requestCallCount == 1)
     }
 
     @Test("toggle when denied is a no-op")

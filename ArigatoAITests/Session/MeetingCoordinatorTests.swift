@@ -323,7 +323,8 @@ private struct CoordinatorFixture {
 private func makeFixture(
     audio: (any AudioCapturing)? = nil,
     captureLog: CaptureCallLog? = nil,
-    translator: (any Translating)? = nil
+    translator: (any Translating)? = nil,
+    permissionService: (any MicrophonePermissionServicing)? = nil
 ) throws -> CoordinatorFixture {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
     let container = try ModelContainer(
@@ -345,6 +346,7 @@ private func makeFixture(
     // start/stop/frameStream.
     let captureViewModel = AudioCaptureViewModel(
         capture: captureConformer,
+        permissionService: permissionService,
         router: nil
     )
 
@@ -707,5 +709,24 @@ struct MeetingCoordinatorTests {
         let callsAfterNewTranscript = log.calls
         #expect(callsAfterNewTranscript == callsBeforeNewTranscript,
                 "newTranscript must NOT re-fire any AudioCapturing calls; pipeline stays stopped until next startMeeting")
+    }
+
+    // MARK: - Controls wiring (1)
+
+    /// Regression guard for the "Allow microphone" wiring — the original
+    /// dead-surface bug class shipped because no test exercised the
+    /// view-model → coordinator → capture-VM permission path.
+    /// `wiring(coordinator:)`'s `onRequestPermission` must route to the
+    /// capture VM's `requestPermission()`, which prompts via the injected
+    /// service exactly once and republishes the resulting status.
+    @Test func wiring_onRequestPermission_promptsOnceAndPublishesStatus() async throws {
+        let permissions = FakePermissionService(initial: .notDetermined, grantOnRequest: true)
+        let fixture = try makeFixture(permissionService: permissions)
+
+        let model = MeetingControlsViewModel.wiring(coordinator: fixture.coordinator)
+        await model.onRequestPermission()
+
+        #expect(fixture.captureViewModel.permissionStatus == .granted)
+        #expect(permissions.requestCallCount == 1)
     }
 }

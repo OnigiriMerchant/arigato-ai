@@ -15,11 +15,11 @@ import SwiftUI
 /// button cluster + undo toast (Group D UI decisions #3, #4, #5, #7, #8).
 ///
 /// The view is a pure projection of ``MeetingControlsViewModel``. The VM
-/// owns 11 closures (12 when the optional `onAppear` is supplied) that
+/// owns 12 closures (13 when the optional `onAppear` is supplied) that
 /// expose read state (phase, permission status, audio level, wall-clock
 /// `now`) and action side effects (start, pause, resume, requestStop,
-/// undoStop, finalizeStop, newTranscript, openSettings). Two factories
-/// expose the canonical wiring shapes:
+/// undoStop, finalizeStop, newTranscript, openSettings,
+/// requestPermission). Two factories expose the canonical wiring shapes:
 ///
 /// - ``MeetingControlsViewModel/disabled()`` — a no-op placeholder used by
 ///   previews, by ``ContentView`` until Step 8 swaps in the real wiring,
@@ -83,11 +83,17 @@ struct MeetingControlsView: View {
                 restrictedContent
             }
         }
-        .task {
-            // Only fires if the host wired an `onAppear` closure
-            // (currently optional; see ``MeetingControlsViewModel/init``).
-            // The closure stays unused by `.disabled()` placeholders and
-            // by the test VMs that don't need permission flow.
+        .task(id: model.onAppear != nil) {
+            // Keyed on whether an `onAppear` closure is wired. ContentView
+            // swaps the `.disabled()` placeholder (`onAppear == nil`) for
+            // the production-wired VM (`onAppear != nil`) when the
+            // bootstrapper publishes the coordinator, WITHOUT changing this
+            // view's structural identity — a plain `.task` fires once
+            // against the placeholder and never re-fires, so the wired
+            // permission refresh would never run. The id flips
+            // false → true at most once (the coordinator is published
+            // exactly once and never reset), so the wired refresh runs
+            // once per appearance.
             if let onAppear = model.onAppear {
                 await onAppear()
             }
@@ -97,15 +103,14 @@ struct MeetingControlsView: View {
     // MARK: - notDetermined
 
     /// Pre-permission surface: a real, tappable affordance that requests
-    /// microphone access. Tapping "Allow microphone" runs ``model``'s
-    /// `onRequestPermission` closure (production wiring →
-    /// ``AudioCaptureViewModel/requestPermission()``), which prompts the user
-    /// and republishes the permission status so this view advances to the
-    /// granted (START control) or denied (Open Settings) branch.
-    ///
-    /// (Previously this was a buttonless `VStack` of two `Text` views — there
-    /// was literally nothing to tap, so a not-determined user could never
-    /// grant access from this screen.)
+    /// microphone access. Tapping "Allow microphone" runs
+    /// ``MeetingControlsViewModel/tapRequestPermission()`` (production
+    /// wiring → ``AudioCaptureViewModel/requestPermission()``), which
+    /// prompts the user and republishes the permission status so this view
+    /// advances to the granted (START control) or denied (Open Settings)
+    /// branch. The button participates in the cluster-wide
+    /// `.disabled(inFlightAction != nil)` gating while a request is in
+    /// flight.
     private var notDeterminedContent: some View {
         VStack(spacing: 12) {
             Text("Microphone access")
@@ -116,9 +121,10 @@ struct MeetingControlsView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Allow microphone") {
-                Task { await model.onRequestPermission() }
+                Task { await model.tapRequestPermission() }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(model.inFlightAction != nil)
             .accessibilityIdentifier("meeting.controls.requestPermission")
         }
     }
@@ -273,6 +279,10 @@ struct MeetingControlsView: View {
         case .newTranscript: await model.tapNewTranscript()
         case .requestStop: await model.tapRequestStop()
         case .undoStop: await model.tapUndo()
+        // Never emitted by the formatter's button cluster — the permission
+        // button dispatches directly — but the switch stays exhaustive and
+        // honest should a spec ever carry it.
+        case .requestPermission: await model.tapRequestPermission()
         }
     }
 
@@ -292,7 +302,7 @@ struct MeetingControlsView: View {
 
 /// View model for ``MeetingControlsView``.
 ///
-/// Holds a closure-injected seam (D7-1 option c): 11 closures (plus an
+/// Holds a closure-injected seam (D7-1 option c): 12 closures (plus an
 /// optional `onAppear`) cover every read and action the view needs.
 /// Production wiring routes them all through ``MeetingCoordinator`` via
 /// ``MeetingControlsViewModel/wiring(coordinator:now:)``. Tests inject
@@ -377,11 +387,14 @@ final class MeetingControlsViewModel {
     let onOpenSettings: () -> Void
 
     /// Invoked by the "Allow microphone" button on the not-determined
-    /// permission surface. Production wiring closes over
-    /// `coordinator.captureViewModel.requestPermission()`, which prompts the
-    /// user and republishes the permission status so the view advances to the
-    /// granted/denied branch. Idempotent (see ``AudioCaptureViewModel/requestPermission()``);
-    /// ``disabled()`` supplies a no-op placeholder.
+    /// permission surface, via ``tapRequestPermission()``. Production
+    /// wiring closes over
+    /// `coordinator.captureViewModel.requestPermission()`, which prompts
+    /// the user (overlapping calls are single-flighted — see
+    /// ``AudioCaptureViewModel/requestPermission()`` for the scheduling
+    /// contract) and republishes the permission status so the view
+    /// advances to the granted/denied branch. ``disabled()`` supplies an
+    /// explicit no-op placeholder.
     let onRequestPermission: @Sendable () async -> Void
 
     /// Optional — fired from the view body's `.task` modifier. The
@@ -418,6 +431,7 @@ final class MeetingControlsViewModel {
         case requestStop
         case undoStop
         case newTranscript
+        case requestPermission
     }
 
     // MARK: - Init
@@ -479,7 +493,8 @@ final class MeetingControlsViewModel {
             onUndoStop: {},
             onFinalizeStop: {},
             onNewTranscript: {},
-            onOpenSettings: {}
+            onOpenSettings: {},
+            onRequestPermission: {}
         )
     }
 
@@ -621,6 +636,26 @@ final class MeetingControlsViewModel {
                 lastError = error
             }
         }
+    }
+
+    /// Runs the `onRequestPermission` closure with the same in-flight
+    /// pattern as ``tapStart()``, so the permission button participates in
+    /// the cluster-wide `.disabled(inFlightAction != nil)` gating. The
+    /// closure is non-throwing — permission requests surface their result
+    /// through the published permission status, not through errors — so
+    /// there is no error capture; `lastError` is cleared on completion to
+    /// match the "cleared on the next successful action" contract.
+    ///
+    /// Note the view-level disable is best-effort (see the type-level
+    /// scheduling-assumption note: tap methods are not internally
+    /// serialized). The hard no-double-prompt guarantee lives in
+    /// ``AudioCaptureViewModel/requestPermission()``'s single-flight
+    /// contract, not here.
+    func tapRequestPermission() async {
+        inFlightAction = .requestPermission
+        defer { inFlightAction = nil }
+        await onRequestPermission()
+        lastError = nil
     }
 }
 
