@@ -1751,3 +1751,18 @@ Deferred items from the 2026-06-10 xhigh code review of the mic-fix range (`73a3
 - **How:** likely a pipeline-error closure surfaced through `MeetingCoordinator` into the controls VM, joining `lastError` in the new banner.
 - **Trigger:** first real meeting where transcription dies mid-stream and the user reports "it just went quiet" — or the warmup-progress-UI work, which touches the same status-surface area.
 - **Severity:** MEDIUM (failures are now diagnosable via logs, but not yet user-visible mid-meeting).
+
+### Re-baseline or quarantine the load-flaky test cluster (filed 2026-06-10, third ask)
+
+- **What:** the full-suite flake count is DRIFTING, which the per-test entries above don't capture: 2026-05-31 combined run **6** failures (all AppBootstrapper LFM2-prewarm / main-thread-heartbeat); 2026-06-10 morning full run **14** (same two suites, all timeout-shaped); 2026-06-10 evening run **8** + a NEW load-induced **crash** in `MeetingStoreSearchLatencyTests.meetingListSearch_15kRows` (passes twice in isolation). Every one of these passes in isolation — the class is load-induced timing/pressure, not regressions — but the wobble means "compare against the documented flake list" no longer works as a release check: each full run needs manual re-triage.
+- **How:** pick one — (a) re-baseline: move the prewarm-timing assertions onto deterministic handshakes (the seam pattern `awaitFramesDrained`/`waitUntilRequestPending` already used elsewhere) instead of wall-clock timeouts; (b) quarantine: tag the cluster (`.serialized` or a dedicated test plan) so the full suite runs it isolated-by-default; (c) at minimum, a documented expected-flake manifest the /test skill checks against.
+- **Why it keeps slipping:** it only hurts at full-suite time (gates), and gates always have a more urgent payload. This entry exists because the cost is now recurring: three sessions have re-derived "it's the documented flakes" by hand.
+- **Trigger:** next full-suite run that costs >10 minutes of re-triage, or before any CI is added (CI makes wall-clock flakes a hard blocker).
+- **Severity:** MEDIUM (no production risk; recurring gate-time cost, rising).
+
+### Measure errorBanner `.red` contrast in both modes (MVP-1 sign-off item, filed 2026-06-10)
+
+- **What:** the meeting-controls error banner (`MeetingControlsView.errorBanner`, added in the device-debug bundle `b715f3e`) uses semantic system `.red` at `.footnote` size on the app's dark/light surfaces. @ui-reviewer flagged the contrast as **measure, don't estimate** (per its standing mandate): resolved `.red` vs the resolved background must be instrument-measured in BOTH modes before MVP-1 sign-off. Note `.footnote` falls under the WCAG large-text bar only at accessibility sizes — measure at default size.
+- **How:** pixel-sample a simulator screenshot of the banner in light + dark (the same direct-measurement method that refuted the two false BLOCKs on 2026-05-31) and record the ratios here.
+- **Trigger:** MVP-1 sign-off checklist — alongside the locked recording-accent WCAG check CLAUDE.md already mandates.
+- **Severity:** LOW (semantic system color, expected to pass; recorded so the gate-transcript flag can't evaporate).
