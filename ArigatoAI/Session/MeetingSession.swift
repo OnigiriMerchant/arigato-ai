@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 import SwiftData
 
 /// The active-meeting orchestrator.
@@ -479,6 +480,18 @@ final class MeetingSession {
                 // surfaced through the session — UI surfaces them via
                 // the inline marker pattern (decision #15) in a later
                 // step. Step 3's scope is the persistence path.
+                //
+                // Logged LOUDLY since 2026-06-11: this silent return hid
+                // the never-warmed-translator bug for days — every
+                // meeting's event stream died `modelNotReady` here and
+                // the screen just stayed empty. The error must reach
+                // `log collect` even while UI surfacing remains deferred
+                // (V3 "pipeline error surfacing").
+                os_log(
+                    .error,
+                    "MeetingSession: translation event stream threw — no further sentences will persist this meeting: %{public}@",
+                    String(describing: error)
+                )
                 return
             }
         }

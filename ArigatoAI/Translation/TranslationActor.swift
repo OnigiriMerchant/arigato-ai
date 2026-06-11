@@ -582,17 +582,19 @@ actor TranslationActor {
     /// against a fast upstream burst to assert that downstream stall
     /// does not affect upstream queueing or LFM2 generation, and that
     /// output ordering matches input ordering.
+    ///
+    /// **Lazy engine resolution (2026-06-11).** The engine is resolved
+    /// lazily via ``resolveEngineForGeneration(sessionToken:)`` on first
+    /// dispatch — a suspension point INSIDE the single inflight task,
+    /// token-guarded on both sides, so no caller may assume the engine
+    /// exists before the first generation completes. Regression tests:
+    /// `translate_withoutPriorWarmup_lazilyResolvesEngine_andCompletes`,
+    /// `translate_lazyResolutionFails_streamThrowsModelNotReady`.
     private func startGeneration(
         sentence: BufferedSentence,
         direction: TranslationDirection,
         sessionToken: SessionToken
     ) {
-        guard let engine = resolvedEngine else {
-            // Defensive: should not happen if warmup() ran first. Finish
-            // the session with a typed error.
-            session?.continuation.finish(throwing: TranslationError.modelNotReady)
-            return
-        }
         guard let session, session.token == sessionToken else { return }
 
         // Capture the source segment ID once. Reaching the fallback `UUID()`
@@ -604,6 +606,21 @@ actor TranslationActor {
         let resolvedSourceSegmentID = sentence.sourceSegmentIDs.first ?? UUID()
 
         let task = Task<Void, Never> { [weak self] in
+            // Resolve the engine LAZILY if no explicit warmup() preceded
+            // this generation. Production constructs this actor with the
+            // already-warmed shared loader, so resolution here is a cached
+            // no-op — but the actor must never depend on an external
+            // caller remembering warmup(): exactly that omission shipped
+            // 2026-06-10 (the pipeline's translator was built at
+            // coordinator-construction time, never warmed, and EVERY
+            // translation died `modelNotReady` into a silently-swallowed
+            // stream — transcription worked, the screen stayed empty).
+            guard let engine = await self?.resolveEngineForGeneration(sessionToken: sessionToken) else {
+                return
+            }
+            if Task.isCancelled { return }
+
+            Self.log.notice("LFM2 generation started (\(sentence.text.count) chars in, \(String(describing: direction), privacy: .public))")
             var accumulated = ""
             let stream = engine.translate(userText: sentence.text, direction: direction)
 
@@ -669,6 +686,46 @@ actor TranslationActor {
         session.inflightTask = task
     }
 
+    /// Returns the engine for a generation, resolving it via ``warmup()``
+    /// when no explicit warmup preceded the first dispatch (cached-loader
+    /// no-op in production). On resolution failure: logs at error level,
+    /// finishes the session's continuation with
+    /// ``TranslationError/modelNotReady``, clears the queue, and drops
+    /// the session — mirroring ``handleGenerationError(_:sessionToken:)``
+    /// semantics so a dead engine is LOUD, never a silent empty meeting.
+    private func resolveEngineForGeneration(sessionToken: SessionToken) async -> (any LFM2Engine)? {
+        if let resolvedEngine { return resolvedEngine }
+
+        Self.log.notice("First generation — resolving engine from shared loader (cached no-op when warm)")
+        do {
+            try await warmup()
+        } catch {
+            Self.log.error("Lazy engine resolution failed: \(String(describing: error), privacy: .public)")
+            guard let session, session.token == sessionToken else { return nil }
+            session.pendingSentences.removeAll()
+            session.continuation.finish(throwing: TranslationError.modelNotReady)
+            session.timerTask?.cancel()
+            self.session = nil
+            return nil
+        }
+        // The session may have been cancelled/replaced while warmup
+        // suspended — don't hand back an engine for a dead session (the
+        // generation's yields are token-guarded anyway; this just avoids
+        // a wasted inference).
+        guard let current = session, current.token == sessionToken else { return nil }
+        return resolvedEngine
+    }
+
+    /// Persisted-level generation lifecycle logging (`log collect` on
+    /// device captures `.notice`/`.error`). Added 2026-06-11 while
+    /// hunting the silent-translation bug: with zero logging in this
+    /// actor, a meeting whose every generation failed was
+    /// indistinguishable from one that never received a sentence.
+    private static let log = Logger(
+        subsystem: "com.jose.ArigatoAI",
+        category: "Translation"
+    )
+
     /// Yields a `.partialChunk` event on the active session's
     /// continuation, guarded by session-token equality so stale-session
     /// callbacks become no-ops.
@@ -689,6 +746,7 @@ actor TranslationActor {
         sessionToken: SessionToken
     ) {
         guard let session, session.token == sessionToken else { return }
+        Self.log.notice("LFM2 generation completed (\(translated.translatedText.count) chars out, fallback: \(translated.isFallback))")
         session.continuation.yield(.completed(translated))
     }
 
@@ -705,6 +763,7 @@ actor TranslationActor {
         } else {
             wrapped = .generationFailed(error.localizedDescription)
         }
+        Self.log.error("LFM2 generation failed, finishing translation stream: \(String(describing: wrapped), privacy: .public)")
         session.continuation.finish(throwing: wrapped)
         session.pendingSentences.removeAll()
         session.inflightTask = nil

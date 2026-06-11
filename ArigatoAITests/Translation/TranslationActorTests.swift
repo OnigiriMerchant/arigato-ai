@@ -515,6 +515,64 @@ struct TranslationActorTests {
         #expect(completed.first?.isFallback == false)
     }
 
+    /// Regression test for the 2026-06-10 silent-translation bug: the
+    /// production wiring constructed the pipeline's `TranslationActor`
+    /// WITHOUT ever calling `warmup()`, and the old `startGeneration`
+    /// nil-engine guard killed the event stream with `modelNotReady` —
+    /// swallowed downstream, so every meeting transcribed perfectly and
+    /// translated nothing. The contract now: a translate call with NO
+    /// prior warmup lazily resolves the engine and completes normally.
+    @Test("translate: without prior warmup lazily resolves engine and completes")
+    func translate_withoutPriorWarmup_lazilyResolvesEngine_andCompletes() async throws {
+        let fake = FakeLFM2Engine()
+        fake.configureChunks(["こんにちは"], for: "Hello world.")
+
+        let actor = TranslationActor(engineFactory: { fake })
+        // Deliberately NO actor.warmup() — mirroring the production
+        // wiring gap this regression test guards against.
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "Hello world."))
+        continuation.finish()
+
+        var completed: [TranslatedSegment] = []
+        for try await event in stream {
+            if case let .completed(translated) = event {
+                completed.append(translated)
+            }
+        }
+
+        #expect(completed.count == 1)
+        #expect(completed.first?.translatedText == "こんにちは")
+        #expect(await actor.warmupState() == .ready)
+    }
+
+    /// Failure side of lazy resolution: when the engine genuinely cannot
+    /// resolve (factory throws), the stream must die LOUDLY with the
+    /// typed `modelNotReady` — never hang and never complete silently.
+    @Test("translate: lazy resolution failure finishes stream with modelNotReady")
+    func translate_lazyResolutionFails_streamThrowsModelNotReady() async {
+        struct Boom: Error {}
+        let actor = TranslationActor(engineFactory: { throw Boom() })
+
+        let (segments, continuation) = AsyncStream<TranscriptSegment>.makeStream()
+        let stream = await actor.translate(segments: segments, direction: .enToJa)
+
+        continuation.yield(Self.segment(text: "Hello world."))
+        continuation.finish()
+
+        do {
+            for try await _ in stream {}
+            Issue.record("Stream should have thrown modelNotReady")
+        } catch let error as TranslationError {
+            #expect(error == .modelNotReady)
+        } catch {
+            Issue.record("Expected TranslationError.modelNotReady, got \(error)")
+        }
+    }
+
     @Test("translate: two sentences serialized order preserved in output")
     func translate_twoSentences_serializedOrderPreserved() async throws {
         let fake = FakeLFM2Engine()

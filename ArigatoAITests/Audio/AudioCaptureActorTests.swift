@@ -444,7 +444,7 @@ struct AudioCaptureActorTests {
 
 //
 // The reconfiguration CONTRACT (retry-then-teardown, stop-wins-race, no
-// zombie state) is now unit-covered by the three violation tests above via
+// zombie state) is now unit-covered by the four violation tests above via
 // the `triggerReconfigurationForTesting()` seam — this closes the V3 note
 // that previously lived here. What remains integration-only: driving the
 // handler from a REAL `.AVAudioEngineConfigurationChange` notification with

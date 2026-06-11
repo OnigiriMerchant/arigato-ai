@@ -231,10 +231,26 @@ public actor AudioCaptureActor {
     /// 2026-06-10 on-device zombie-capture bug: the microphone stays held
     /// (orange indicator forever), ``stop()`` early-returns on its guard,
     /// and the next ``start()`` walks into corrupted engine state.
+    /// `true` in test mode (``setupForTesting()``): unit tests have no
+    /// live engine, and real AudioToolbox calls make them hostages to the
+    /// simulator audio server's health — an `AURemoteIO` RPC timeout
+    /// during engine teardown ABORTS the test process (observed
+    /// 2026-06-11 after a long simulator session; the same tests were
+    /// green on a healthy sim). Production always returns `false`.
+    private var skipEngineOpsForTesting: Bool {
+        #if DEBUG
+            return bypassResampleForTesting
+        #else
+            return false
+        #endif
+    }
+
     private func teardownCapture() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        deactivateSession()
+        if !skipEngineOpsForTesting {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            deactivateSession()
+        }
 
         // Tear down the single drain consumer before finishing the public
         // streams. Finishing the internal channel lets the drain loop fall out
@@ -585,7 +601,9 @@ public actor AudioCaptureActor {
         guard isRunning else { return }
 
         Self.log.notice("Engine reconfiguration: rebuilding tap + converter")
-        engine.inputNode.removeTap(onBus: 0)
+        if !skipEngineOpsForTesting {
+            engine.inputNode.removeTap(onBus: 0)
+        }
 
         // Tear down the prior drain consumer and internal channel BEFORE
         // reinstalling. ``installTapAndConverter()`` creates a fresh channel +
