@@ -62,17 +62,23 @@ nonisolated struct WhisperRawSegment: Equatable {
 /// ``WhisperClient/transcribe(audio:anchorHostTime:)`` verbatim — the
 /// adapter must not synthesise, round-trip, or "improve" this value.
 ///
-/// The ``language`` field is the raw string WhisperKit returned. It can
-/// be an empty string when WhisperKit's language detector falls back; the
-/// router (Step 11) is responsible for parsing it via
-/// ``SpokenLanguage/init(whisperCode:)`` and deciding the disagreement
-/// gating outcome. Adapters must **never** substitute `"en"`/`"ja"` for
-/// an empty value or inject a default of their own.
+/// The ``language`` field is the raw string WhisperKit returned. It now
+/// reflects an explicitly-requested detection pass: the production adapter
+/// transcribes with `detectLanguage: true` (see
+/// ``ArgmaxOSSWhisperClient/decodeOptions()``), so the tag is the language
+/// WhisperKit *detected* for the window rather than WhisperKit v1.0.0's
+/// default forced-`<|en|>` prefill. It can still be an empty string when
+/// the detector falls back; the router (Step 11) is responsible for parsing
+/// it via ``SpokenLanguage/init(whisperCode:)`` and deciding the
+/// disagreement gating outcome. Adapters must **never** substitute
+/// `"en"`/`"ja"` for an empty value or inject a default of their own — the
+/// adapter forwards the detection result, it does not detect.
 nonisolated struct WhisperWindowResult: Equatable {
-    /// Language tag reported by WhisperKit for this window. Pass-through;
-    /// may be `""` when the underlying detector fell back. Routing logic
-    /// lives in ``SpokenLanguage`` and the language router (Step 11), not
-    /// here.
+    /// Language tag reported by WhisperKit for this window. Pass-through
+    /// of an explicitly-requested detection pass (`detectLanguage: true`);
+    /// may be `""` when the underlying detector fell back, which the router
+    /// treats as a no-op. Routing logic lives in ``SpokenLanguage`` and the
+    /// language router (Step 11), not here.
     let language: String
 
     /// Mach host time of the first sample of the audio window passed to

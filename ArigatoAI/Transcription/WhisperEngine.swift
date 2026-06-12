@@ -55,6 +55,51 @@ final nonisolated class ArgmaxOSSWhisperClient: WhisperClient, @unchecked Sendab
         try await kit.prewarmModels()
     }
 
+    /// The decode options every production transcription request uses.
+    ///
+    /// Two non-default flags are deliberately set; everything else stays at
+    /// WhisperKit v1.0.0's defaults (`language: nil`, `usePrefillPrompt:
+    /// true`, `withoutTimestamps: false`, etc.):
+    ///
+    /// 1. **`skipSpecialTokens: true`** — strips the `<|...|>` control tokens
+    ///    (`<|en|>`, `<|0.00|>`, `<|transcribe|>`, …) from each segment's
+    ///    decoded text before it reaches the rest of the pipeline. Without
+    ///    this, the literal `.` characters *inside* a timestamp token such as
+    ///    `<|0.00|>` are visible to `SentenceBuffer`'s boundary detector
+    ///    (`。！？.!?`), which split mid-token and produced spurious sentence
+    ///    boundaries; the same tokens also leaked into the LFM2 translation
+    ///    input. Stripping them per-segment means neither the boundary
+    ///    detector nor the translator ever sees a control token.
+    /// 2. **`detectLanguage: true`** — restores the architecture's
+    ///    auto-detection pass (Phase 4 Decision 5's consecutive-window
+    ///    disagreement gating depends on a real per-window prediction). With
+    ///    `usePrefillPrompt` at its `true` default, WhisperKit v1.0.0 would
+    ///    otherwise resolve `detectLanguage` to `false` (`detectLanguage ??
+    ///    !usePrefillPrompt`) and force the prefill language to its
+    ///    `Constants.defaultLanguageCode` (`<|en|>`), so every window would
+    ///    report `en` regardless of what was spoken. Passing `true`
+    ///    explicitly enables the detection pass independent of
+    ///    `usePrefillPrompt`, so `LanguageRouter` receives the language
+    ///    WhisperKit actually detected.
+    ///
+    /// Per-segment start/end timing is driven by the timestamp tokens, which
+    /// are emitted and consumed by `SegmentSeeker` *independently* of
+    /// `skipSpecialTokens` (the flag only filters tokens below
+    /// `specialTokenBegin` from the decoded *text*, not the timing path).
+    /// `withoutTimestamps` therefore deliberately stays at its `false`
+    /// default — flipping it would suppress the timestamp tokens the
+    /// per-segment timing relies on.
+    ///
+    /// `internal static` so the contract is exercisable from
+    /// `WhisperDecodeOptionsTests` via `@testable import` without exposing a
+    /// configuration seam to non-test callers.
+    static func decodeOptions() -> DecodingOptions {
+        DecodingOptions(
+            detectLanguage: true,
+            skipSpecialTokens: true
+        )
+    }
+
     /// Transcribes the supplied audio window via the underlying
     /// `WhisperKit` instance and returns a value-typed
     /// ``WhisperWindowResult``.
@@ -69,7 +114,12 @@ final nonisolated class ArgmaxOSSWhisperClient: WhisperClient, @unchecked Sendab
     ///   disagreement gating.
     /// - The `language` field is passed through verbatim. The adapter
     ///   never substitutes `"en"`/`"ja"` defaults — that decision lives
-    ///   in ``SpokenLanguage`` and the language router.
+    ///   in ``SpokenLanguage`` and the language router. The tag now
+    ///   reflects an explicitly-requested detection pass (the shared
+    ///   ``decodeOptions()`` set `detectLanguage: true`), **not** WhisperKit
+    ///   v1.0.0's default forced-`<|en|>` prefill. The adapter itself does
+    ///   not detect; it forwards whatever the requested pass produced. An
+    ///   empty string remains legal and remains a router no-op.
     /// - Each `TranscriptionSegment.start` / `.end` (`Float`, in
     ///   seconds) is widened to `Double` explicitly. The widening is
     ///   exact for the magnitudes Whisper produces (window length is
@@ -81,7 +131,10 @@ final nonisolated class ArgmaxOSSWhisperClient: WhisperClient, @unchecked Sendab
         audio: [Float],
         anchorHostTime: UInt64
     ) async throws -> WhisperWindowResult {
-        let results = try await kit.transcribe(audioArray: audio)
+        let results = try await kit.transcribe(
+            audioArray: audio,
+            decodeOptions: ArgmaxOSSWhisperClient.decodeOptions()
+        )
 
         guard let first = results.first else {
             return WhisperWindowResult(
