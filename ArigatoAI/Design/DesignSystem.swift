@@ -83,10 +83,19 @@ enum DesignSystem {
         /// appearance automatically.
         static let columnDivider = Color(.separator)
 
-        /// Foreground tint for per-row timestamp annotations in the
-        /// Step 9a split-screen layout. Resolves to
-        /// `UIColor.tertiaryLabel` for a calm, low-contrast read that
-        /// pairs with primary transcript text.
+        /// Foreground tint originally introduced for per-row timestamp
+        /// annotations in the Step 9a split-screen layout. Resolves to
+        /// `UIColor.tertiaryLabel`.
+        ///
+        /// **No production view consumes this token anymore.** The
+        /// split-screen row converged its inline timestamp tint onto the
+        /// canonical ``metadataForeground`` (same `.tertiaryLabel` value)
+        /// per the Phase 7 metadata-role unification (D6). This token is
+        /// **retained, not deleted**: `DesignSystemTests` still pins its
+        /// value, and deleting a token is a wider token-catalog change than
+        /// this bundle's scope. A future cleanup may remove it once that
+        /// pin is migrated. Prefer ``metadataForeground`` for any new
+        /// metadata tint.
         static let timestampForeground = Color(.tertiaryLabel)
 
         /// Background tint for the "return arrow" affordance that
@@ -112,10 +121,12 @@ enum DesignSystem {
 
         /// Foreground for the per-row metadata cluster (timestamp + JA/EN
         /// language tag) on the source line — the tertiary tonal level.
-        /// Resolves to `UIColor.tertiaryLabel`. Generalised name for the
-        /// metadata role; the pre-existing ``timestampForeground`` (same value)
-        /// is left untouched for its current split-screen consumer and may
-        /// converge onto this token in a later cleanup.
+        /// Resolves to `UIColor.tertiaryLabel`. This is the canonical
+        /// metadata-role token: the split-screen row's inline timestamp now
+        /// tints through here too (D6 convergence), so the former
+        /// ``timestampForeground`` (same `.tertiaryLabel` value) no longer
+        /// has a production view consumer. Prefer this token for any new
+        /// metadata tint.
         static let metadataForeground = Color(.tertiaryLabel)
 
         /// The **solid** content surface the transcript sits on. Resolves to

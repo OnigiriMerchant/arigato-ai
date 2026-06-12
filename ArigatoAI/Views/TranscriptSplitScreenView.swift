@@ -57,15 +57,17 @@ import SwiftUI
 /// split-screen has no source/translation tonal hierarchy (UI decision
 /// #1 keeps the two languages spatially separated, not interleaved — so
 /// the detail view's source-led primary/secondary split does NOT apply
-/// here). Per-row timestamps render in
-/// ``DesignSystem/Colors/timestampForeground`` (the tertiary metadata
-/// tint — identical `.tertiaryLabel` value to
-/// ``DesignSystem/Colors/metadataForeground``; converging the two onto a
-/// single role token is a deferred token-catalog cleanup). The
-/// return-arrow background uses ``DesignSystem/Colors/returnArrowBackground``.
-/// Colors are semantic system colors so the JA/EN columns adapt to dark
-/// mode automatically (UI decisions #17 + #18 — system fonts handle CJK
-/// fallback).
+/// here). The per-row timestamp flows **inline** as a trailing suffix
+/// after the caption's last wrapped line (not in a reserved right-hand
+/// column — see ``SplitScreenRow``) and renders in
+/// ``DesignSystem/Colors/metadataForeground``, the canonical tertiary
+/// metadata-role token. (This converges the per-row timestamp tint onto
+/// `metadataForeground`; the former ``DesignSystem/Colors/timestampForeground``
+/// token resolved to the same `.tertiaryLabel` value and is left defined
+/// but no longer consumed by this view — D6.) The return-arrow background
+/// uses ``DesignSystem/Colors/returnArrowBackground``. Colors are semantic
+/// system colors so the JA/EN columns adapt to dark mode automatically
+/// (UI decisions #17 + #18 — system fonts handle CJK fallback).
 ///
 /// ## Concurrency
 ///
@@ -225,7 +227,37 @@ struct TranscriptSplitScreenView: View {
 
 // MARK: - Row
 
-/// Single split-screen row: text on the left, timestamp on the right.
+/// Single split-screen row: caption text with the timestamp flowing
+/// **inline** as a trailing suffix after the caption's last wrapped line.
+///
+/// The timestamp is composed as part of the same wrapping paragraph via
+/// `Text` concatenation rather than living in its own trailing column. A
+/// two-column `HStack` reserved a fixed timestamp column on the right and
+/// squeezed long captions; flowing the timestamp inline lets the caption
+/// use the full row width and drops the timestamp immediately after the
+/// final line. Per-operand `.font` / `.foregroundStyle` modifiers give the
+/// caption and the timestamp their distinct roles even though they share
+/// one `Text` value:
+///   - caption → ``DesignSystem/Typography/transcriptText`` (`.body`),
+///     `.primary` (both JA/EN columns stay equal-weight — UI decision #1).
+///   - timestamp → ``DesignSystem/Typography/metadataText`` (SF Mono) in
+///     ``DesignSystem/Colors/metadataForeground`` (the generalised
+///     metadata role token — D6 convergence; see below).
+///
+/// The separator is two spaces (`"  "`). The Japanese column's text has no
+/// inter-word spaces, so a visible gap between the CJK caption and the
+/// monospaced timestamp matters; two spaces render a clear break in both
+/// columns without reserving layout the inline flow is meant to avoid.
+///
+/// **D6 token convergence.** This row previously tinted the timestamp with
+/// ``DesignSystem/Colors/timestampForeground``; it now uses
+/// ``DesignSystem/Colors/metadataForeground``. Both resolve to
+/// `UIColor.tertiaryLabel`, so this is a role-name convergence, not a
+/// visual change — the per-row timestamp is metadata, and
+/// `metadataForeground` is the canonical metadata-role token (Phase 7
+/// Decision 5). `timestampForeground` is left defined for now (it has no
+/// other production view consumer after this change) rather than deleted —
+/// see the convergence note on ``DesignSystem``.
 ///
 /// `private` because the row's shape is implementation detail of the
 /// split-screen view. Tests assert through the formatter's `RowDisplay`
@@ -234,16 +266,17 @@ private struct SplitScreenRow: View {
     let display: RowDisplay
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        (
             Text(display.text)
                 .font(DesignSystem.Typography.transcriptText)
                 .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(display.timestamp)
+                + Text("  ")
+                + Text(display.timestamp)
                 .font(DesignSystem.Typography.metadataText)
-                .foregroundStyle(DesignSystem.Colors.timestampForeground)
-        }
+                .foregroundStyle(DesignSystem.Colors.metadataForeground)
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(display.text). \(display.timestamp).")
     }
