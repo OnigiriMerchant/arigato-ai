@@ -1,90 +1,99 @@
 # Handoff prompt — paste into a fresh Claude Code session
 
-_Last updated 2026-06-10. Copy everything in the fenced block below as your first message to a new session. Everything described here is committed and pushed to `origin/main`._
+_Last updated 2026-06-12 (pre-OS-update session close). Copy everything in the fenced block below as your first message to a new session. Everything described here is committed and pushed to `origin/main` through `402c6ec`._
 
 ---
 
 ```
 You're picking up Arigato AI — an on-device bidirectional Japanese↔English meeting
 translator for iPhone 17 Pro Max (iOS 26, Swift 6, SwiftUI, SwiftData). Read CLAUDE.md
-first (architecture rules, build workflow, the three-reviewer gate, concurrency-design
-discipline), then docs/CURRENT_STATE.md (top headline) and docs/NEXT_SESSION_PLAN.md.
+first (architecture rules, build workflow, three-reviewer gate, concurrency discipline),
+then docs/CURRENT_STATE.md (top headline). Auto-memory also carries
+device-debug-state-2026-06-11.
 
-WHERE WE ARE
-The app is MVP-1 feature-complete in code. Two recent threads, both landed and pushed:
-1. Offline Whisper: the WhisperKit model (~607MB) + tokenizer are bundled via Git LFS and
-   load fully offline (WhisperKitConfig modelFolder/tokenizerFolder/download:false, guarded
-   by WhisperBundledModel.resolve). Passed a three-reviewer gate incl. an adversarial pass
-   that caught + fixed a Hub-cache-shadow silent-network hole. LFM2 (~260MB GGUF) was already
-   bundled. App is ~893MB.
-2. Mic-button fix: the live-meeting "Microphone access" surface
-   (ArigatoAI/Views/MeetingControlsView.swift notDeterminedContent) was a block of TEXT with
-   no button — a not-determined user could never grant mic access. Now it's a real "Allow
-   microphone" Button → AudioCaptureViewModel.requestPermission(). Passed the three-reviewer
-   gate. Verified in the iPhone 17 Pro Max simulator (button renders + is tappable). Tests green.
+WHERE WE ARE (all committed AND pushed through 402c6ec; working tree clean except the
+intentionally-untracked .claude/workflows/):
+The 2026-06-10→12 device-debugging arc found and fixed the three bugs blocking the
+"app works" milestone, each through the three-reviewer gate:
+1. 46904c9 — single-flight requestPermission + launch permission refresh (.task(id:) across
+   the placeholder→wired VM swap) + in-flight button gating. DEVICE-PROVEN.
+2. b715f3e + 9a20aab — the zombie-capture pair: route-change reconfiguration teardown AND
+   the actual root cause, the undo-deadline auto-finalize that never released the mic
+   (MeetingSession.fireDeadline now routes through MeetingCoordinator.finalizeFromDeadline:
+   phase flip FIRST to settle the undo race, then pipeline+capture teardown). DEVICE-PROVEN
+   via log archive ("Deadline finalize complete: pipeline + capture released"; clean second
+   meeting right after). Same bundle: error banner (MeetingControlsView.errorBanner renders
+   lastError — before it NO screen rendered any error), undo-toast restack (was overlapping
+   and eating NEW TRANSCRIPT taps), persisted os_log across AudioCapture / Transcription /
+   Pipeline / Coordinator categories.
+3. 402c6ec — THE LAST BLOCKER, found overnight 2026-06-11: silent translation. The
+   pipeline's TranslationActor was never warmed (AppBootstrapper warms only the lfm2Loader
+   at ~:523; makeCoordinator builds a fresh TranslationActor at ~:595 and nobody calls
+   warmup() on it) → resolvedEngine nil → the FIRST sentence of every meeting killed the
+   event stream with modelNotReady → swallowed by MeetingSession's pump catch →
+   "No sentences yet" EVERY meeting, simulator and device alike. Whisper was always fine
+   (device logs: ~1 'en' segment/sec the whole meeting). Fixed: lazy engine resolution in
+   startGeneration via resolveEngineForGeneration (cached-loader no-op in production),
+   loud typed failure path, regression tests
+   (translate_withoutPriorWarmup_lazilyResolvesEngine_andCompletes — fails on the old
+   code — and translate_lazyResolutionFails_streamThrowsModelNotReady), and an error-level
+   log at the formerly-silent pump swallow.
 
-KEY DIAGNOSIS (don't re-investigate): the device "warming up never finishes" is NOT a hang
-and NOT a regression. It's the one-time first-launch Neural-Engine compilation of the ~600MB
-Whisper model. Proven in the simulator: bundled models load cleanly (Whisper ~33s, LFM2 0.44s,
-warmup reaches "ready" in ~40s). The device is slow ONLY on first launch (ANE specializes
-~600MB), then caches and is fast. The simulator skips ANE so it's always fast there.
+THE IMMEDIATE NEXT STEP — NOT YET DONE: the iPhone still runs the 9a20aab build (deployed
+2026-06-10 23:56). DEPLOY current main (402c6ec) via @device-deployer — device "Jose's
+iPhone", iPhone 17 Pro Max (iPhone18,2), devicectl id E2D0E29B-D5B3-5EDE-BA3A-ACD9BD9E2268,
+automatic signing known-good (team TVAS2P4CR4), ENABLE_USER_SCRIPT_SANDBOXING=NO already
+committed, ~893MB bundle installs incrementally fast. Then run the MILESTONE TEST with the
+user:
+  - Ask how long warmup takes this launch (5 min on 2026-06-10 was hypothesized as the
+    one-time post-install ANE compile; a fast launch confirms it).
+  - START → one English sentence → pause → one Japanese sentence → stop, letting the undo
+    countdown expire (the mic must release: orange dot clears within seconds).
+  - Translations should appear in both panes. That is the "app works" milestone.
+  - If ANYTHING misbehaves: the app now logs its entire pipeline at persisted levels
+    (subsystem com.jose.ArigatoAI; categories AudioCapture, Transcription, Pipeline,
+    Coordinator, Translation). Have the USER run in their own terminal (sudo needs a TTY):
+      sudo log collect --device --last 30m --output /tmp/arigato.logarchive
+    then query the archive with /usr/bin/log show — NOTE: plain `log` is shadowed by a
+    shell function in this environment; ALWAYS use /usr/bin/log.
 
-STRATEGIC CONTEXT (from the user): de-prioritize strict airplane-mode offline. The goal is
-"make the app work and finish the build." Users have internet; downloading models after
-install is an App-Store-prep OPTION, not on the critical path (the user installs to their own
-iPhone over the cable, which is not size-gated). The user is a citizen developer: give
-plain-language recommendations, and they hold explicit gates on git push and agent-config.
+AFTER THE MILESTONE (planned order):
+  1. Warmup progress UI + generous timeout (docs/NEXT_SESSION_PLAN.md; set the timeout
+     ABOVE the measured device compile time, e.g. 5 min). This also properly fixes the
+     visible-but-dead controls during warmup (the window is the FULL warmup — the old
+     "sub-50ms" doc claim was corrected as false).
+  2. Optional ultracode lifecycle audit: every meeting path that must release mic/pipeline,
+     adversarially enumerated. User was advised this is the right place for ultracode.
+  3. Fresh V3 entries from this arc's gates: flake-cluster re-baseline (combined-suite
+     failure counts drifted 6→14→8+crash→17 while isolated runs stay green — judge by
+     isolated suite runs ONLY), errorBanner .red contrast measurement (MVP-1 sign-off),
+     undo-clobbered-by-in-flight-finalize pre-existing race, pipeline errors logged but not
+     UI-surfaced, required onRequestPermission init param, dead AudioCaptureView deletion.
 
-THE NEXT STEP (highest priority): get the mic-fixed build onto the user's iPhone 17 Pro Max
-and run it end-to-end WITH the user.
-  - The mic fix only exists in the new build, so redeploy. Device build needs
-    ENABLE_USER_SCRIPT_SANDBOXING=NO on the app target (already committed) — without it the
-    "Re-sign nested LeapModelDownloader dylibs" phase fails. Use the @device-deployer agent;
-    device UDID is in docs/CURRENT_STATE.md / NEXT_SESSION_PLAN.md. The ANE compile likely
-    already ran on 2026-06-06, so warmup should be fast this time (it caches).
-  - Then: user taps "Allow microphone" (now a real button), grants, and speaks one English +
-    one Japanese line to confirm both directions transcribe + translate. That's the "app
-    works" milestone.
+OPERATIONAL GOTCHAS LEARNED THIS ARC:
+  - The simulator's audio server degrades after hours of test pounding → engine-touching
+    tests abort (AURemoteIO RPC timeout). Unit tests no longer touch real AudioToolbox
+    (AudioCaptureActor.skipEngineOpsForTesting), but if weird sim behavior appears, reboot
+    the sim. Default sim: iPhone 17 Pro Max, UUID 930EC6EA-DA72-4A38-ABFF-583AD70B28D4.
+    NEVER test against iPhone 17 Pro.
+  - NEVER unit-test real AVAudioSession activation (.record category) — it aborts the
+    whole test process.
+  - devicectl launch --console captures stdout only (LEAP/llama.cpp logs); os_log needs
+    log collect. info/debug levels are NOT persisted — instrument at .notice/.error.
+  - .claude/workflows/code-review-xhigh.js is INTENTIONALLY untracked (user decision
+    pending on whether review tooling belongs in the repo).
 
-THEN (planned, not yet done): add a warmup progress UI + a generous timeout in
-WhisperModelLoader/WhisperClientFactory so the first-launch ANE compile reads as "Preparing
-models — first launch can take a minute or two" instead of looking hung. (Set the timeout
-ABOVE the measured device compile time, e.g. 5 min — NOT 120s.) See NEXT_SESSION_PLAN.md.
+RULES THAT BITE (CLAUDE.md): three-reviewer gate (@code-reviewer + @ui-reviewer +
+@git-historian) before commit AND explicit user approval; the user holds commit/push/deploy
+gates — ask, don't assume; XcodeBuildMCP for all build/test (session defaults configured);
+concurrency-design-discipline: scheduling assumptions documented + REAL violation tests —
+a doc-comment naming a test that doesn't enforce the contract is the project's cardinal
+sin (caught twice this arc, including a false "two main-actor calls cannot interleave"
+claim; serialization claims must be audited against EVERY await). No force-unwraps. DocC
+on public API. The user is a citizen developer: plain-language recommendations, lead with
+what matters, they decide.
 
-LATER (user decision, deferred): model delivery — keep the bundle (current) vs SDK-native
-download-on-first-launch vs Apple Background Assets. Recommendation: keep the bundle now;
-when prepping for the App Store, go SDK-native download-on-first-launch (both SDKs cache for
-offline-after-first-run, so meetings stay offline). Not a blocker.
-
-OPEN NON-BLOCKING NITS (from the mic-fix gate, optional, do if touching the files):
-  - ui-reviewer: no committed SwiftUI #Preview covers the notDetermined/denied permission
-    surface (all previews pin to .granted) — a permanent preview would catch visual regressions.
-  - code-reviewer (CORRECTED 2026-06-10): the "Allow microphone" button shows under the
-    disabled() placeholder VM with no-op closures for the ENTIRE warmup window — the
-    coordinator publishes only at the END of the Whisper+LFM2 prewarm chain (~40s sim,
-    minutes on a first device launch), NOT the "sub-50ms / self-corrects on next render"
-    this nit originally claimed. Still routed to the warmup progress UI work, but treat it
-    as load-bearing UX, not a cosmetic nit.
-
-RULES THAT BITE (from CLAUDE.md):
-  - Build/test via XcodeBuildMCP after every Swift edit; default sim is iPhone 17 Pro Max
-    (NEVER iPhone 17 Pro). Device target is iPhone 17 Pro Max only.
-  - Do NOT push or commit-to-origin until the three-reviewer gate (@code-reviewer +
-    @ui-reviewer + @git-historian) runs AND the user explicitly approves. The user holds the
-    push gate.
-  - No force-unwraps, no fatalError, DocC on public API, @Observable view models, async/await.
-  - Concurrency-design-discipline: any new actor/async-stream/Task work needs a documented
-    scheduling assumption + a REAL violation test. A doc-comment naming a test that doesn't
-    enforce the contract is worse than naming none (this exact issue was just caught + fixed).
-  - Verify SDK/API facts against PRIMARY sources (SPM source + official docs), not memory —
-    use the xcode MCP DocumentationSearch (Apple) and liquid-docs MCP (LEAP). leap-sdk is
-    SKIE/Kotlin-bridged: verify call shapes by COMPILING, not by grepping the .swiftinterface.
-
-VERIFY THE STARTING STATE: `git -C /Users/josecastell/AI-projects/arigato-ai log --oneline -5`
-should show 3d41090 (mic-test honesty fix) at or near HEAD, and `git status` should be clean
-with origin/main up to date. Build: mcp__xcodebuildmcp__build_sim_name_proj. Tests:
-mcp__xcodebuildmcp__test_sim_name_proj.
-
-Start by confirming that state, then ask the user if their iPhone is connected so you can
-build + deploy the mic-fixed app and test it together.
+START: verify `git log --oneline -3` shows 402c6ec at HEAD with origin/main in sync and a
+clean tree, build via XcodeBuildMCP to confirm the toolchain survived the OS update, then
+ask the user to connect the iPhone for the deploy + milestone test.
 ```

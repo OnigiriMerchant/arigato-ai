@@ -1773,3 +1773,56 @@ Deferred items from the 2026-06-10 xhigh code review of the mic-fix range (`73a3
 - **How:** flip the phase (or set a terminal in-progress marker) BEFORE the store awaits so `undoStop()` can no longer interleave; or re-check the phase after the store awaits and abort the flip if it changed. Needs its own violation test (suspendable store fake, undo dispatched mid-await).
 - **Trigger:** first real-usage report of "I tapped restore and it ended anyway," or the next time anyone touches `finalizeStop` for any reason.
 - **Severity:** LOW-MEDIUM (window is two store round-trips wide, ~ms on-device; lost-undo, not data loss — the meeting persists as ended).
+
+## Post-milestone device-feedback bundle follow-ups (filed 2026-06-12)
+
+Source: the five-fix bundle (checkpoints `69bd64f` → `23e76ea`) from the first on-device milestone test — Whisper decode options (special-token strip + `detectLanguage: true`), inline timestamps, single-row controls, ordering-independent auto-follow. Gate: @code-reviewer approve-with-nits, @ui-reviewer approve-with-nits, @git-historian approve.
+
+### Measure the `detectLanguage` per-window latency cost on device
+
+- **What:** enabling WhisperKit's real language-detection pass (`ArgmaxOSSWhisperClient.decodeOptions()`, restores the locked auto-detection architecture) adds an extra encoder/decoder pass per 5s window. Magnitude is not determinable from source (doc-researcher 2026-06-12); must be measured on the iPhone 17 Pro Max during a real meeting.
+- **How:** compare per-window transcribe latency in the persisted os_log (`Transcription` category) before/after, or instrument a signpost. If material, the fallback is detect-every-Nth-window — a separate decision, not a revert.
+- **Trigger:** first long (>30 min) real-meeting validation, or any user report of caption lag.
+- **Severity:** LOW-MEDIUM (latency budget matters for live captions; detection is architecturally required either way).
+
+### Device spike: `defaultScrollAnchor(.bottom, for: .sizeChanges)` semantics
+
+- **What:** Apple does not document whether `.sizeChanges` bottom-anchoring respects user scrollback (abstract-only docs; verified documented-absence 2026-06-12). If a device spike shows it natively does chat-style follow without yanking a scrolled-up reader, it could replace the manual capture-before-mutation intent machinery in `TranscriptSplitScreenViewModel`.
+- **How:** throwaway spike app or DEBUG flag, observe (not assume) the scrollback behavior under growing content; record findings here.
+- **Trigger:** next time the auto-follow code needs ANY change, or an OS update changes scroll behavior.
+- **Severity:** LOW (current manual implementation is correct, tested, and documented; this is simplification-only).
+
+### Mono Key compact variant + controls-row rollout (D7 deferral)
+
+- **What:** the single-row meeting controls kept stock `.borderedProminent`/`.bordered` (blue, off-design-language) because `PrimaryActionButtonStyle` is full-width-capsule by design and physically can't sit three-up in a row. Phase 7 remaining item 1 (app-wide Mono Key rollout) now needs a compact (hug-content) capsule variant first.
+- **How:** add a size/width variant to `PrimaryActionButtonStyle` (without disturbing onboarding's full-width usage), then restyle the controls row + the other Phase 7 item-1 CTAs; @ui-reviewer pass on all 5 phases.
+- **Trigger:** next Phase 7 polish pass, or before any App Store screenshot work.
+- **Severity:** LOW (visual consistency only).
+
+### Delete the orphaned `timestampForeground` token
+
+- **What:** the D6 convergence left `DesignSystem.Colors.timestampForeground` with zero production consumers (definition + doc-comments + the `DesignSystemTests.swift:95` value pin only). Doc-marked orphaned 2026-06-12; deletion was deliberately out of bundle scope.
+- **How:** delete the token + its `DesignTokens.swift` forwarder (if any) + the test pin; grep for stragglers first.
+- **Trigger:** next DesignSystem-touching change.
+- **Severity:** LOW (dead code).
+
+### XCUITest coverage gap: `meeting.controls.secondary` (STOP) never tapped
+
+- **What:** no XCUITest references `meeting.controls.secondary` (grep-verified 2026-06-12), so the STOP button's identifier/tap path has no automated UI coverage — the single-row recomposition preserved it by construction, but nothing would catch a future regression.
+- **How:** extend the Part-2 XCUITest harness with a recording→STOP→undo-window flow tap (needs the launch-arg seed to fake a recording phase, or a granted-permission sim profile).
+- **Trigger:** next XCUITest harness extension, or any future MeetingControlsView restructure.
+- **Severity:** LOW-MEDIUM (the identifier is regression-critical for the harness's value).
+
+### Measure recordingActive pulse-dot contrast on meterTrack in dark mode
+
+- **What:** @ui-reviewer measurement flag (2026-06-12 gate): the red `recordingActive` (locked hard-coded RGB 0.94/0.27/0.27) pulse dot sits on the `meterTrack` (tertiarySystemFill) capsule; reads fine visually in dark snapshots but the ratio was never instrument-measured. CLAUDE.md mandates hand-checking the locked recording accents in BOTH modes.
+- **How:** pixel-sample sim screenshots light + dark (same method as the errorBanner entry above); record ratios here. Non-text glyph, so WCAG 1.4.11 non-text 3:1 is the bar.
+- **Trigger:** MVP-1 sign-off checklist, together with the errorBanner contrast entry.
+- **Severity:** LOW (small status glyph with a pulsing-motion cue; expected to pass).
+
+### AX5 badge pulse-dot alignment (cosmetic)
+
+- **What:** @ui-reviewer nit (2026-06-12): at AX5 Dynamic Type the badge text wraps to two lines inside its capsule and the pulse dot sits vertically offset rather than aligned to the first line (`MeetingControlsView` badge `HStack(spacing: 6)`). Legible and unclipped — cosmetic only.
+- **How:** `.firstTextBaseline` alignment on the badge HStack, or constrain the dot to the first text line.
+- **Trigger:** next MeetingControlsView change, or an accessibility polish pass.
+- **Severity:** LOW (cosmetic at AX4–AX5 only).
