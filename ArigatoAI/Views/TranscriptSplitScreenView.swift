@@ -36,6 +36,22 @@ import SwiftUI
 /// **either** column is scrolled up; tapping the arrow scrolls both
 /// columns back to bottom inside one animation transaction.
 ///
+/// The follow decision is **owned by the view model**, not recomputed in
+/// the view body. Each column's `.onChange(of: sentences)` observer asks
+/// ``TranscriptSplitScreenViewModel/shouldFollow(column:)`` whether to
+/// scroll. The VM captures that decision (``FollowIntent``) from the
+/// at-bottom flags in the same non-suspending window it assigns
+/// `sentences` (see the VM's capture-before-mutation invariant). This
+/// removes a real ordering bug: the geometry callback driving the
+/// at-bottom flags can flip a flag `false` (new `contentSize`, old
+/// `contentOffset`) the instant `sentences` changes, and SwiftUI
+/// documents no ordering between `.onScrollGeometryChange` and
+/// `.onChange(of:)`. Reading a pre-captured intent makes the result
+/// independent of which callback fires first. The geometry predicate
+/// applies ``TranscriptSplitScreenViewModel/atBottomEpsilon`` (2pt) to
+/// absorb resting-`contentOffset` float-exactness, biased toward
+/// following.
+///
 /// ## Data flow
 ///
 /// The view binds to a ``TranscriptSplitScreenViewModel`` and:
@@ -108,9 +124,9 @@ struct TranscriptSplitScreenView: View {
     /// otherwise iterates the projection and renders rows.
     private var japaneseColumn: some View {
         column(
+            column: .japanese,
             rowFor: TranscriptSplitScreenFormatter.japaneseRow(for:),
             scrollPosition: $viewModel.jaPosition,
-            isAtBottom: { self.viewModel.jaAtBottom },
             atBottomChanged: viewModel.setJaAtBottom(_:)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -120,9 +136,9 @@ struct TranscriptSplitScreenView: View {
     /// English-side projection + binding.
     private var englishColumn: some View {
         column(
+            column: .english,
             rowFor: TranscriptSplitScreenFormatter.englishRow(for:),
             scrollPosition: $viewModel.enPosition,
-            isAtBottom: { self.viewModel.enAtBottom },
             atBottomChanged: viewModel.setEnAtBottom(_:)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -130,22 +146,37 @@ struct TranscriptSplitScreenView: View {
 
     /// Shared column builder.
     ///
+    /// The auto-follow decision is NOT recomputed here. When `sentences`
+    /// changes, the `.onChange` observer asks the VM
+    /// (``TranscriptSplitScreenViewModel/shouldFollow(column:)``) whether
+    /// this column should scroll. That answer is a snapshot the VM
+    /// captured from the at-bottom flags in the same non-suspending window
+    /// it assigned the new `sentences` value — capturing the intent
+    /// *before* the mutation, rather than reading a live flag here, is the
+    /// fix for the ordering bug where the geometry callback flips the flag
+    /// `false` (new `contentSize`, old `contentOffset`) before this
+    /// `.onChange` runs (SwiftUI documents no ordering between
+    /// `.onScrollGeometryChange` and `.onChange(of:)`). The geometry
+    /// predicate still drives the at-bottom flags (for the arrow + the
+    /// *next* reload's intent capture) and applies
+    /// ``TranscriptSplitScreenViewModel/atBottomEpsilon`` to absorb
+    /// resting-`contentOffset` float-exactness.
+    ///
     /// - Parameters:
+    ///   - column: Identifies this column (JA or EN) so the `.onChange`
+    ///     observer reads the matching per-column follow intent from the
+    ///     VM.
     ///   - rowFor: Projection from a `SentenceProjection` to its
     ///     ``RowDisplay`` for this column (JA or EN).
     ///   - scrollPosition: The column-specific `ScrollPosition` binding
     ///     into the view model.
-    ///   - isAtBottom: Closure returning the column's current at-bottom
-    ///     flag. Closure rather than value so it re-reads on every
-    ///     `.onChange` invocation (the flag may have been updated by
-    ///     the geometry callback between renders).
     ///   - atBottomChanged: Setter the geometry callback drives whenever
     ///     the column's bottom-edge predicate flips.
     @ViewBuilder
     private func column(
+        column: TranscriptColumn,
         rowFor: @escaping (MeetingDetail.SentenceProjection) -> RowDisplay,
         scrollPosition: Binding<ScrollPosition>,
-        isAtBottom: @escaping () -> Bool,
         atBottomChanged: @escaping (Bool) -> Void
     ) -> some View {
         if viewModel.sentences.isEmpty {
@@ -164,20 +195,27 @@ struct TranscriptSplitScreenView: View {
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // At-bottom predicate per DR-4 §iOS 18+ canonical: the
                 // visible viewport's lower edge meets or exceeds the
-                // content's lower edge.
+                // content's lower edge, minus a small epsilon to absorb
+                // resting-contentOffset float-exactness (biased toward
+                // following — see atBottomEpsilon).
                 geometry.contentOffset.y + geometry.containerSize.height
                     >= geometry.contentSize.height - geometry.contentInsets.bottom
+                    - TranscriptSplitScreenViewModel.atBottomEpsilon
             } action: { _, atBottom in
                 atBottomChanged(atBottom)
             }
             .onChange(of: viewModel.sentences) { _, _ in
-                // Auto-follow per UI #2: when the column is at the
-                // bottom and new content arrives, scroll-to-bottom in
-                // a short animation. When scrolled up, leave position
-                // alone (stay-put). Each column reads its own flag so
-                // a JA-scrolled-up + EN-at-bottom user sees only the
-                // EN column auto-follow.
-                if isAtBottom() {
+                // Auto-follow per UI #2: when new content arrives, scroll
+                // this column to the bottom only if the VM's captured
+                // follow intent says so. The decision was snapshotted by
+                // reload() from the at-bottom flags in the same
+                // non-suspending window it assigned `sentences` — reading
+                // a pre-captured intent here (rather than a live flag)
+                // removes the dependency on whether the geometry callback
+                // or this .onChange fires first. Each column reads its own
+                // intent, so a JA-scrolled-up + EN-at-bottom user sees
+                // only the EN column auto-follow.
+                if viewModel.shouldFollow(column: column) {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         scrollPosition.wrappedValue.scrollTo(edge: .bottom)
                     }
@@ -231,13 +269,17 @@ struct TranscriptSplitScreenView: View {
 /// **inline** as a trailing suffix after the caption's last wrapped line.
 ///
 /// The timestamp is composed as part of the same wrapping paragraph via
-/// `Text` concatenation rather than living in its own trailing column. A
-/// two-column `HStack` reserved a fixed timestamp column on the right and
-/// squeezed long captions; flowing the timestamp inline lets the caption
-/// use the full row width and drops the timestamp immediately after the
-/// final line. Per-operand `.font` / `.foregroundStyle` modifiers give the
-/// caption and the timestamp their distinct roles even though they share
-/// one `Text` value:
+/// styled-`Text` interpolation rather than living in its own trailing
+/// column. A two-column `HStack` reserved a fixed timestamp column on the
+/// right and squeezed long captions; flowing the timestamp inline lets the
+/// caption use the full row width and drops the timestamp immediately
+/// after the final line. The caption and timestamp are each built as a
+/// `Text` value carrying its own `.font` / `.foregroundStyle`, then
+/// interpolated into one outer `Text` (`Text("\(caption)  \(stamp)")`).
+/// SwiftUI preserves each interpolated `Text` segment's styling, so the
+/// two roles stay distinct inside a single wrapping paragraph (this
+/// replaces the deprecated `Text + Text` concatenation operator; styling
+/// lives on the inner segments, never on the outer Text):
 ///   - caption → ``DesignSystem/Typography/transcriptText`` (`.body`),
 ///     `.primary` (both JA/EN columns stay equal-weight — UI decision #1).
 ///   - timestamp → ``DesignSystem/Typography/metadataText`` (SF Mono) in
@@ -266,19 +308,25 @@ private struct SplitScreenRow: View {
     let display: RowDisplay
 
     var body: some View {
-        (
-            Text(display.text)
-                .font(DesignSystem.Typography.transcriptText)
-                .foregroundStyle(.primary)
-                + Text("  ")
-                + Text(display.timestamp)
-                .font(DesignSystem.Typography.metadataText)
-                .foregroundStyle(DesignSystem.Colors.metadataForeground)
-        )
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(display.text). \(display.timestamp).")
+        // Compose the caption + inline timestamp via styled-Text
+        // interpolation (Apple-sanctioned; replaces the deprecated
+        // Text + Text operator). Each segment is wrapped in `Text`
+        // BEFORE interpolation so it enters the outer Text as a styled
+        // Text value (preserving its own font/foregroundStyle) rather
+        // than as a raw String subject to format-specifier
+        // reinterpretation. Styling stays on the inner Text values —
+        // outer modifiers would restyle the whole row.
+        let caption = Text(display.text)
+            .font(DesignSystem.Typography.transcriptText)
+            .foregroundStyle(.primary)
+        let stamp = Text(display.timestamp)
+            .font(DesignSystem.Typography.metadataText)
+            .foregroundStyle(DesignSystem.Colors.metadataForeground)
+        return Text("\(caption)  \(stamp)")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(display.text). \(display.timestamp).")
     }
 }
 

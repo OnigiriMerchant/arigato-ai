@@ -87,6 +87,10 @@ struct TranscriptSplitScreenViewModelTests {
         #expect(vm.jaAtBottom == true, "Empty column has no scrollback; default at-bottom for auto-follow on first sentence.")
         #expect(vm.enAtBottom == true)
         #expect(vm.arrowVisible == false, "Both columns at bottom → no return arrow.")
+        #expect(
+            vm.pendingFollowIntent == FollowIntent(japanese: true, english: true),
+            "Initial follow intent mirrors jaAtBottom/enAtBottom defaults so the first sentence auto-follows both columns."
+        )
     }
 
     // MARK: - 2. requestReload bumps refreshTrigger
@@ -290,6 +294,118 @@ struct TranscriptSplitScreenViewModelTests {
         #expect(vm.loadError == nil,
                 "Second call's success should have cleared the cancellation error.")
     }
+
+    // MARK: - 9. Follow intent captured before mutation
+
+    /// **D6-T-vm-9** — ``TranscriptSplitScreenViewModel/reload()`` must
+    /// capture ``TranscriptSplitScreenViewModel/pendingFollowIntent`` from
+    /// the at-bottom flags *as they stand before* the new `sentences`
+    /// value lands. We set the flags to a known asymmetric state
+    /// (`ja=false`, `en=true`), run a reload with a non-empty payload, and
+    /// assert the captured intent mirrors the pre-mutation flags AND the
+    /// payload landed. This pins the capture-before-mutation invariant
+    /// (the geometry callback cannot retroactively change a decision that
+    /// was already snapshotted in the same non-suspending window as the
+    /// `sentences` assignment).
+    @Test func viewModel_reload_capturesFollowIntentFromAtBottomFlagsBeforeMutation() async throws {
+        let id = try Self.mintIdentifier()
+        let payload = [Self.makeProjection(id: id, sourceText: "after-reload")]
+
+        let vm = TranscriptSplitScreenViewModel(fetcher: { payload })
+
+        // Asymmetric pre-mutation state: JA scrolled up, EN at bottom.
+        vm.setJaAtBottom(false)
+        vm.setEnAtBottom(true)
+
+        await vm.reload()
+
+        #expect(
+            vm.pendingFollowIntent == FollowIntent(japanese: false, english: true),
+            "Captured intent must mirror the at-bottom flags as they stood before the sentences assignment."
+        )
+        #expect(vm.sentences.map(\.sourceText) == ["after-reload"],
+                "The paired sentences payload must have landed alongside the captured intent.")
+    }
+
+    // MARK: - 10. shouldFollow is a per-column, non-clearing read
+
+    /// **D6-T-vm-10** — ``TranscriptSplitScreenViewModel/shouldFollow(column:)``
+    /// reads the per-column slot of the captured intent and does NOT clear
+    /// it. Both per-column view observers fire on the same `sentences`
+    /// change and read this snapshot independently, so clearing on read
+    /// would starve whichever observer ran second. We capture an
+    /// asymmetric intent (`ja=true`, `en=false`) via a reload, then assert
+    /// each column reads its own slot AND that a second read of the JA
+    /// column still returns `true` (idempotent / non-clearing).
+    @Test func viewModel_shouldFollow_readsPerColumnIntent_nonClearing() async throws {
+        let id = try Self.mintIdentifier()
+        let payload = [Self.makeProjection(id: id, sourceText: "row")]
+
+        let vm = TranscriptSplitScreenViewModel(fetcher: { payload })
+
+        // Capture intent (ja=true, en=false) via a reload.
+        vm.setJaAtBottom(true)
+        vm.setEnAtBottom(false)
+        await vm.reload()
+
+        #expect(vm.shouldFollow(column: .japanese) == true,
+                "JA slot of the captured intent is true.")
+        #expect(vm.shouldFollow(column: .english) == false,
+                "EN slot of the captured intent is false.")
+        // Second read of the same column must return the same answer —
+        // the read does not clear the intent.
+        #expect(vm.shouldFollow(column: .japanese) == true,
+                "Non-clearing: a repeated read of the JA column still returns true.")
+    }
+
+    // MARK: - 11. Concurrency violation: rapid reloads, last snapshot wins
+
+    /// **D6-T-vm-11 (concurrency violation test).** The type-level
+    /// scheduling assumption declares that under rapid reloads the follow
+    /// intent is **last-snapshot-wins**: each landed reload overwrites
+    /// ``TranscriptSplitScreenViewModel/pendingFollowIntent`` wholesale,
+    /// and an older unconsumed intent is silently discarded (correct,
+    /// because its paired `sentences` value was also discarded).
+    ///
+    /// We violate the "one reload at a time, intent consumed before the
+    /// next" assumption: reload A captures `(ja=true, en=true)`; we then
+    /// flip `jaAtBottom = false` (simulating the user scrolling the JA
+    /// column up); reload B then lands a distinct payload. The final
+    /// follow decision the view consumes — `shouldFollow(.japanese)` — must
+    /// reflect reload B's pre-mutation snapshot (`false`), NOT reload A's
+    /// stale `true`. We assert through `shouldFollow` (the contract the
+    /// view actually consumes) AND the raw property.
+    @Test func viewModel_rapidReloads_followIntentReflectsLatestPreMutationState() async throws {
+        let id = try Self.mintIdentifier()
+        let payloadA = [Self.makeProjection(id: id, sourceText: "reload-A")]
+        let payloadB = [
+            Self.makeProjection(id: id, sourceText: "reload-B-1"),
+            Self.makeProjection(id: id, sourceText: "reload-B-2"),
+        ]
+
+        let dispatcher = ReloadPayloadDispatcher(first: payloadA, second: payloadB)
+        let vm = TranscriptSplitScreenViewModel(fetcher: dispatcher.makeFetcher())
+
+        // Reload A with both flags true → intent (true, true).
+        vm.setJaAtBottom(true)
+        vm.setEnAtBottom(true)
+        await vm.reload()
+        #expect(vm.shouldFollow(column: .japanese) == true,
+                "After reload A, JA follow intent is true.")
+
+        // User scrolls JA up; reload B lands a distinct payload. Reload B
+        // must re-snapshot the now-false JA flag, discarding reload A's
+        // stale intent.
+        vm.setJaAtBottom(false)
+        await vm.reload()
+
+        #expect(vm.shouldFollow(column: .japanese) == false,
+                "Last-snapshot-wins: reload B's pre-mutation snapshot (false) overwrites reload A's stale true.")
+        #expect(vm.pendingFollowIntent.japanese == false,
+                "Raw property mirrors the last landed reload's snapshot.")
+        #expect(vm.sentences.map(\.sourceText) == ["reload-B-1", "reload-B-2"],
+                "The paired sentences value advanced together with the intent.")
+    }
 }
 
 // MARK: - Test infrastructure
@@ -332,6 +448,38 @@ private final nonisolated class FetcherDispatcher: @unchecked Sendable {
                 return slow
             }
             return fast
+        }
+    }
+}
+
+/// Two-shot payload dispatcher used by D6-T-vm-11. The first fetcher
+/// invocation returns `first`; the second (and any subsequent) returns
+/// `second`. Both return synchronously — this dispatcher is about
+/// successive *successful* reloads (last-snapshot-wins on the captured
+/// intent), not cancellation.
+///
+/// `nonisolated` + `OSAllocatedUnfairLock` per the project's Swift 6
+/// fake-state rules — `NSLock` is forbidden from async contexts.
+private final nonisolated class ReloadPayloadDispatcher: @unchecked Sendable {
+    private let first: [MeetingDetail.SentenceProjection]
+    private let second: [MeetingDetail.SentenceProjection]
+    private let callCount = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    init(
+        first: [MeetingDetail.SentenceProjection],
+        second: [MeetingDetail.SentenceProjection]
+    ) {
+        self.first = first
+        self.second = second
+    }
+
+    func makeFetcher() -> @Sendable () async throws -> [MeetingDetail.SentenceProjection] {
+        { [self] in
+            let isFirstCall = callCount.withLock { count -> Bool in
+                count += 1
+                return count == 1
+            }
+            return isFirstCall ? first : second
         }
     }
 }
