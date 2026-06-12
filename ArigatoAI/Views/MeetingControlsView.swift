@@ -199,19 +199,71 @@ struct MeetingControlsView: View {
 
     // MARK: - granted
 
-    /// Active surface: undo toast (stopping phase only) on top, then the
-    /// status badge, then the primary + secondary buttons.
+    /// Active surface: undo toast (stopping phase only) stacked on top, then
+    /// a single controls row carrying the status badge and the primary +
+    /// secondary buttons side-by-side.
     ///
     /// The toast is a STACKED sibling, not an `.overlay` — the previous
     /// overlay-at-bottom rendered the toast on top of the badge and button
     /// cluster (visually overlapping them and intercepting taps aimed at
     /// NEW TRANSCRIPT; observed on device 2026-06-10). Stacking lets every
-    /// surface own its own hit-test area.
+    /// surface own its own hit-test area; ``controlsRow`` (badge + buttons)
+    /// is the sibling below it and never overlaps it. This invariant is
+    /// regression-critical and must survive any future layout change here.
     private var grantedContent: some View {
         VStack(spacing: 16) {
             undoToast
+            controlsRow
+        }
+    }
+
+    /// The badge + primary + secondary controls, laid out on **one row** by
+    /// default (UI: a single horizontal cluster reads as one control group
+    /// rather than a vertical stack of disconnected affordances).
+    ///
+    /// Wrapped in `ViewThatFits(in: .horizontal)` so the single-row layout
+    /// is used whenever it fits the available width, and the prior stacked
+    /// (badge-over-buttons) arrangement is the graceful fallback when it
+    /// does **not** — e.g. large Dynamic Type sizes that widen the button
+    /// labels past the row width. This *closes* the V3 #40 concern class
+    /// (a fixed single-axis layout that clips under large Dynamic Type)
+    /// rather than adding a new instance of it: the vertical fallback is a
+    /// real, tested degradation path, not a hope that the row always fits.
+    ///
+    /// `ViewThatFits` measures its children at their ideal size and renders
+    /// the first that fits; both children are pure projections of the same
+    /// formatter specs, so whichever renders, the badge/buttons and their
+    /// accessibility identifiers are identical — only the axis differs.
+    private var controlsRow: some View {
+        ViewThatFits(in: .horizontal) {
+            horizontalControls
+            verticalControls
+        }
+    }
+
+    /// Single-row arrangement: badge (leading) + primary + secondary,
+    /// centered. The badge is elided in phases where the formatter returns
+    /// no badge (idle), and each button appears only when its formatter spec
+    /// is non-`nil`, so a lone-button phase (idle → START only;
+    /// stopping/ended → NEW TRANSCRIPT only) renders a single centered
+    /// control rather than a button stranded at one edge of a wide row.
+    private var horizontalControls: some View {
+        HStack(spacing: 12) {
             badge
-            buttonCluster
+            primaryButton
+            secondaryButton
+        }
+    }
+
+    /// Vertical fallback reproducing the prior stacked arrangement: badge
+    /// over the primary button over the secondary button. Used by
+    /// ``controlsRow``'s `ViewThatFits` only when ``horizontalControls``
+    /// does not fit the available width.
+    private var verticalControls: some View {
+        VStack(spacing: 12) {
+            badge
+            primaryButton
+            secondaryButton
         }
     }
 
@@ -266,28 +318,43 @@ struct MeetingControlsView: View {
         }
     }
 
-    /// Primary + secondary button cluster (UI decision #4 + the
-    /// foundational "buttons exist only when they can be used" principle).
-    /// Buttons appear only when the formatter returns a non-`nil` spec
-    /// for the current phase.
-    private var buttonCluster: some View {
-        VStack(spacing: 12) {
-            if let primary = MeetingControlsFormatter.primaryButton(for: model.phase()) {
-                Button(primary.label) {
-                    Task { await dispatchPrimary(primary.kind) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.inFlightAction != nil)
-                .accessibilityIdentifier("meeting.controls.primary")
+    /// The primary button (UI decision #4 + the foundational "buttons exist
+    /// only when they can be used" principle). Renders only when the
+    /// formatter returns a non-`nil` primary spec for the current phase;
+    /// otherwise contributes nothing to either arrangement. Shared verbatim
+    /// by ``horizontalControls`` and ``verticalControls`` so the button,
+    /// its `.borderedProminent` style, its in-flight disable gating, its
+    /// `meeting.controls.primary` identifier, and its dispatch closure are
+    /// identical regardless of which axis `ViewThatFits` picks.
+    @ViewBuilder
+    private var primaryButton: some View {
+        if let primary = MeetingControlsFormatter.primaryButton(for: model.phase()) {
+            Button(primary.label) {
+                Task { await dispatchPrimary(primary.kind) }
             }
-            if let secondary = MeetingControlsFormatter.secondaryButton(for: model.phase()) {
-                Button(secondary.label) {
-                    Task { await dispatchSecondary(secondary.kind) }
-                }
-                .buttonStyle(.bordered)
-                .disabled(model.inFlightAction != nil)
-                .accessibilityIdentifier("meeting.controls.secondary")
+            .buttonStyle(.borderedProminent)
+            .disabled(model.inFlightAction != nil)
+            .accessibilityIdentifier("meeting.controls.primary")
+        }
+    }
+
+    /// The secondary button. Renders only when the formatter returns a
+    /// non-`nil` secondary spec (recording / paused → STOP); idle, the
+    /// stopping window, and the ended phase emit no secondary, so this
+    /// contributes nothing and the primary stands alone (centered in the
+    /// horizontal arrangement). Shared verbatim by ``horizontalControls``
+    /// and ``verticalControls``; preserves the `.bordered` style, the
+    /// in-flight disable gating, the `meeting.controls.secondary`
+    /// identifier, and the dispatch closure.
+    @ViewBuilder
+    private var secondaryButton: some View {
+        if let secondary = MeetingControlsFormatter.secondaryButton(for: model.phase()) {
+            Button(secondary.label) {
+                Task { await dispatchSecondary(secondary.kind) }
             }
+            .buttonStyle(.bordered)
+            .disabled(model.inFlightAction != nil)
+            .accessibilityIdentifier("meeting.controls.secondary")
         }
     }
 
